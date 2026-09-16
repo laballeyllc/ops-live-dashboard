@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operations Daily Manifest</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --ink: #1B2A3A;
+    --paper: #ECE7DA;
+    --paper-dark: #DFD8C6;
+    --kraft: #C9A66B;
+    --stamp: #D97E1E;
+    --good: #3F6B4A;
+    --alert: #AB4438;
+    --line: rgba(27,42,58,0.16);
+    --card-bg: #FBF9F3;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    background-image:
+      linear-gradient(var(--paper-dark) 1px, transparent 1px),
+      linear-gradient(90deg, var(--paper-dark) 1px, transparent 1px);
+    background-size: 28px 28px;
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    padding: 32px 24px 80px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  header.masthead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 3px solid var(--ink);
+    padding-bottom: 14px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .eyebrow {
+    font-family: 'Space Mono', monospace;
+    letter-spacing: 0.18em;
+    font-size: 12px;
+    color: var(--stamp);
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  h1 {
+    margin: 4px 0 0;
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .date-nav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'Space Mono', monospace;
+  }
+  .date-nav button {
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    width: 32px; height: 32px;
+    border-radius: 3px;
+    font-family: 'Space Mono', monospace;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .date-nav button:hover { background: var(--stamp); }
+  .date-nav input[type=date] {
+    font-family: 'Space Mono', monospace;
+    border: 2px solid var(--ink);
+    background: var(--card-bg);
+    padding: 6px 8px;
+    border-radius: 3px;
+    font-size: 14px;
+  }
+
+  .story {
+    background: var(--card-bg);
+    border: 2px dashed var(--ink);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin-bottom: 28px;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .story strong { color: var(--stamp); }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .stat-card {
+    position: relative;
+    background: var(--card-bg);
+    border: 1.5px solid var(--ink);
+    border-radius: 4px;
+    padding: 16px 14px 22px;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    /* perforation notches, top and bottom, ticket-style */
+    content: "";
+    position: absolute;
+    left: -8px; right: -8px; top: -8px;
+    height: 16px;
+    background-image: radial-gradient(circle 8px, var(--paper) 8px, transparent 8px);
+    background-size: 20px 20px;
+    background-position: -2px -8px;
+  }
+  .stat-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink);
+    opacity: 0.65;
+    margin-bottom: 8px;
+  }
+  .stat-value {
+    font-family: 'Space Mono', monospace;
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .stat-delta { font-size: 12px; margin-top: 6px; font-family: 'Space Mono', monospace; }
+  .stat-delta.up { color: var(--good); }
+  .stat-delta.down { color: var(--alert); }
+  .stat-delta.flat { color: var(--ink); opacity: 0.5; }
+  .barcode {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 8px;
+    background-image: repeating-linear-gradient(90deg, var(--ink) 0 2px, transparent 2px 5px, var(--ink) 5px 6px, transparent 6px 11px);
+    opacity: 0.55;
+  }
+
+  section.panel {
+    background: var(--card-bg);
+    border: 1.5px solid var(--ink);
+    border-radius: 6px;
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+  .panel h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-family: 'Space Mono', monospace;
+    margin: 0 0 16px;
+    color: var(--ink);
+  }
+  .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 700px) { .charts-row { grid-template-columns: 1fr; } }
+  canvas { max-height: 260px; }
+
+  .trend-controls {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+    font-family: 'Space Mono', monospace;
+    font-size: 13px;
+  }
+  .trend-controls label { display: flex; align-items: center; gap: 6px; }
+  .trend-controls input[type=date] {
+    border: 2px solid var(--ink);
+    border-radius: 3px;
+    padding: 5px 7px;
+    background: #fff;
+    font-family: 'Space Mono', monospace;
+  }
+  .metric-toggles { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+  .metric-toggles button {
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    border: 1.5px solid var(--ink);
+    background: transparent;
+    color: var(--ink);
+    padding: 5px 10px;
+    border-radius: 14px;
+    cursor: pointer;
+    opacity: 0.5;
+  }
+  .metric-toggles button.active { background: var(--ink); color: var(--paper); opacity: 1; }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    font-family: 'Space Mono', monospace;
+    opacity: 0.6;
+  }
+  footer {
+    text-align: center;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    opacity: 0.45;
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <div>
+      <div class="eyebrow">Operations · Daily Manifest</div>
+      <h1 id="headline">Loading…</h1>
+    </div>
+    <div class="date-nav">
+      <button id="prevDay">‹</button>
+      <input type="date" id="dayPicker">
+      <button id="nextDay">›</button>
+    </div>
+  </header>
+
+  <div id="storyBox" class="story"></div>
+
+  <div id="statGrid" class="stat-grid"></div>
+
+  <section class="panel">
+    <h2>Today's Shape</h2>
+    <div class="charts-row">
+      <div><canvas id="queueChart"></canvas></div>
+      <div><canvas id="flowChart"></canvas></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Trends Over Time</h2>
+    <div class="trend-controls">
+      <label>From <input type="date" id="rangeStart"></label>
+      <label>To <input type="date" id="rangeEnd"></label>
+    </div>
+    <div class="metric-toggles" id="metricToggles"></div>
+    <canvas id="trendChart" style="max-height:340px"></canvas>
+  </section>
+
+  <footer>Generated from ShipStation pulls · beginning-of-day queue @ 8:00 AM CST · end-of-day queue @ 4:30 PM CST</footer>
+</div>
+
+<script>
+const STATS = [{"date": "2026-08-21", "beginning_queue_warehouse": 174, "beginning_queue_freight": 23, "end_queue_warehouse": 168, "end_queue_freight": 20, "orders_in": 89, "orders_out": 68, "packages_shipped": 68, "avg_packages_per_order": 1.0, "last_updated": "2026-08-21T16:29:04.645723-05:00"}];
+
+const METRICS = [
+  { key: 'orders_in', label: 'Orders In', color: '#1B2A3A' },
+  { key: 'orders_out', label: 'Orders Out', color: '#D97E1E' },
+  { key: 'beginning_queue', label: 'Beginning Queue', color: '#3F6B4A' },
+  { key: 'end_queue', label: 'End Queue', color: '#AB4438' },
+  { key: 'packages_shipped', label: 'Packages Shipped', color: '#8A6D3B' },
+  { key: 'avg_packages_per_order', label: 'Avg Pkgs/Order', color: '#5B4B8A' },
+];
+
+const byDate = Object.fromEntries(STATS.map(r => [r.date, r]));
+const allDates = STATS.map(r => r.date).sort();
+
+let currentDate = allDates.length ? allDates[allDates.length - 1] : null;
+let activeMetrics = new Set(['orders_in', 'orders_out']);
+
+const fmt = n => (n === null || n === undefined) ? '—' : (Number.isInteger(n) ? n.toLocaleString() : n);
+
+function dayIndex(d) { return allDates.indexOf(d); }
+
+function renderDay(date) {
+  if (!date || !byDate[date]) {
+    document.getElementById('headline').textContent = 'No data yet';
+    document.getElementById('storyBox').textContent = 'Run pull_stats.py to populate the first day of data.';
+    document.getElementById('statGrid').innerHTML = '';
+    return;
+  }
+  currentDate = date;
+  document.getElementById('dayPicker').value = date;
+  const row = byDate[date];
+  const prevRow = byDate[allDates[dayIndex(date) - 1]];
+
+  const niceDate = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  document.getElementById('headline').textContent = niceDate;
+
+  // Story sentence
+  const grid = document.getElementById('statGrid');
+  grid.innerHTML = '';
+  const cards = [
+    ['Orders In', row.orders_in],
+    ['Orders Out', row.orders_out],
+    ['Beginning Queue', row.beginning_queue],
+    ['End Queue', row.end_queue],
+    ['Packages Shipped', row.packages_shipped],
+    ['Avg Pkgs / Order', row.avg_packages_per_order],
+  ];
+  const keys = ['orders_in','orders_out','beginning_queue','end_queue','packages_shipped','avg_packages_per_order'];
+  cards.forEach(([label, val], i) => {
+    const key = keys[i];
+    const prevVal = prevRow ? prevRow[key] : null;
+    let deltaHtml = '';
+    if (prevVal !== null && prevVal !== undefined && val !== null) {
+      const diff = val - prevVal;
+      const cls = diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat';
+      const sign = diff > 0 ? '+' : '';
+      deltaHtml = `<div class="stat-delta ${cls}">${sign}${Number.isInteger(diff) ? diff : diff.toFixed(2)} vs prior day</div>`;
+    }
+    const card = document.createElement('div');
+    card.className = 'stat-card';
+    card.innerHTML = `<div class="stat-label">${label}</div><div class="stat-value">${fmt(val)}</div>${deltaHtml}<div class="barcode"></div>`;
+    grid.appendChild(card);
+  });
+
+  // Narrative
+  const storyBox = document.getElementById('storyBox');
+  if (row.orders_in != null && row.orders_out != null) {
+    const netQueue = (row.end_queue ?? 0) - (row.beginning_queue ?? 0);
+    const throughput = row.orders_out - row.orders_in;
+    let sentence = '';
+    if (throughput > 0) {
+      sentence += `Operations shipped <strong>${row.orders_out}</strong> orders against <strong>${row.orders_in}</strong> new orders — outpacing demand by ${throughput}. `;
+    } else if (throughput < 0) {
+      sentence += `Operations shipped <strong>${row.orders_out}</strong> orders while <strong>${row.orders_in}</strong> new orders came in — a gap of ${Math.abs(throughput)}. `;
+    } else {
+      sentence += `Operations shipped exactly as many orders (<strong>${row.orders_out}</strong>) as came in. `;
+    }
+    if (netQueue < 0) {
+      sentence += `The queue shrank by <strong>${Math.abs(netQueue)}</strong> orders, from ${row.beginning_queue} down to ${row.end_queue}.`;
+    } else if (netQueue > 0) {
+      sentence += `The queue grew by <strong>${netQueue}</strong> orders, from ${row.beginning_queue} up to ${row.end_queue}.`;
+    } else {
+      sentence += `The queue ended the day flat at ${row.end_queue}.`;
+    }
+    if (row.avg_packages_per_order) {
+      sentence += ` Average of <strong>${row.avg_packages_per_order}</strong> packages per order across ${row.packages_shipped} packages shipped.`;
+    }
+    storyBox.innerHTML = sentence;
+  } else {
+    storyBox.textContent = 'Waiting on the evening pull to complete today\'s story.';
+  }
+
+  drawDayCharts(row);
+}
+
+let queueChartInstance, flowChartInstance, trendChartInstance;
+
+function drawDayCharts(row) {
+  const queueCtx = document.getElementById('queueChart');
+  const flowCtx = document.getElementById('flowChart');
+  if (queueChartInstance) queueChartInstance.destroy();
+  if (flowChartInstance) flowChartInstance.destroy();
+
+  queueChartInstance = new Chart(queueCtx, {
+    type: 'bar',
+    data: {
+      labels: ['Beginning of Day (8am)', 'End of Day (4:30pm)'],
+      datasets: [{
+        label: 'Queue Size',
+        data: [row.beginning_queue, row.end_queue],
+        backgroundColor: ['#3F6B4A', '#AB4438'],
+        borderRadius: 4,
+      }]
+    },
+    options: { plugins: { legend: { display: false }, title: { display: true, text: 'Queue: Beginning vs End' } }, scales: { y: { beginAtZero: true } } }
+  });
+
+  flowChartInstance = new Chart(flowCtx, {
+    type: 'bar',
+    data: {
+      labels: ['Orders In', 'Orders Out'],
+      datasets: [{
+        label: 'Orders',
+        data: [row.orders_in, row.orders_out],
+        backgroundColor: ['#1B2A3A', '#D97E1E'],
+        borderRadius: 4,
+      }]
+    },
+    options: { plugins: { legend: { display: false }, title: { display: true, text: 'Order Flow' } }, scales: { y: { beginAtZero: true } } }
+  });
+}
+
+function drawTrendChart() {
+  const start = document.getElementById('rangeStart').value;
+  const end = document.getElementById('rangeEnd').value;
+  const filtered = STATS.filter(r => (!start || r.date >= start) && (!end || r.date <= end));
+
+  const ctx = document.getElementById('trendChart');
+  if (trendChartInstance) trendChartInstance.destroy();
+
+  const datasets = METRICS.filter(m => activeMetrics.has(m.key)).map(m => ({
+    label: m.label,
+    data: filtered.map(r => r[m.key]),
+    borderColor: m.color,
+    backgroundColor: m.color,
+    tension: 0.25,
+    spanGaps: true,
+  }));
+
+  trendChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: { labels: filtered.map(r => r.date), datasets },
+    options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } }
+  });
+}
+
+function buildMetricToggles() {
+  const container = document.getElementById('metricToggles');
+  container.innerHTML = '';
+  METRICS.forEach(m => {
+    const btn = document.createElement('button');
+    btn.textContent = m.label;
+    if (activeMetrics.has(m.key)) btn.classList.add('active');
+    btn.onclick = () => {
+      if (activeMetrics.has(m.key)) activeMetrics.delete(m.key); else activeMetrics.add(m.key);
+      btn.classList.toggle('active');
+      drawTrendChart();
+    };
+    container.appendChild(btn);
+  });
+}
+
+document.getElementById('prevDay').onclick = () => {
+  const idx = dayIndex(currentDate);
+  if (idx > 0) renderDay(allDates[idx - 1]);
+};
+document.getElementById('nextDay').onclick = () => {
+  const idx = dayIndex(currentDate);
+  if (idx < allDates.length - 1) renderDay(allDates[idx + 1]);
+};
+document.getElementById('dayPicker').onchange = (e) => renderDay(e.target.value);
+document.getElementById('rangeStart').onchange = drawTrendChart;
+document.getElementById('rangeEnd').onchange = drawTrendChart;
+
+if (allDates.length) {
+  document.getElementById('rangeStart').value = allDates[0];
+  document.getElementById('rangeEnd').value = allDates[allDates.length - 1];
+  buildMetricToggles();
+  renderDay(currentDate);
+  drawTrendChart();
+} else {
+  document.getElementById('headline').textContent = 'No data yet';
+  document.getElementById('storyBox').textContent = 'Run pull_stats.py to populate the first day of data.';
+}
+</script>
+</body>
+</html>

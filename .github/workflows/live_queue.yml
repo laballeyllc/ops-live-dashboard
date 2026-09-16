@@ -1,0 +1,50 @@
+name: Live Queue Pull
+
+# Runs every 30 minutes, all day, every day. This replaces the local
+# Task Scheduler entry entirely — once this is running here, the local
+# scheduled task on Casey's machine can be disabled; this is the "always
+# on, doesn't depend on any one computer being on" version.
+#
+# 30 minutes was chosen specifically to stay under GitHub's free-tier
+# minutes on a private repo: ~50s/run x 48 runs/day ~= 40 min/day
+# ~= 1,200 min/month, comfortably under the 2,000/month free allowance
+# (the twice-daily historical workflow adds only ~2 min/month on top of
+# that). If this ever needs to run more often, that's the number to
+# re-check first.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}  # lets you trigger a run manually from the Actions tab, for testing
+
+# Prevents two runs from ever overlapping. On GitHub Actions (unlike a
+# persistent local machine) the lock-file mechanism inside
+# pull_live_queue.py doesn't actually protect against overlap, since
+# every run starts in a fresh, empty container with no memory of a
+# previous run's lock file. This is the real protection for this
+# environment instead.
+concurrency:
+  group: live-queue-pull
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pull_live_queue.py
+        env:
+          FINALE_API_KEY: ${{ secrets.FINALE_API_KEY }}
+          FINALE_API_SECRET: ${{ secrets.FINALE_API_SECRET }}
+          SHIPSTATION_API_KEY: ${{ secrets.SHIPSTATION_API_KEY }}
+          SHIPSTATION_API_SECRET: ${{ secrets.SHIPSTATION_API_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python pull_live_queue.py

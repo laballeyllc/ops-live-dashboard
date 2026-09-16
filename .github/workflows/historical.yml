@@ -1,0 +1,53 @@
+name: Historical Banking Pull
+
+# Runs twice a day: once at end-of-day (catches that day's shipping
+# activity) and once the next morning (catches anything that shipped
+# late, between the evening run and midnight, so it gets reconciled
+# into the right day). Writes to Supabase's 'snapshots' table, which is
+# append-only — every run adds rows, nothing is ever overwritten.
+#
+# IMPORTANT — timezone: GitHub Actions cron always runs in UTC. The two
+# times below (22:00 and 12:00 UTC) correspond to 5:00 PM and 7:00 AM
+# Central *Daylight* Time (UTC-5), which is correct right now (Sep 2026).
+# When Daylight Saving ends in November and Central reverts to Standard
+# Time (UTC-6), these same UTC times will land at 4:00 PM and 6:00 AM
+# local instead — an hour early. If you want to correct for that twice a
+# year, change the two numbers below:
+#   Daylight Saving (Mar-Nov): 22 and 12
+#   Standard Time    (Nov-Mar): 23 and 13
+# Left as a manual, once-a-season adjustment rather than automated,
+# since an hour of drift on a banking job twice a year is a minor,
+# honest trade-off — not worth the added complexity of a self-adjusting
+# schedule for this use case.
+on:
+  schedule:
+    - cron: "0 22 * * *"  # ~5:00 PM Central (Daylight Time)
+    - cron: "0 12 * * *"  # ~7:00 AM Central (Daylight Time)
+  workflow_dispatch: {}  # lets you trigger a run manually from the Actions tab, for testing
+
+concurrency:
+  group: historical-banking-pull
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pull_ops_data.py
+        env:
+          FINALE_API_KEY: ${{ secrets.FINALE_API_KEY }}
+          FINALE_API_SECRET: ${{ secrets.FINALE_API_SECRET }}
+          SHIPSTATION_API_KEY: ${{ secrets.SHIPSTATION_API_KEY }}
+          SHIPSTATION_API_SECRET: ${{ secrets.SHIPSTATION_API_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python pull_ops_data.py

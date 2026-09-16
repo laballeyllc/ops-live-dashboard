@@ -1,0 +1,396 @@
+﻿Order ID,Order date,Product ID,Description,Category,CHEM,CHEM TECH,LAB ROOM,Shipment status,Tags,Core Queue
+197298,2025-08-09,,,,,,,awaiting_shipment,PA,
+211067,2025-11-25,MAGCHM-25KG,Magnesium Chloride Hexahydrate ACS/USP,Granular,3,,Yes,awaiting_shipment,"PA, Austin Warehouse, Split Order",Warehouse
+000319724,2026-03-24,,,,,,,awaiting_shipment,B,
+000323774,2026-04-01,,,,,,,awaiting_shipment,B,
+000323837,2026-04-01,Multiple products,Multiple products,Acids,,,,awaiting_shipment,"PA, Austin Warehouse, Split Order, Restricted Combination - Nitric Acid",Warehouse
+000366210,2026-06-11,,,,,,,awaiting_shipment,"PA, Restricted Chemical",
+000366789,2026-06-12,,,,,,,awaiting_shipment,"US, United Scientific",
+000367389,2026-06-15,,,,,,,awaiting_shipment,,
+000372180,2026-06-25,HCLS37-1L,"Hydrochloric Acid 37% Solution, Semiconductor Grade",Acids,4,,Yes,awaiting_shipment,"PA, Austin Warehouse, Split Order, US, Restricted Combination - Nitric Acid",Warehouse
+000374367,2026-07-01,,,,,,,awaiting_shipment,"US, United Scientific",
+000375768,2026-07-06,Multiple products,Multiple products,Granular,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000375792,2026-07-06,,,,,,,awaiting_shipment,PA,
+000379704,2026-07-15,,,,,,,awaiting_shipment,PA,
+000381594,2026-07-20,CAOXGL-25KG,"Calcium Oxide Powder, Lab Grade",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000383295,2026-07-23,,,,,,,awaiting_shipment,US,
+000383553,2026-07-24,,,,,,,awaiting_shipment,"TR, Restricted Chemical",
+000384855,2026-07-28,,,,,,,awaiting_shipment,"Split Order, B, US",
+000372003-2,2026-07-28,,,,,,,awaiting_shipment,"PA, Restricted Chemical",
+000385605,2026-07-29,CAOXGL-25KG,"Calcium Oxide Powder, Lab Grade",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000386640,2026-07-31,AAL99-5gal,Acetic Acid Glacial 99% Lab Grade,Acids,4,,Yes,awaiting_shipment,"PA, Austin Warehouse, Split Order",Warehouse
+000387804,2026-08-04,EAD200-20L,"Denatured Ethanol 200 Proof, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Split Order, US, United Scientific",Warehouse
+000388158,2026-08-05,,,,,,,awaiting_shipment,PA,
+000388341,2026-08-05,,,,,,,awaiting_shipment,"TR, Restricted Chemical",
+000388425,2026-08-05,,,,,,,awaiting_shipment,B,
+000390899,2026-08-12,,,,,,,awaiting_shipment,PA,
+000391181,2026-08-12,,,,,,,awaiting_shipment,"US, United Scientific",
+000391703,2026-08-13,,,,,,,awaiting_shipment,"TR, Restricted Chemical",
+000391763,2026-08-13,,,,,,,awaiting_shipment,"US, United Scientific",
+000392090,2026-08-14,,,,,,,awaiting_shipment,"US, United Scientific",
+000392264,2026-08-14,,,,,,,awaiting_shipment,B,
+000392918,2026-08-17,,,,,,,awaiting_shipment,US,
+000393146,2026-08-17,,,,,,,awaiting_shipment,US,
+000394208,2026-08-19,HPL30-4L,"Hydrogen Peroxide 30% Solution, Lab Grade",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Split Order, US, Restricted Combination - Hydrogen Peroxide",Warehouse
+000395189,2026-08-21,,,,,,,awaiting_shipment,US,
+000397016,2026-08-26,,,,,,,awaiting_shipment,US,
+000397619,2026-08-27,,,,,,,awaiting_shipment,US,
+000397667,2026-08-27,POISL10-1L,"Potassium Iodide 10% Solution, Lab Grade",Solutions,Lab Tech,,Yes,awaiting_shipment,"PA, Austin Warehouse, Split Order, Restricted Combination - Hydrogen Peroxide",Warehouse
+000397721,2026-08-27,,,,,,,awaiting_shipment,B,
+000397769,2026-08-27,,,,,,,awaiting_shipment,PA,
+000398291,2026-08-28,,,,,,,awaiting_shipment,US,
+000398294,2026-08-28,,,,,,,awaiting_shipment,US,
+000400253,2026-09-02,,,,,,,awaiting_shipment,US,
+000400409,2026-09-02,HPL30-1GAL,"Hydrogen Peroxide 30% Solution, Lab Grade",Solutions,2,,No,awaiting_shipment,"PA, Austin Warehouse, Split Order, Restricted Combination - Hydrogen Peroxide",Warehouse
+000400745,2026-09-03,Multiple products,Multiple products,,,,,awaiting_shipment,"Austin Warehouse, LAB ALLEY LLC, Split Order, US",Warehouse
+000400808,2026-09-03,,,,,,,awaiting_shipment,US,
+000401081,2026-09-03,Multiple products,Multiple products,Other Chemicals,,,,awaiting_shipment,"Austin Warehouse, Split Order, US, United Scientific",Warehouse
+000401186,2026-09-04,,,,,,,awaiting_shipment,B,
+000401306,2026-09-04,,,,,,,awaiting_shipment,PA,
+000401426,2026-09-04,,,,,,,awaiting_shipment,US,
+000401867,2026-09-06,MCTOC-4L,"Organic MCT Oil, Kosher, Halal, USP/FCC",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000402011,2026-09-07,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000402041,2026-09-07,,,,,,,awaiting_shipment,"US, United Scientific",
+000402323,2026-09-08,SOHYDBL-1LB,Sodium Hydroxide Beads Lab Grade,Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000402716,2026-09-09,PETHP-4L,Petroleum Ether High Purity Grade,Other Chemicals,2,,No,awaiting_shipment,"Austin Warehouse, Split Order, US, United Scientific",Warehouse
+000402734,2026-09-09,POACGA-25KG,"Potassium Acetate, ACS Grade",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000403250,2026-09-09,NAA70-2.5L,"Nitric Acid 70%, ACS Reagent Grade",Acids,4,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Combination - Nitric Acid",Warehouse
+000403322,2026-09-10,PPMGA-12.5KG,"Potassium Phosphate Monobasic Crystal, ACS Grade",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000403415,2026-09-10,,,,,,,awaiting_shipment,US,
+000403484,2026-09-10,FAL90-55GAL,"Formic Acid 90% Solution, Lab Grade",Acids,4,,Yes,awaiting_shipment,ATX Freight,Freight
+000403493,2026-09-10,HCLL10-500ML,"Hydrochloric Acid 10% Solution, Lab Grade",Acids,4,,Yes,awaiting_shipment,"Austin Warehouse, Split Order, US, United Scientific",Warehouse
+000403526,2026-09-10,,,,,,,awaiting_shipment,"US, United Scientific",
+000403541,2026-09-10,EAS38B-13-P-190-55GAL,"Ethanol 190 Proof (95%) w/ Lavender Oil, Kosher, Halal (SDA 38B-13)",Alcohols,1,,Yes,awaiting_shipment,,
+000403577,2026-09-10,PEG3350GU-25KG,"Polyethylene Glycol (PEG) 3350, Granular, USP Grade, Kosher",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000403589,2026-09-10,,,,,,,awaiting_shipment,US,
+000403610,2026-09-10,,,,,,,awaiting_shipment,"PA, Poison Pack, Restricted Chemical",
+000403637,2026-09-10,,,,,,,awaiting_shipment,US,
+000403670,2026-09-10,NAL67-2.5L,"Nitric Acid 67% Solution, Lab/Technical Grade",Acids,4,,Yes,awaiting_shipment,"ATX Freight, Restricted Combination - Nitric Acid",Freight
+000403769,2026-09-10,,,,,,,awaiting_shipment,US,
+000403844,2026-09-11,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000403895,2026-09-11,,,,,,,awaiting_shipment,US,
+000403925,2026-09-11,EAP200DSP-55GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,,
+000403952,2026-09-11,EAOS190-1L,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000403964,2026-09-11,IPAL99-5GAL,Isopropyl Alcohol 99.8% Lab Grade,Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Split Order, US",Warehouse
+000403967,2026-09-11,CANHPLC-4L,Acetonitrile 99.9% HPLC Grade,Other Chemicals,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000403970,2026-09-11,EAPHPLC200-4L,Ethanol HPLC Grade 200 Proof (100%) Non-Denatured Pure Alcohol,Pure Alcohols,1,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000403982,2026-09-11,IPAU70-500mL,"Isopropyl Alcohol 70% USP Grade, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000403961,2026-09-11,SOSUATGL-50LB,"Sodium Sulfate Anhydrous, Lab Grade (Fine Granular)",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000403991,2026-09-11,IPAL99-55GAL,Isopropyl Alcohol 99.8% Lab Grade,Alcohols,1,,No,awaiting_shipment,ATX Freight,Freight
+000403997,2026-09-11,MANPU-1LB,"Mannitol, Powder, USP Grade",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404006,2026-09-11,,,,,,,awaiting_shipment,US,
+000404024,2026-09-11,,,,,,,awaiting_shipment,US,
+000404066,2026-09-11,SOCTGU-500G,Sodium Citrate Dihydrate USP/FCC Grade,Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404075,2026-09-11,Multiple products,Multiple products,Acids,,,,awaiting_shipment,"PA, Austin Warehouse, Split Order, US, United Scientific, Restricted Combination - Nitric Acid",Warehouse
+000404078,2026-09-11,CANHPLC-4L,Acetonitrile 99.9% HPLC Grade,Other Chemicals,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404093,2026-09-11,,,,,,,awaiting_shipment,"US, United Scientific",
+000404138,2026-09-11,NAL67-2.5L,"Nitric Acid 67% Solution, Lab/Technical Grade",Acids,4,,Yes,awaiting_shipment,"PA, Austin Warehouse, Poison Pack, Restricted Chemical, Restricted Combination - Nitric Acid",Warehouse
+000404150,2026-09-11,AANHA-1GAL,"Acetic Anhydride, ACS Grade",Acids,3,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Chemical",Warehouse
+000404168,2026-09-11,CASTGL-1LB,"Calcium Stearate, Lab Grade",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404171,2026-09-11,FAL90-1GAL,"Formic Acid 90% Solution, Lab Grade",Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404174,2026-09-11,PS60F-1GAL,"Polysorbate 60, Derived from Palm, Food Grade, Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404180,2026-09-11,EAP200-4LG,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404222,2026-09-11,PHAF85-4L,"Phosphoric Acid 85% Solution, Food Grade (FCC), Kosher, Halal",Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404234,2026-09-11,ACW325P-1LB,"Activated Carbon (Charcoal) Powder, Food Grade, Kosher, Halal, Wood Based",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404246,2026-09-11,Multiple products,Multiple products,Granular,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000404249,2026-09-11,PPALF-1L,"Propionic Acid, Liquid, FCC/Food Grade, Kosher, Halal",Acids,4,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404264,2026-09-12,NAL67-2.5L,"Nitric Acid 67% Solution, Lab/Technical Grade",Acids,4,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Combination - Nitric Acid",Warehouse
+000404270,2026-09-12,EAS40B200-5GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404276,2026-09-12,EAS40B190-5GAL,"SDA 40B Ethanol 190 Proof (95%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404273,2026-09-12,ZSHGA-1KG,"Zinc Sulfate Heptahydrate, ACS Grade",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404288,2026-09-12,EAF200-5GAL,"Food Grade Ethanol, 200 Proof, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404294,2026-09-12,ACCL1240G-50LB,"Activated Carbon (Charcoal), Granular, Food Grade, Kosher",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404315,2026-09-12,HPL34-1GAL,"Hydrogen Peroxide 34% Solution, Lab Grade",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000404318,2026-09-12,EAOS190-1GAL,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404327,2026-09-12,Multiple products,Multiple products,Other Chemicals,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000404339,2026-09-12,CAOLU-1GAL,"Castor Oil, Cold Pressed, USP Grade, Kosher",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404345,2026-09-12,MSV-1GAL,Varsol Solvent,Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404363,2026-09-12,MANPU-12.5KG,"Mannitol, Powder, USP Grade",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404375,2026-09-12,EAP200-1GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404381,2026-09-12,BZKNF50-1L,"Benzalkonium Chloride 50% Solution, NF Grade",Solutions,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404384,2026-09-12,EAS40B200-1GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404387,2026-09-12,EAF200-1GAL,"Food Grade Ethanol, 200 Proof, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404426,2026-09-13,EAOS190-5GAL,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404429,2026-09-13,EAOS190-4L,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404459,2026-09-13,,,,,,,awaiting_shipment,"PA, Split Order, US, United Scientific",
+000404474,2026-09-13,EAP200-1GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404480,2026-09-13,Multiple products,Multiple products,Alcohols,,,,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404486,2026-09-13,Multiple products,Multiple products,,,,,awaiting_shipment,"Austin Warehouse, Restricted Chemical",Warehouse
+000404492,2026-09-13,EAP200-5GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404498,2026-09-13,EAS40B200-5GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404525,2026-09-13,EAOS190-1GAL,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404540,2026-09-13,MAL-4L,Methanol 99.85% Lab Grade,Alcohols,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404549,2026-09-13,PENHP-4L,n-Pentane ≥99% High Purity Grade,Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404552,2026-09-13,EAP200-5GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404555,2026-09-13,SOCAF-25KG,"Sodium Carbonate Anhydrous FCC, Kosher, Halal",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404561,2026-09-13,EAS40B200-1GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404567,2026-09-13,PS20F-1L,"Polysorbate 20, Derived from Palm, Food Grade, Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,,
+000404579,2026-09-13,AAL99-1GAL,Acetic Acid Glacial 99% Lab Grade,Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404585,2026-09-13,PPALF-5GAL,"Propionic Acid, Liquid, FCC/Food Grade, Kosher, Halal",Acids,4,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404588,2026-09-13,EAOS190-1GAL,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404597,2026-09-14,SHCN125-1GAL,Sodium Hypochlorite 12.5% Solution,Solutions,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404609,2026-09-14,NMPL-1GAL,"NMP, 1-Methyl-2-Pyrrolidone, Lab Grade",Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404621,2026-09-14,EAS3C200-4L,"SDA 3C Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404624,2026-09-14,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000404639,2026-09-14,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000404642,2026-09-14,ACCL80-325P-2.5KG,"Activated Carbon (Charcoal) Powder, Food Grade, Kosher, Coal Based",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404648,2026-09-14,EAP190-1GAL,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404651,2026-09-14,EAP200-1GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404660,2026-09-14,SOBICGU-1KG,"Sodium Bicarbonate, USP/FCC Grade, Kosher, Halal",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404663,2026-09-14,EAS40B200-5GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404666,2026-09-14,EAC200-5GAL,"Ethanol 200 Proof (100%) Completely Denatured with Heptane, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404669,2026-09-14,VMPL-1GAL,"VM&P Naphtha, Pure",Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404675,2026-09-14,EAP200-1GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404681,2026-09-14,Multiple products,Multiple products,Other Chemicals,,,,awaiting_shipment,"Austin Warehouse, Restricted Chemical",Warehouse
+000404687,2026-09-14,SHCN5-1GAL,Sodium Hypochlorite 5% Solution,Solutions,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404690,2026-09-14,IPAL99-5GAL,Isopropyl Alcohol 99.8% Lab Grade,Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404705,2026-09-14,IPAU99-5GAL,"Isopropyl Alcohol 99.8% USP Grade, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404711,2026-09-14,SOHYSL2N-1LCS,Sodium Hydroxide 2N Solution,Solutions,Lab Tech,,Yes,awaiting_shipment,Roshan,
+000404714,2026-09-14,EAD200-5GAL,"Denatured Ethanol 200 Proof, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404723,2026-09-14,IPAL70-5GAL,Isopropyl Alcohol 70% Lab Grade,Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404726,2026-09-14,EAD140-1GAL,"Ethanol 140 Proof (70%) Denatured Alcohol, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404729,2026-09-14,GLF-55GAL,"Glycerin 99% USP/NF/FCC/Food Grade, Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,"ATX Freight, Restricted Combination - Glycerin",Freight
+000404732,2026-09-14,SOBICGU-1LB,"Sodium Bicarbonate, USP/FCC Grade, Kosher, Halal",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404735,2026-09-14,PS80F-1GAL,"Polysorbate 80, Food Grade, Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404738,2026-09-14,EAS40B200-5GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404753,2026-09-14,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000404759,2026-09-14,EAP200-5GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404765,2026-09-14,Multiple products,Multiple products,,,,,awaiting_shipment,"Austin Warehouse, Restricted Combination - Glycerin",Warehouse
+000404768,2026-09-14,SOCAL-25KG,"Sodium Carbonate Anhydrous, Lab Grade",Granular,3,,Yes,awaiting_shipment,,
+000404777,2026-09-14,EAS40B200-5GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404783,2026-09-14,SOBZGF-12.5KG,"Sodium Benzoate, Food Grade, Kosher, Halal",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404786,2026-09-14,MANPU-1LB,"Mannitol, Powder, USP Grade",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404789,2026-09-14,HXL-1GAL,Hexanes Lab Grade,Other Chemicals,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Chemical",Warehouse
+000404792,2026-09-14,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000404795,2026-09-14,CAMCU-1KG,"Camphor, Crystals, USP Grade, Kosher",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404801,2026-09-14,EAP200-4LG,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404804,2026-09-14,EAP200-5GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404807,2026-09-14,Multiple products,Multiple products,Acids,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000404813,2026-09-14,EAD200-1GAL,"Denatured Ethanol 200 Proof, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404819,2026-09-14,PHAF25-5GAL,"Phosphoric Acid 25% Solution, Food Grade (FCC), Kosher, Halal",Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404822,2026-09-14,EAP200-1GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000404852,2026-09-14,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404825,2026-09-14,ZICIGU-25KG,"Zinc Citrate, USP/FCC Grade",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404828,2026-09-14,CAFU-1LB,"Caffeine Powder, USP/FCC/Food Grade, Kosher, Halal",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000397187-1,2026-09-14,HCLS37-1L,"Hydrochloric Acid 37% Solution, Semiconductor Grade",Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404831,2026-09-14,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000404834,2026-09-14,SOHYDPM-12.5kg,"Sodium Hydroxide, Pellets, ACS, USP/NF, FCC/Food Grade - 12.5kg",Granular,3,,Yes,awaiting_shipment,"PA, Austin Warehouse, Split Order",Warehouse
+000404849,2026-09-14,Multiple products,Multiple products,Granular,,,,awaiting_shipment,"PA, Austin Warehouse, Split Order",Warehouse
+000404855,2026-09-14,SOHYSCR001N-4L,"Sodium Hydroxide Solution 0.01N (N/100), Certified Grade",Solutions,Lab Tech,,Yes,awaiting_shipment,"Austin Warehouse, Roshan",Warehouse
+000404864,2026-09-14,SOHYSA30-20L,Sodium Hydroxide 30% Solution,Solutions,3,,Yes,awaiting_shipment,"Austin Warehouse, Roshan",Warehouse
+000404882,2026-09-14,EAF200-5GAL,"Food Grade Ethanol, 200 Proof, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404885,2026-09-14,AASL10-4L,"Acetic Acid 10% Solution, Lab Grade",Solutions,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404894,2026-09-14,Multiple products,Multiple products,Acids,,,,awaiting_shipment,"Austin Warehouse, Restricted Combination - Nitric Acid",Warehouse
+AMZN-000404942,2026-09-14,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404900,2026-09-14,EAS40B190-1GAL,"SDA 40B Ethanol 190 Proof (95%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404924,2026-09-14,CAFU-25kg,"Caffeine Powder, USP/FCC/Food Grade, Kosher, Halal",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404936,2026-09-14,HPF34-5GAL,"Hydrogen Peroxide 34% Food Grade, Kosher, Halal",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000404948,2026-09-14,PVPK30GU-1KG,"Polyvinylpyrrolidone PVP K-30, Powder, USP Grade, Kosher, Halal",Granular,1,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404951,2026-09-14,HPL6-500ML,"Hydrogen Peroxide 6% Solution, (Stabilized), Lab Grade",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000404954,2026-09-14,TCEL-500ML,Trichloroethylene ≥99.5% Lab Grade,Other Chemicals,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404963,2026-09-14,AMHA30-4L,"Ammonium Hydroxide 28-30% Solution, ACS Grade",Solutions,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404969,2026-09-14,EAS40B200-1GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000404972,2026-09-14,Multiple products,Multiple products,Acids,,,,awaiting_shipment,"Austin Warehouse, Restricted Combination - Nitric Acid",Warehouse
+000404978,2026-09-14,Multiple products,Multiple products,,,,,awaiting_shipment,"PA, Austin Warehouse, Split Order, Roshan",Warehouse
+000404981,2026-09-14,SHCN125-55GAL,Sodium Hypochlorite 12.5% Solution,Solutions,3,,No,awaiting_shipment,ATX Freight,Freight
+000404984,2026-09-14,SOHYDPM-50lb,"Sodium Hydroxide, Pellets, ACS, USP/NF, FCC/Food Grade - 50lb",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404990,2026-09-14,,,,,,,awaiting_shipment,US,
+AMZN-000401786-1,2026-09-14,ETACA-1QT,"Ethyl Acetate 99.5% ACS Grade, 1 Quart",Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404993,2026-09-14,CASTGL-2.5KG,"Calcium Stearate, Lab Grade",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000404996,2026-09-14,IPAL99-5GAL,Isopropyl Alcohol 99.8% Lab Grade,Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000404999,2026-09-14,DCML-1L,Dichloromethane (Methylene Chloride) Lab Grade,Other Chemicals,3,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Chemical",Warehouse
+000405002,2026-09-14,HPS30-1L,"Hydrogen Peroxide 30% Solution, Semiconductor/ Electronic Grade",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405008,2026-09-14,ACW325P-2.5KG,"Activated Carbon (Charcoal) Powder, Food Grade, Kosher, Halal, Wood Based",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405011,2026-09-14,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405017,2026-09-14,Multiple products,Multiple products,Granular,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405020,2026-09-14,IPAS99-1L,"Isopropyl Alcohol, 99% Semiconductor/ Electronic Grade",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405029,2026-09-14,SOCHLGU-2.5KG,"Sodium Chloride, Crystal, USP Grade, Kosher, Halal",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+WMT000405056,2026-09-14,HPF30-1GAL,"Hydrogen Peroxide 30% Solution, Food Grade, Kosher, Halal",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405059,2026-09-14,IPAU99-5GAL,"Isopropyl Alcohol 99.8% USP Grade, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405065,2026-09-14,IPAL99-1GAL,Isopropyl Alcohol 99.8% Lab Grade,Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405071,2026-09-14,Multiple products,Multiple products,,,,,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+WMT000405095,2026-09-14,HPF30-5GAL,"Hydrogen Peroxide 30% Solution, Food Grade, Kosher, Halal",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405080,2026-09-14,URPL-25KG,Urea Granules 99% Lab Grade,Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405098,2026-09-14,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405086,2026-09-14,EELA-500ML,Ethyl Ether ≥99% ACS Grade,Other Chemicals,2,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Chemical",Warehouse
+000405089,2026-09-14,,,,,,,awaiting_shipment,US,
+AMZN-000405101,2026-09-14,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405707,2026-09-14,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405119,2026-09-14,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405122,2026-09-14,EAS40B190-5GAL,"SDA 40B Ethanol 190 Proof (95%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+AMZN-000405128,2026-09-14,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405131,2026-09-14,Multiple products,Isopropyl Alcohol 70% Lab Grade,Alcohols,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405134,2026-09-14,Multiple products,"Hydrogen Peroxide 32% Solution, Lab Grade",Solutions,,,,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405146,2026-09-14,EAS40B200-1GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000405152,2026-09-14,CAOLU-1GAL,"Castor Oil, Cold Pressed, USP Grade, Kosher",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405161,2026-09-15,IPAL99-1GAL,Isopropyl Alcohol 99.8% Lab Grade,Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405170,2026-09-15,,,,,,,awaiting_shipment,US,
+000405173,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,"Austin Warehouse, Restricted Combination - Glycerin",Warehouse
+WMT000405179,2026-09-15,HPF30-1L,"Hydrogen Peroxide 30% Solution, Food Grade, Kosher, Halal",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405182,2026-09-15,PETHP-1GAL,Petroleum Ether High Purity Grade,Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405185,2026-09-15,LAF88-55GAL,"Lactic Acid 88%, Food Grade (FCC), Kosher",Acids,4,,No,awaiting_shipment,ATX Freight,Freight
+000405188,2026-09-15,DMFL-5GAL,Dimethylformamide 99.8% Lab Grade,Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405209,2026-09-15,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405212,2026-09-15,SOBZGF-2.5KG,"Sodium Benzoate, Food Grade, Kosher, Halal",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405197,2026-09-15,,,,,,,awaiting_shipment,PA,
+000405200,2026-09-15,HPL30-5GAL,"Hydrogen Peroxide 30% Solution, Lab Grade",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405206,2026-09-15,EAS40B190-5GAL,"SDA 40B Ethanol 190 Proof (95%), Kosher, Halal",Alcohols,1,,No,awaiting_shipment,"Austin Warehouse, Partial Restriction",Warehouse
+000405215,2026-09-15,ZNCHLGL-25KG,"Zinc Chloride, Granular, Lab Grade",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405218,2026-09-15,EAP200-1GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405221,2026-09-15,HPF6-1L,"Hydrogen Peroxide 6% Solution, Food Grade, Kosher, Halal",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405224,2026-09-15,,,,,,,awaiting_shipment,PA,
+000405227,2026-09-15,MOLGU-50LB,"Magnesium Oxide Light, USP/FCC Grade, Kosher, Halal",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405230,2026-09-15,SHCN125-1GAL,Sodium Hypochlorite 12.5% Solution,Solutions,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405233,2026-09-15,,,,,,,awaiting_shipment,,
+000405239,2026-09-15,CANHPLC-4L,Acetonitrile 99.9% HPLC Grade,Other Chemicals,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405242,2026-09-15,PS60F-1L,"Polysorbate 60, Derived from Palm, Food Grade, Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405245,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405248,2026-09-15,HPF32-55GAL,"Hydrogen Peroxide 32% Solution, Food Grade, Kosher, Halal",Solutions,2,,No,awaiting_shipment,"ATX Freight, Restricted Combination - Hydrogen Peroxide",Freight
+000405251,2026-09-15,,,,,,,awaiting_shipment,"PA, Restricted Chemical",
+000405254,2026-09-15,SUAA96-1L,"Sulfuric Acid 96% ACS Reagent Grade Solution (95-98%, Concentrated H2SO4)",Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405257,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,"PA, Austin Warehouse, Split Order",Warehouse
+AMZN-000405308,2026-09-15,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405263,2026-09-15,POHYSL40-20L,"Potassium Hydroxide, 40% Solution, Lab Grade",Solutions,Lab Tech,,Yes,awaiting_shipment,"Austin Warehouse, Roshan",Warehouse
+000405260,2026-09-15,FAL90-55GAL,"Formic Acid 90% Solution, Lab Grade",Acids,4,,Yes,awaiting_shipment,ATX Freight,Freight
+000405266,2026-09-15,TCAACLA85-4L,"Trichloroacetic Acid, 85%",Acids,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405311,2026-09-15,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405269,2026-09-15,,,,,,,awaiting_shipment,PA,
+AMZN-000405344,2026-09-15,EGL-1GAL,Ethylene Glycol 99% Lab Grade,Other Chemicals,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405272,2026-09-15,AANHL-1GAL,"Acetic Anhydride, Lab Grade",Acids,3,,Yes,awaiting_shipment,"PA, Austin Warehouse, Restricted Chemical",Warehouse
+000405275,2026-09-15,CAFU-1LB,"Caffeine Powder, USP/FCC/Food Grade, Kosher, Halal",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405374,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405293,2026-09-15,HPF34-5GAL,"Hydrogen Peroxide 34% Food Grade, Kosher, Halal",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405296,2026-09-15,NAA70-500ML,"Nitric Acid 70%, ACS Reagent Grade",Acids,4,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Combination - Nitric Acid",Warehouse
+000405302,2026-09-15,DCML-1GAL,Dichloromethane (Methylene Chloride) Lab Grade,Other Chemicals,3,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Chemical",Warehouse
+000405305,2026-09-15,EAOS190-5GAL,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405314,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405317,2026-09-15,,,,,,,awaiting_shipment,PA,
+000405320,2026-09-15,CYXL-5GAL,Cyclohexane 99% Lab Grade,Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405347,2026-09-15,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405323,2026-09-15,MACIGU-1LB,"Magnesium Citrate, USP/FCC Grade",Granular,3,,Yes,awaiting_shipment,"PA, Austin Warehouse, Split Order",Warehouse
+AMZN-000405353,2026-09-15,EAC200-5GAL,"Ethanol 200 Proof (100%) Completely Denatured with Heptane, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405326,2026-09-15,DCML-1GAL,Dichloromethane (Methylene Chloride) Lab Grade,Other Chemicals,3,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Chemical",Warehouse
+000405329,2026-09-15,,,,,,,awaiting_shipment,PA,
+000405332,2026-09-15,HPF30-1L,"Hydrogen Peroxide 30% Solution, Food Grade, Kosher, Halal",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405335,2026-09-15,DCML-5GAL,Dichloromethane (Methylene Chloride) Lab Grade,Other Chemicals,3,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Chemical",Warehouse
+000405338,2026-09-15,,,,,,,awaiting_shipment,US,
+000405341,2026-09-15,BZKNF50-1GAL,"Benzalkonium Chloride 50% Solution, NF Grade",Solutions,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405350,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405356,2026-09-15,EAD190-1GAL,"Ethanol 190 Proof (95%) Denatured Alcohol, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405359,2026-09-15,,,,,,,awaiting_shipment,PA,
+000405362,2026-09-15,CANHPLC-4L,Acetonitrile 99.9% HPLC Grade,Other Chemicals,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405365,2026-09-15,,,,,,,awaiting_shipment,US,
+000405368,2026-09-15,CANA-5GAL,Acetonitrile 99.5% Reagent ACS Grade,Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405371,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,"Austin Warehouse, ATX Freight, Roshan",Both
+AMZN-000405422,2026-09-15,PS80F-1GAL,"Polysorbate 80, Food Grade, Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405377,2026-09-15,EAC200-5GAL,"Ethanol 200 Proof (100%) Completely Denatured with Heptane, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405380,2026-09-15,,,,,,,awaiting_shipment,"US, United Scientific",
+000405383,2026-09-15,MEKLL-1GAL,"Methyl Ethyl Ketone (MEK), Lab Grade",Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405386,2026-09-15,URPU-1KG,"Urea Crystalline Powder 99%, USP Grade",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405389,2026-09-15,NAA70-500ML,"Nitric Acid 70%, ACS Reagent Grade",Acids,4,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Combination - Nitric Acid",Warehouse
+000405392,2026-09-15,EAOS190-5GAL,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405395,2026-09-15,Multiple products,Multiple products,Acids,,,,awaiting_shipment,"Austin Warehouse, Restricted Combination - Nitric Acid",Warehouse
+000405398,2026-09-15,MACIGU-1LB,"Magnesium Citrate, USP/FCC Grade",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405401,2026-09-15,URPU-1LB,"Urea Crystalline Powder 99%, USP Grade",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405404,2026-09-15,CACIGU-1KG,"Calcium Citrate, USP/FCC Grade",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405458,2026-09-15,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405407,2026-09-15,,,,,,,awaiting_shipment,PA,
+AMZN-000405461,2026-09-15,PEG400F-1GAL,"Polyethylene Glycol (PEG) 400 Food Grade (FCC), Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405410,2026-09-15,EAOC200-55GAL,"Organic Ethyl Alcohol, Corn, 200 Proof, Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,ATX Freight,Freight
+000405413,2026-09-15,CYXL-1GAL,Cyclohexane 99% Lab Grade,Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405416,2026-09-15,,,,,,,awaiting_shipment,PA,
+000405419,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405425,2026-09-15,,,,,,,awaiting_shipment,PA,
+000405428,2026-09-15,,,,,,,awaiting_shipment,PA,
+000405431,2026-09-15,PGF-5GAL,"Propylene Glycol 99.5% USP/NF/FCC/Food Grade, Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405434,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405437,2026-09-15,EAOS190TXPD-55GAL,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,ATX Freight,Freight
+000405440,2026-09-15,POHYSA1N-500ML,"Potassium Hydroxide 1N Solution, Reagent Grade",Solutions,Lab Tech,,Yes,awaiting_shipment,"Austin Warehouse, Roshan",Warehouse
+000405443,2026-09-15,PEG400F-20L,"Polyethylene Glycol (PEG) 400 Food Grade (FCC), Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405449,2026-09-15,CANHPLC-4L,Acetonitrile 99.9% HPLC Grade,Other Chemicals,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405452,2026-09-15,Multiple products,Multiple products,Pure Alcohols,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000399365-1,2026-09-15,MAA-1GAL,Methanol ≥99.8% ACS Reagent/USP/NF Grade,Alcohols,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405455,2026-09-15,MAL-1GAL,Methanol 99.85% Lab Grade,Alcohols,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405503,2026-09-15,EAC200-4L,"Ethanol 200 Proof (100%) Completely Denatured with Heptane, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405464,2026-09-15,,,,,,,awaiting_shipment,,
+000405467,2026-09-15,EAD140-5GAL,"Ethanol 140 Proof (70%) Denatured Alcohol, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405470,2026-09-15,SUAS1N-4L,"Sulfuric Acid 1N Solution, Reagent Grade",Solutions,Lab Tech,,Yes,awaiting_shipment,"Austin Warehouse, Roshan",Warehouse
+000405473,2026-09-15,PEG400F-500ML,"Polyethylene Glycol (PEG) 400 Food Grade (FCC), Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405476,2026-09-15,EAP200-55GALM,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,ATX Freight,Freight
+000405488,2026-09-15,SUAL93-1GAL,"Sulfuric Acid 93% (92-94%) Solution, Lab Grade",Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405497,2026-09-15,EAD190-55GAL,"Ethanol 190 Proof (95%) Denatured Alcohol, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,ATX Freight,Freight
+000405500,2026-09-15,,,,,,,awaiting_shipment,"PA, Austin Warehouse, Split Order",Warehouse
+000380997-1,2026-09-15,HCLS37-1GAL,"Hydrochloric Acid 37% Solution, Semiconductor Grade",Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405548,2026-09-15,EAD200-1GAL,"Denatured Ethanol 200 Proof, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405506,2026-09-15,SUAA50-4L,"Sulfuric Acid 50% Solution, Reagent Grade",Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405512,2026-09-15,MCTC-1GAL,"MCT Oil Coconut Based USP/FCC/Food Grade, Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405515,2026-09-15,,,,,,,awaiting_shipment,"PA, Austin Warehouse, Split Order, Roshan",Warehouse
+000405518,2026-09-15,HCASA6M-1L,"Hydrochloric Acid 6M, Lab Grade",Acids,Lab Tech,,Yes,awaiting_shipment,"Austin Warehouse, Roshan",Warehouse
+000405521,2026-09-15,EAOC200-1L,"Organic Ethyl Alcohol, Corn, 200 Proof, Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+WMT000405542,2026-09-15,HPF34-1GAL,"Hydrogen Peroxide 34% Food Grade, Kosher, Halal",Solutions,2,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Hydrogen Peroxide",Warehouse
+000405524,2026-09-15,AAA99-1GAL,Acetic Acid Glacial 99% ACS Grade,Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405527,2026-09-15,,,,,,,awaiting_shipment,US,
+AMZN-000405653,2026-09-15,EAC200-4L,"Ethanol 200 Proof (100%) Completely Denatured with Heptane, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405530,2026-09-15,,,,,,,awaiting_shipment,US,
+000405533,2026-09-15,,,,,,,awaiting_shipment,US,
+AMZN-000405575,2026-09-15,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405536,2026-09-15,VMPL-1GAL,"VM&P Naphtha, Pure",Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405545,2026-09-15,EAOS190-1L,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405599,2026-09-15,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405551,2026-09-15,CACIGU-1KG,"Calcium Citrate, USP/FCC Grade",Granular,2,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405560,2026-09-15,IPAL70-20L,Isopropyl Alcohol 70% Lab Grade,Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405563,2026-09-15,NAA70-2.5L,"Nitric Acid 70%, ACS Reagent Grade",Acids,4,,Yes,awaiting_shipment,"Austin Warehouse, Restricted Combination - Nitric Acid",Warehouse
+000405566,2026-09-15,EAD140-1GAL,"Ethanol 140 Proof (70%) Denatured Alcohol, Kosher, Halal",Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405569,2026-09-15,,,,,,,awaiting_shipment,US,
+000405572,2026-09-15,TRIX100-500ML,Triton X-100 Surfactant,Other Chemicals,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405578,2026-09-15,,,,,,,awaiting_shipment,PA,
+000396713-1,2026-09-15,EAP190-1PG,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405581,2026-09-15,PEG200L-4L,"Polyethylene Glycol (PEG), 200, Lab Grade",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405590,2026-09-15,SUAL93-1GAL,"Sulfuric Acid 93% (92-94%) Solution, Lab Grade",Acids,4,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405593,2026-09-15,EAOS190-5GAL,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405596,2026-09-15,PHAL85-5GAL,"Phosphoric Acid 85% Solution, Lab Grade",Acids,4,,Yes,awaiting_shipment,ATX Freight,Freight
+AMZN-000405656,2026-09-15,GLF-1GAL,"Glycerin 99% USP/NF/FCC/Food Grade, Kosher, Halal",Other Chemicals,1,,No,awaiting_shipment,"Austin Warehouse, Restricted Combination - Glycerin",Warehouse
+000405602,2026-09-15,EAPMB200-1GAL,"Ethanol 200 Proof (100%),  Suitable for Molecular Biology",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405605,2026-09-15,EAP200-1GAL,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405659,2026-09-15,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405608,2026-09-15,,,,,,,awaiting_shipment,US,
+000405611,2026-09-15,Multiple products,Multiple products,Granular,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405614,2026-09-15,PEG200L-1L,"Polyethylene Glycol (PEG), 200, Lab Grade",Other Chemicals,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405617,2026-09-15,EGL-5GAL,Ethylene Glycol 99% Lab Grade,Other Chemicals,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405620,2026-09-15,CAFU-1KG,"Caffeine Powder, USP/FCC/Food Grade, Kosher, Halal",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405638,2026-09-15,Multiple products,Multiple products,Granular,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405641,2026-09-15,ACEL-1GAL,Acetone 99.5% Lab Grade,Other Chemicals,2,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405644,2026-09-15,IPAL99-5GAL,Isopropyl Alcohol 99.8% Lab Grade,Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405665,2026-09-15,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405662,2026-09-15,SOHYDLL50-500ML,"Sodium Hydroxide 50% Solution, Lab/Technical Grade",Solutions,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405668,2026-09-15,EAP200-4LG,"Ethanol 200 Proof (100%) Undenatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405671,2026-09-15,,,,,,,awaiting_shipment,US,
+AMZN-000405683,2026-09-15,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405674,2026-09-15,CTALF-500ML,"Citric Acid 50% Solution, FCC/Food Grade, Kosher, Halal",Solutions,4,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405677,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405695,2026-09-15,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405689,2026-09-15,TCAACLA85-1OZ,"Trichloroacetic Acid, 85%",Acids,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405692,2026-09-15,SHCN5-55GAL,Sodium Hypochlorite 5% Solution,Solutions,3,,No,awaiting_shipment,ATX Freight,Freight
+000405698,2026-09-15,BZKNF50-500ML,"Benzalkonium Chloride 50% Solution, NF Grade",Solutions,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405701,2026-09-15,SOBZGF-1LB,"Sodium Benzoate, Food Grade, Kosher, Halal",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405710,2026-09-15,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405704,2026-09-15,,,,,,,awaiting_shipment,PA,
+AMZN-000405713,2026-09-15,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405725,2026-09-15,,,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405716,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,"Austin Warehouse, Roshan",Warehouse
+000405719,2026-09-15,SOHYDPM-2.5kg,"Sodium Hydroxide, Pellets, ACS, USP/NF, FCC/Food Grade - 2.5kg",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
+000405722,2026-09-15,,,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+187579,2025-05-21,C7506-55GAL,Sodium Bifluoride 3.7% solution,Solutions,4,,,on_hold,ATX Freight,Freight
+220199,2026-02-04,Multiple products,Multiple products,,,,,on_hold,"Austin Warehouse, Roshan",Warehouse
+000349689,2026-05-06,DCML-500ML,Dichloromethane (Methylene Chloride) Lab Grade,Other Chemicals,3,,Yes,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
+000361317,2026-06-01,LA-032A1 (CS),32OZ Amber Boston Round 33-400,Lab Supplies,,,,on_hold,,
+000402404,2026-09-08,EAF200-1PG,"Food Grade Ethanol, 200 Proof, Kosher, Halal",Pure Alcohols,1,,No,on_hold,Austin Warehouse,Warehouse
+000405446,2026-09-15,,,,,,,on_hold,"PA, Restricted Chemical",
+000405485,2026-09-15,CHLA-1L,Chloroform ≥99% ACS Reagent Grade,Other Chemicals,3,,Yes,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
+000405509,2026-09-15,EAS40B190-1GAL,"SDA 40B Ethanol 190 Proof (95%), Kosher, Halal",Alcohols,1,,No,on_hold,"Austin Warehouse, Partial Restriction",Warehouse
+000405539,2026-09-15,EAS40B200-1GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,on_hold,"Austin Warehouse, Partial Restriction",Warehouse
+000405584,2026-09-15,AANHA-5GAL,"Acetic Anhydride, ACS Grade",Acids,3,,Yes,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
+000405587,2026-09-15,TOLL-5GAL,Toluene Lab Grade,Other Chemicals,2,,Yes,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
+000405647,2026-09-15,CHLHPLC-4L,"Chloroform, HPLC Grade",Other Chemicals,3,,Yes,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
+000405650,2026-09-15,Multiple products,Multiple products,,,,,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
+000405680,2026-09-15,EAS40B200-1GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,on_hold,"Austin Warehouse, Partial Restriction",Warehouse
