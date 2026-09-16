@@ -1,0 +1,8 @@
+# This repo holds both the backend automation (Python scripts + GitHub
+# Actions workflows) and the frontend dashboard. Netlify only needs the
+# frontend — this tells it where to find it and that no build step is
+# needed (it's plain static HTML/CSS/JS, no framework/bundler).
+
+[build]
+  publish = "site"
+  command = ""

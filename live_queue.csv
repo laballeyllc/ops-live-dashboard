@@ -376,10 +376,11 @@ AMZN-000405695,2026-09-15,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 
 AMZN-000405710,2026-09-15,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
 000405704,2026-09-15,,,,,,,awaiting_shipment,PA,
 AMZN-000405713,2026-09-15,EAOS190-1QTCS,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
-AMZN-000405725,2026-09-15,,,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+AMZN-000405725,2026-09-15,EAP190-1QTCS,"Ethanol 190 Proof (95%) Non-Denatured Alcohol, USP/FCC Food Grade, Kosher, Halal",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
 000405716,2026-09-15,Multiple products,Multiple products,,,,,awaiting_shipment,"Austin Warehouse, Roshan",Warehouse
 000405719,2026-09-15,SOHYDPM-2.5kg,"Sodium Hydroxide, Pellets, ACS, USP/NF, FCC/Food Grade - 2.5kg",Granular,3,,Yes,awaiting_shipment,Austin Warehouse,Warehouse
-000405722,2026-09-15,,,,,,,awaiting_shipment,Austin Warehouse,Warehouse
+000405722,2026-09-15,BZKNF50-500ML,"Benzalkonium Chloride 50% Solution, NF Grade",Solutions,3,,No,awaiting_shipment,Austin Warehouse,Warehouse
+000405728,2026-09-15,EAOS190-1GAL,"Organic Ethyl Alcohol, Sugar Cane, 190 Proof Kosher, Halal, FCC",Pure Alcohols,1,,No,awaiting_shipment,Austin Warehouse,Warehouse
 187579,2025-05-21,C7506-55GAL,Sodium Bifluoride 3.7% solution,Solutions,4,,,on_hold,ATX Freight,Freight
 220199,2026-02-04,Multiple products,Multiple products,,,,,on_hold,"Austin Warehouse, Roshan",Warehouse
 000349689,2026-05-06,DCML-500ML,Dichloromethane (Methylene Chloride) Lab Grade,Other Chemicals,3,,Yes,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
@@ -394,3 +395,4 @@ AMZN-000405725,2026-09-15,,,,,,,awaiting_shipment,Austin Warehouse,Warehouse
 000405647,2026-09-15,CHLHPLC-4L,"Chloroform, HPLC Grade",Other Chemicals,3,,Yes,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
 000405650,2026-09-15,Multiple products,Multiple products,,,,,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
 000405680,2026-09-15,EAS40B200-1GAL,"SDA 40B Ethanol 200 Proof (100%), Kosher, Halal",Alcohols,1,,No,on_hold,"Austin Warehouse, Partial Restriction",Warehouse
+000405731,2026-09-15,CYNL-5GAL,"Cyclohexanone, Lab Grade",Other Chemicals,2,,No,on_hold,"Austin Warehouse, Restricted Chemical",Warehouse
