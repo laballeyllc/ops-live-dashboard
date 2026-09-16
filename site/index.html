@@ -121,6 +121,10 @@
     margin-bottom: 32px;
   }
 
+  .breakdowns-2col {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .breakdown-panel {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -323,6 +327,18 @@
     </div>
   </div>
 
+  <div class="breakdowns breakdowns-2col">
+    <div class="breakdown-panel">
+      <h2>Downpack Product <span class="h2-note">% of orders at each value</span></h2>
+      <div id="downpack-breakdown"></div>
+    </div>
+    <div class="breakdown-panel">
+      <h2>HAZMAT category <span class="h2-note">pie: share of tags across lines in queue &nbsp;·&nbsp; bars: % of orders containing this HAZMAT category</span></h2>
+      <div id="hazmat-pie"></div>
+      <div id="hazmat-breakdown"></div>
+    </div>
+  </div>
+
   <div id="empty-state" style="display:none;">No live queue data found yet — check that the "Live Queue Pull" GitHub Action has run at least once.</div>
 </main>
 
@@ -333,7 +349,7 @@
 // only grants it SELECT, nothing else). Never put the service_role key
 // here; that one belongs only in GitHub Actions Secrets.
 const SUPABASE_URL = "https://pdflsmequzgpeuodnxyg.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_PUzGqmBUePaYAEunZxbBmg_1MlLrl1k";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBkZmxzbWVxdXpncGV1b2RueHlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1MTAxODMsImV4cCI6MjEwNTA4NjE4M30.F-h_K_cQ4v8UN5JFZBD8AEgqdujmD2zWFPalsAiE45w";
 // ----------------------------------------------------------------------
 
 const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -437,6 +453,8 @@ function buildSummary(rows) {
     avg_age_freight: average(agesByQueue.Freight),
     category_pcts: orderPercentagesFor("category"),
     chem_pcts: orderPercentagesFor("chem"),  // Chem Tech level lives in the `chem` field, not `chem_tech`
+    downpack_pcts: orderPercentagesFor("downpack"),
+    hazmat_pcts: orderPercentagesFor("hazmat"),
     lab_room_pct: totalOrders ? (labRoomOrders / totalOrders * 100) : 0,
     lab_room_orders: labRoomOrders,
   };
@@ -586,7 +604,7 @@ async function refresh() {
     document.getElementById("empty-state").style.display = currentRows.length ? "none" : "block";
     document.querySelector(".summary-row").style.display = currentRows.length ? "grid" : "none";
     document.querySelector(".age-row").style.display = currentRows.length ? "grid" : "none";
-    document.querySelector(".breakdowns").style.display = currentRows.length ? "grid" : "none";
+    document.querySelectorAll(".breakdowns").forEach(el => el.style.display = currentRows.length ? "grid" : "none");
     document.querySelector(".scope-note").style.display = currentRows.length ? "block" : "none";
 
     const summary = buildSummary(currentRows);
@@ -596,6 +614,9 @@ async function refresh() {
     renderPieChart("chemtech-pie", summary.chem_pcts);
     renderBreakdown("category-breakdown", summary.category_pcts);
     renderBreakdown("chemtech-breakdown", summary.chem_pcts);
+    renderBreakdown("downpack-breakdown", summary.downpack_pcts);
+    renderPieChart("hazmat-pie", summary.hazmat_pcts);
+    renderBreakdown("hazmat-breakdown", summary.hazmat_pcts);
     renderLabRoomStat(summary.lab_room_pct, summary.lab_room_orders, summary.total_orders);
   } catch (err) {
     console.error(err);

@@ -118,6 +118,8 @@ def build_rows(finale_lines_by_order: dict[str, list[dict]], queue_state: dict[s
                 "CHEM": line.get("CHEM", ""),
                 "CHEM TECH": line.get("CHEM TECH", ""),
                 "LAB ROOM": line.get("LAB ROOM", ""),
+                "Downpack Product": line.get("Downpack Product", ""),
+                "HAZMAT": line.get("HAZMAT", ""),
                 "Shipment status": info["Shipment status"],
                 "Tags": info["Tags"],
                 "Core Queue": core_queue(info["Tags"]),

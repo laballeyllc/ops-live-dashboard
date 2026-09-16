@@ -27,11 +27,15 @@ FINALE_API_SECRET = os.environ["FINALE_API_SECRET"]
 # swap pivotTableStream -> pivotTable in the resulting URL).
 ORDERS_REPORT_URL = (
     "https://app.finaleinventory.com/laballeyllc/doc/report/pivotTable/"
-    "1789493352778/Report.json?format=jsonObject&data=order"
+    "1789591213959/Report.json?format=jsonObject&data=order"
     "&attrName=%23%23user088"
-    "&rowDimensions=~nZrM1sDM_sDAwMDAwMCazNXAzP7AwMDAwMDAms0B_sDM_sDAwMDAwMCazQHUwMz-wMDAwMDAwJqzb3JkZXJFbGlnaWJsZVRvU2hpcMDM_sDAwMDAwMCazQEFwMz-wMDAwMDAwJq2b3JkZXJTaGlwRnJvbUZvcm1hdHRlZMDM_sDAwMDAwMCazQHNwMz-wMDAwMDAwJq0cHJvZHVjdFVzZXJVc2VyMTAwMzPAzP7AwMDAwMDAmrRwcm9kdWN0VXNlclVzZXIxMDA0MMDM_sDAwMDAwMCa2T5wcm9kdWN0U3RvcmVRdWFudGl0eVNvdXJjZUVudW1MYWJhbGxleWxsY2FwaXByb2R1Y3RzdG9yZTEwMDAwNMDM_sDAwMDAwMCazNvAzP7AwMDAwMDAmrRwcm9kdWN0VXNlclVzZXIxMDAzOcDM_sDAwMDAwMA"
+    "&rowDimensions=~n5rM1sDM_sDAwMDAwMCazNXAzP7AwMDAwMDAms0B_sDM_sDAwMDAwMCazQHUwMz-wMDAwMDAwJqzb3JkZXJFbGlnaWJsZVRvU2hpcMDM_sDAwMDAwMCazQEFwMz-wMDAwMDAwJq2b3JkZXJTaGlwRnJvbUZvcm1hdHRlZMDM_sDAwMDAwMCazQHNwMz-wMDAwMDAwJq0cHJvZHVjdFVzZXJVc2VyMTAwMzPAzP7AwMDAwMDAmrRwcm9kdWN0VXNlclVzZXIxMDA0MMDM_sDAwMDAwMCa2T5wcm9kdWN0U3RvcmVRdWFudGl0eVNvdXJjZUVudW1MYWJhbGxleWxsY2FwaXByb2R1Y3RzdG9yZTEwMDAwNMDM_sDAwMDAwMCazNvAzP7AwMDAwMDAmrRwcm9kdWN0VXNlclVzZXIxMDAzOcDM_sDAwMDAwMCatHByb2R1Y3RVc2VyVXNlcjEwMDAzwMz-wMDAwMDAwJq0cHJvZHVjdFVzZXJVc2VyMTAwMzXAzP7AwMDAwMDA"
     "&reportTitle=Ops%20Live%20Dashboard"
 )
+# Note: rowDimensions blob re-captured on 2026-09-16 to include the two
+# new columns added that day: Product: Downpack Product and Product:
+# HAZMAT (both confirmed added correctly, alongside the pre-existing
+# Magento field, via direct data verification before saving).
 
 # The two tags that define "our" core Warehouse/Freight queue. Everything
 # else (Biologix, United Scientific, Transene, GT, Post, holds, etc.) is
@@ -125,6 +129,8 @@ COLUMN_TO_DB = {
     "CHEM": "chem",
     "CHEM TECH": "chem_tech",
     "LAB ROOM": "lab_room",
+    "Downpack Product": "downpack",
+    "HAZMAT": "hazmat",
     "Shipment ID": "shipment_id",
     "Ship date actual": "ship_date_actual",
     "Shipment status": "shipment_status",
