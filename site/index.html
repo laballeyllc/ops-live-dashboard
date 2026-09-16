@@ -83,7 +83,7 @@
 
   .summary-row {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 1px;
     background: var(--border);
     border: 1px solid var(--border);
@@ -152,6 +152,80 @@
     margin: -18px 0 24px;
     max-width: 780px;
     line-height: 1.5;
+  }
+
+  .age-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+
+  .age-stat {
+    background: var(--panel);
+    padding: 16px 20px;
+  }
+
+  .age-value {
+    font-size: 26px;
+    font-weight: 600;
+    line-height: 1.1;
+  }
+
+  .age-value.warehouse { color: var(--warehouse); }
+  .age-value.freight { color: var(--freight); }
+  .age-value.alert { color: var(--alert); }
+
+  .age-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .pie-wrap {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .pie-legend {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .pie-legend-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    margin-bottom: 5px;
+  }
+
+  .pie-swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .pie-legend-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
+
+  .pie-legend-pct {
+    color: var(--text-muted);
+    flex-shrink: 0;
   }
 
   .stat-big {
@@ -228,15 +302,19 @@
 
 <main>
   <div class="summary-row" id="summary-row"></div>
-  <div class="scope-note">Showing orders Lab Alley itself fulfills (Warehouse/Freight) — drop-ship orders (Biologix, United Scientific, Transene, Post Apple Scientific, GT) are excluded entirely, since Finale has no product data for them.</div>
+  <div class="scope-note">Showing orders Lab Alley itself fulfills (Warehouse/Freight) — drop-ship orders (Biologix, United Scientific, Transene, Post Apple Scientific, GT) and anything not tagged Warehouse/Freight/Both are excluded entirely.</div>
+
+  <div class="age-row" id="age-panel"></div>
 
   <div class="breakdowns">
     <div class="breakdown-panel">
-      <h2>Category <span class="h2-note">% of orders containing this category — can exceed 100%, since one order can span more than one</span></h2>
+      <h2>Category <span class="h2-note">pie: share of category tags across lines in queue &nbsp;·&nbsp; bars: % of orders containing this category (can exceed 100%)</span></h2>
+      <div id="category-pie"></div>
       <div id="category-breakdown"></div>
     </div>
     <div class="breakdown-panel">
       <h2>Chem Tech level <span class="h2-note">sourced from Finale's CHEM field</span></h2>
+      <div id="chemtech-pie"></div>
       <div id="chemtech-breakdown"></div>
     </div>
     <div class="breakdown-panel">
@@ -255,7 +333,8 @@
 // only grants it SELECT, nothing else). Never put the service_role key
 // here; that one belongs only in GitHub Actions Secrets.
 const SUPABASE_URL = "https://pdflsmequzgpeuodnxyg.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBkZmxzbWVxdXpncGV1b2RueHlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk1MTAxODMsImV4cCI6MjEwNTA4NjE4M30.F-h_K_cQ4v8UN5JFZBD8AEgqdujmD2zWFPalsAiE45w";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBkZmxzbWVxdXpncGV1b2RueHlnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4OTUxMDE4MywiZXhwIjoyMTA1MDg2MTgzfQ.KTTX8FMXtYZfgVXhlTKwkkb1eTGFR0tlKJJN_ZHf9RE
+";
 // ----------------------------------------------------------------------
 
 const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -272,18 +351,27 @@ function orderAgeDays(orderDateStr) {
 }
 
 function buildSummary(rows) {
-  // Group product lines by order first — core_queue/order_date/tags are
+  // Scope EVERYTHING on this page to Core Queue = Warehouse/Freight/Both,
+  // consistently. An order can land in live_queue (real Finale product
+  // data exists) while carrying some other tag entirely — a hold like
+  // "Pending Approval," or nothing at all — meaning core_queue comes out
+  // blank ("Other"). That order was never really "in the Warehouse/
+  // Freight queue" the way ShipStation's own tabs define it, so it must
+  // not count toward "in queue," category/chem percentages, or —
+  // critically — the oldest/average age figures. This is exactly what
+  // caused the dashboard to report a 483-day-old "oldest" order when the
+  // real oldest order actually sitting in Warehouse or Freight was only
+  // 48 days old: the old code was including an "Other"-tagged order in
+  // that calculation. Confirmed by re-deriving it this way and expecting
+  // the number to now land close to what's visible directly in
+  // ShipStation's Warehouse/Freight tabs.
+  const scopedRows = rows.filter(r => ["Warehouse", "Freight", "Both"].includes(r.core_queue));
+
+  // Group product lines by order — core_queue/order_date/tags are
   // order-level (same across every line of a given order); category/chem
   // are line-level and a single order can span more than one value.
-  //
-  // Note: drop-ship orders are NOT filtered here — they're already
-  // excluded upstream, in pull_live_queue.py, before this data ever
-  // reaches Supabase. An order with zero Finale-matched product lines
-  // (i.e. fully drop-ship) never gets written to live_queue at all, so
-  // every row this function sees is already a real Lab Alley-fulfilled
-  // line. See pull_live_queue.py's build_rows() for the full reasoning.
   const linesByOrder = new Map();
-  for (const row of rows) {
+  for (const row of scopedRows) {
     if (!linesByOrder.has(row.order_id)) linesByOrder.set(row.order_id, []);
     linesByOrder.get(row.order_id).push(row);
   }
@@ -293,15 +381,19 @@ function buildSummary(rows) {
   let oldestAge = 0;
   let oldestOrderId = null;
   let labRoomOrders = 0;
+  const agesByQueue = { Warehouse: [], Freight: [], Both: [] };
 
   for (const [oid, lines] of linesByOrder) {
     const first = lines[0];
     const cq = first.core_queue || "Other";
     coreQueueCounts[cq] = (coreQueueCounts[cq] || 0) + 1;
     const age = orderAgeDays(first.order_date);
-    if (age !== null && age > oldestAge) {
-      oldestAge = age;
-      oldestOrderId = oid;
+    if (age !== null) {
+      if (age > oldestAge) {
+        oldestAge = age;
+        oldestOrderId = oid;
+      }
+      if (agesByQueue[cq]) agesByQueue[cq].push(age);
     }
     // An order "requires a lab room" if ANY of its lines do — picking
     // the whole order still means handling that line's requirement.
@@ -310,11 +402,18 @@ function buildSummary(rows) {
     }
   }
 
+  function average(arr) {
+    return arr.length ? arr.reduce((s, n) => s + n, 0) / arr.length : null;
+  }
+
   // "% of orders containing this value" (confirmed as the wanted
   // definition): an order counts toward EVERY distinct value it has for
   // this field across its lines, not just one — so percentages across
   // values can sum past 100%. That's deliberate, not a bug — see the
-  // note rendered next to each breakdown's heading.
+  // note rendered next to each breakdown's heading. The same raw counts
+  // are reused for the pie charts above, just normalized differently
+  // there (by total touches, so the pie correctly sums to 100%) — see
+  // renderPieChart().
   function orderPercentagesFor(field) {
     const valueOrderCounts = {};
     for (const [oid, lines] of linesByOrder) {
@@ -335,6 +434,8 @@ function buildSummary(rows) {
     core_queue_counts: coreQueueCounts,
     oldest_age_days: oldestAge,
     oldest_order_id: oldestOrderId,
+    avg_age_warehouse: average(agesByQueue.Warehouse),
+    avg_age_freight: average(agesByQueue.Freight),
     category_pcts: orderPercentagesFor("category"),
     chem_pcts: orderPercentagesFor("chem"),  // Chem Tech level lives in the `chem` field, not `chem_tech`
     lab_room_pct: totalOrders ? (labRoomOrders / totalOrders * 100) : 0,
@@ -349,11 +450,6 @@ function renderSummary(summary) {
     { label: "Warehouse", value: cq["Warehouse"] || 0, cls: "warehouse" },
     { label: "Freight", value: cq["Freight"] || 0, cls: "freight" },
     { label: "Split (both)", value: cq["Both"] || 0, cls: "both" },
-    {
-      label: summary.oldest_order_id ? `Oldest — #${summary.oldest_order_id}` : "Oldest order",
-      value: summary.oldest_age_days + "d",
-      cls: summary.oldest_age_days > 14 ? "alert" : ""
-    },
   ];
   document.getElementById("summary-row").innerHTML = cards.map(c => `
     <div class="summary-card ${c.cls}">
@@ -361,6 +457,83 @@ function renderSummary(summary) {
       <div class="label">${c.label}</div>
     </div>
   `).join("");
+}
+
+function renderAgePanel(summary) {
+  const fmtAvg = (v) => v === null ? "—" : `${v.toFixed(1)}d`;
+  document.getElementById("age-panel").innerHTML = `
+    <div class="age-stat">
+      <div class="age-value ${summary.oldest_age_days > 14 ? 'alert' : ''}">${summary.oldest_age_days}d</div>
+      <div class="age-label">Oldest in queue ${summary.oldest_order_id ? `— #${summary.oldest_order_id}` : ''}</div>
+    </div>
+    <div class="age-stat">
+      <div class="age-value warehouse">${fmtAvg(summary.avg_age_warehouse)}</div>
+      <div class="age-label">Average age — Warehouse</div>
+    </div>
+    <div class="age-stat">
+      <div class="age-value freight">${fmtAvg(summary.avg_age_freight)}</div>
+      <div class="age-label">Average age — Freight</div>
+    </div>
+  `;
+}
+
+// Distinct qualitative palette for the pie charts — deliberately
+// different from the Warehouse/Freight/Both colors used elsewhere, since
+// these charts represent a different dimension (category/chem mix) and
+// reusing those colors here would falsely imply a connection.
+const PIE_COLORS = ['#4FB0A5', '#D9A441', '#8B7FC7', '#6B9BD1', '#C77B9E', '#8FB573', '#E8956B'];
+
+function polarToCartesian(cx, cy, r, angleDeg) {
+  const angleRad = (angleDeg - 90) * Math.PI / 180;
+  return { x: cx + r * Math.cos(angleRad), y: cy + r * Math.sin(angleRad) };
+}
+
+function pieSlicePath(cx, cy, r, startAngle, endAngle) {
+  if (endAngle - startAngle >= 359.99) {
+    // Full circle (a single value at 100%) — the two-point arc approach
+    // below can't draw a complete circle, so special-case it.
+    return `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.01} ${cy - r} Z`;
+  }
+  const start = polarToCartesian(cx, cy, r, startAngle);
+  const end = polarToCartesian(cx, cy, r, endAngle);
+  const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+  return `M ${cx} ${cy} L ${start.x} ${start.y} A ${r} ${r} 0 ${largeArcFlag} 1 ${end.x} ${end.y} Z`;
+}
+
+function renderPieChart(elId, pcts) {
+  // Uses the SAME underlying [label, count] data as the bars below, but
+  // normalized differently: by total TOUCHES (sum of counts) rather than
+  // total ORDERS. That's what makes this a mathematically valid pie
+  // (slices sum to 100%) — the bars below intentionally use a different,
+  // order-based percentage that can exceed 100%, since one order can
+  // touch more than one category. Two different questions, both real:
+  // "what % of orders touch category X" (bars) vs. "of all the
+  // category tags in the queue, what share is X" (this pie).
+  const total = pcts.reduce((sum, [, count]) => sum + count, 0) || 1;
+  const top = pcts.slice(0, 7);
+  const r = 70, cx = 80, cy = 80;
+  let angle = 0;
+  let paths = '';
+  let legend = '';
+  top.forEach(([label, count], i) => {
+    const pct = count / total * 100;
+    const sweep = pct / 100 * 360;
+    const color = PIE_COLORS[i % PIE_COLORS.length];
+    paths += `<path d="${pieSlicePath(cx, cy, r, angle, angle + sweep)}" fill="${color}" />`;
+    legend += `
+      <div class="pie-legend-row">
+        <span class="pie-swatch" style="background:${color}"></span>
+        <span class="pie-legend-label" title="${label}">${label}</span>
+        <span class="pie-legend-pct">${pct.toFixed(0)}%</span>
+      </div>`;
+    angle += sweep;
+  });
+  document.getElementById(elId).innerHTML = top.length ? `
+    <div class="pie-wrap">
+      <svg viewBox="0 0 160 160" width="130" height="130">${paths}</svg>
+      <div class="pie-legend">${legend}</div>
+    </div>
+  ` : `<div class="bar-empty">No data</div>`;
 }
 
 function renderBreakdown(elId, pcts) {
@@ -413,11 +586,15 @@ async function refresh() {
 
     document.getElementById("empty-state").style.display = currentRows.length ? "none" : "block";
     document.querySelector(".summary-row").style.display = currentRows.length ? "grid" : "none";
+    document.querySelector(".age-row").style.display = currentRows.length ? "grid" : "none";
     document.querySelector(".breakdowns").style.display = currentRows.length ? "grid" : "none";
     document.querySelector(".scope-note").style.display = currentRows.length ? "block" : "none";
 
     const summary = buildSummary(currentRows);
     renderSummary(summary);
+    renderAgePanel(summary);
+    renderPieChart("category-pie", summary.category_pcts);
+    renderPieChart("chemtech-pie", summary.chem_pcts);
     renderBreakdown("category-breakdown", summary.category_pcts);
     renderBreakdown("chemtech-breakdown", summary.chem_pcts);
     renderLabRoomStat(summary.lab_room_pct, summary.lab_room_orders, summary.total_orders);
