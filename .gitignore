@@ -1,0 +1,13 @@
+# Never commit real credentials. This is what should have existed from
+# the very first commit — its absence is what let .env (with live API
+# keys) get pushed to a public repo and picked up by secret scanners.
+.env
+.env.*
+
+# Local-only outputs and artifacts — these change on every run and have
+# no reason to be tracked in git; they're not source code.
+*.csv
+*.db
+*.lock
+__pycache__/
+*.pyc
