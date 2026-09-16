@@ -146,16 +146,22 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
 
 
 def build_rows(finale_lines_by_order: dict[str, list[dict]], ss_state: dict[str, dict]) -> list[dict]:
-    """One row per (ShipStation order x Finale product line). If Finale
-    has no product lines for an order (shouldn't normally happen, but
-    Finale and ShipStation are two different systems and could disagree),
-    we still emit one row with blank product fields rather than silently
-    dropping the order."""
+    """One row per (ShipStation order x Finale product line). Orders with
+    ZERO matching Finale product lines are skipped entirely — confirmed
+    directly against a real mixed order (000323837) that this means the
+    order is fully drop-ship: those line items never get recorded in
+    Finale at all (the vendor ships them directly), so there's nothing
+    Lab Alley actually fulfilled on that order. An order WITH Finale
+    lines already contains only its real Warehouse/Freight-fulfilled
+    lines — Finale does that line-level split for us; we don't need to
+    reproduce it, just avoid inserting a blank placeholder for the
+    zero-match case, which is what used to leak drop-ship-only orders in
+    as blank rows."""
     rows = []
     for oid, info in ss_state.items():
         lines = finale_lines_by_order.get(oid)
         if not lines:
-            lines = [{}]
+            continue  # fully drop-ship order — no Lab Alley-fulfilled lines at all
         for line in lines:
             rows.append({
                 "Order ID": oid,

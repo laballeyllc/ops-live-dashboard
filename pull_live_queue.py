@@ -90,12 +90,24 @@ def build_rows(finale_lines_by_order: dict[str, list[dict]], queue_state: dict[s
     """Same row shape as pull_ops_data.py's historical output (minus
     shipment-specific fields that don't apply to something still in
     queue), so the live view and the historical view are directly
-    comparable — just different scopes of the same picture."""
+    comparable — just different scopes of the same picture.
+
+    Orders with ZERO matching Finale product lines are skipped entirely
+    — not given a placeholder row. Confirmed directly against a real
+    mixed order (000323837): drop-ship line items never get recorded in
+    Finale at all (the vendor ships them directly; they never enter Lab
+    Alley's own fulfillment system), so an order with no Finale lines is
+    a fully drop-ship order, and an order WITH Finale lines already
+    contains only its real Warehouse/Freight-fulfilled lines — Finale
+    itself does the line-level split for us. We don't need to reproduce
+    that logic; we just need to stop inserting a placeholder for the
+    zero-match case, which is what used to leak drop-ship-only orders
+    into the dashboard as blank rows."""
     rows = []
     for oid, info in queue_state.items():
         lines = finale_lines_by_order.get(oid)
         if not lines:
-            lines = [{}]
+            continue  # fully drop-ship order — no Lab Alley-fulfilled lines at all
         for line in lines:
             rows.append({
                 "Order ID": oid,
