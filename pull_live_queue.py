@@ -39,7 +39,7 @@ import csv
 import sys
 import time
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from shipstation_client import ShipStationClient
@@ -174,7 +174,11 @@ def main():
 
     try:
         run_start = time.time()
-        pulled_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Always explicit UTC with an explicit offset — see the same fix
+        # and full explanation in pull_ops_data.py. Runs both locally
+        # (Central Time) and on GitHub Actions (UTC); this makes the
+        # timestamp correct and consistent regardless of which one ran.
+        pulled_at = datetime.now(timezone.utc).isoformat()
 
         client = ShipStationClient()
         t0 = time.time()

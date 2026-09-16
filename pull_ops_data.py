@@ -66,7 +66,7 @@ import os
 import csv
 import time
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 from shipstation_client import ShipStationClient
@@ -217,7 +217,15 @@ def main():
     args = parser.parse_args()
 
     run_start = time.time()
-    pulled_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Always explicit UTC with an explicit offset (+00:00), never a bare
+    # local-time string. This script runs both on Casey's own machine
+    # (Central Time) and on GitHub Actions runners (UTC) — datetime.now()
+    # with no timezone attached silently picks up whichever clock it
+    # happens to run on, which made timestamps inconsistent and looked
+    # like they were "in the future" when the two got compared. Postgres'
+    # timestamptz column needs this explicit offset to store the right
+    # absolute instant regardless of which machine sent it.
+    pulled_at = datetime.now(timezone.utc).isoformat()
 
     client = ShipStationClient()
     t0 = time.time()
