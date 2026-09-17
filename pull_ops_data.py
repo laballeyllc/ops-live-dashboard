@@ -97,8 +97,15 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
     # Step 1: current queue, no date limit. A stuck order doesn't stop
     # being "in queue" just because it's old. Tags and Ship From Location
     # are on the order object directly here, so no extra lookup needed.
-    print("Pulling current queue from ShipStation (awaiting_shipment + on_hold, no date limit)...")
-    for status in ("awaiting_shipment", "on_hold"):
+    #
+    # Deliberately excludes on_hold orders (confirmed against a real
+    # example: order 220199, dated 2026-02-04, sitting on_hold tagged
+    # "Austin Warehouse, Roshan" — this is what caused the dashboard to
+    # report a 225-day-old "oldest" order). A held order isn't a real,
+    # actionable item in the Warehouse/Freight fulfillment queue right
+    # now — it's paused pending something else.
+    print("Pulling current queue from ShipStation (awaiting_shipment only — on_hold excluded, no date limit)...")
+    for status in ("awaiting_shipment",):
         orders = client.list_orders(order_status=status)
         print(f"  {status}: {len(orders)} orders")
         for order in orders:
