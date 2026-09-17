@@ -126,6 +126,10 @@
     grid-template-columns: repeat(2, 1fr);
   }
 
+  .breakdowns-4col {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
   .breakdown-panel {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -325,6 +329,7 @@
     <div class="breakdown-panel">
       <h2>Lab Room required</h2>
       <div id="labroom-stat"></div>
+      <div id="sku-stat"></div>
     </div>
   </div>
 
@@ -436,6 +441,14 @@ function buildSummary(rows) {
       const distinctValues = new Set(
         lines.map(l => (l[field] || "").trim()).filter(v => v)
       );
+      if (distinctValues.size === 0) {
+        // Every line on this order left this field blank in Finale —
+        // shown explicitly rather than silently dropped, so percentages
+        // for a normally single-valued field (like Downpack Product)
+        // honestly account for every order instead of quietly not
+        // summing to 100%.
+        distinctValues.add("(not set)");
+      }
       for (const value of distinctValues) {
         valueOrderCounts[value] = (valueOrderCounts[value] || 0) + 1;
       }
@@ -528,16 +541,29 @@ function renderPieChart(elId, pcts) {
   // touch more than one category. Two different questions, both real:
   // "what % of orders touch category X" (bars) vs. "of all the
   // category tags in the queue, what share is X" (this pie).
+  //
+  // IMPORTANT: only the top 6 values get their own wedge — anything
+  // beyond that is combined into a single "Other" wedge. Without this,
+  // drawing only the top N slices while still dividing by the FULL
+  // total left a visible empty gap in the circle for whatever the cutoff
+  // excluded (e.g. HAZMAT easily has 8+ distinct categories) — the pie
+  // never actually closed to 100%. Grouping the remainder into "Other"
+  // is what makes it a complete, honest circle.
   const total = pcts.reduce((sum, [, count]) => sum + count, 0) || 1;
-  const top = pcts.slice(0, 7);
+  const topN = 6;
+  const top = pcts.slice(0, topN);
+  const rest = pcts.slice(topN);
+  const restCount = rest.reduce((sum, [, count]) => sum + count, 0);
+  const slices = restCount > 0 ? [...top, ["Other", restCount]] : top;
+
   const r = 70, cx = 80, cy = 80;
   let angle = 0;
   let paths = '';
   let legend = '';
-  top.forEach(([label, count], i) => {
+  slices.forEach(([label, count], i) => {
     const pct = count / total * 100;
     const sweep = pct / 100 * 360;
-    const color = PIE_COLORS[i % PIE_COLORS.length];
+    const color = label === "Other" ? "#5A6169" : PIE_COLORS[i % PIE_COLORS.length];
     paths += `<path d="${pieSlicePath(cx, cy, r, angle, angle + sweep)}" fill="${color}" />`;
     legend += `
       <div class="pie-legend-row">
@@ -547,9 +573,10 @@ function renderPieChart(elId, pcts) {
       </div>`;
     angle += sweep;
   });
-  document.getElementById(elId).innerHTML = top.length ? `
+  document.getElementById(elId).innerHTML = slices.length ? `
     <div class="pie-wrap">
       <svg viewBox="0 0 160 160" width="130" height="130">${paths}</svg>
+
       <div class="pie-legend">${legend}</div>
     </div>
   ` : `<div class="bar-empty">No data</div>`;
@@ -566,12 +593,18 @@ function renderBreakdown(elId, pcts) {
   `).join("") || `<div class="bar-empty">No data</div>`;
 }
 
-function renderLabRoomStat(pct, count, total, uniqueSkus) {
+function renderLabRoomStat(pct, count, total) {
   document.getElementById("labroom-stat").innerHTML = `
     <div class="stat-big">${pct.toFixed(0)}%</div>
     <div class="stat-sub">${count} of ${total} orders require a Lab Room</div>
     <div class="bar-track" style="margin-top:12px;"><div class="bar-fill" style="width:${Math.min(pct,100).toFixed(0)}%"></div></div>
-    <div class="stat-sub" style="margin-top:14px;">${uniqueSkus} unique SKUs in queue</div>
+  `;
+}
+
+function renderSkuStat(uniqueSkus, totalOrders) {
+  document.getElementById("sku-stat").innerHTML = `
+    <div class="stat-big">${uniqueSkus}</div>
+    <div class="stat-sub">unique SKUs across ${totalOrders} orders in queue</div>
   `;
 }
 
@@ -620,7 +653,8 @@ async function refresh() {
     renderBreakdown("downpack-breakdown", summary.downpack_pcts);
     renderPieChart("hazmat-pie", summary.hazmat_pcts);
     renderBreakdown("hazmat-breakdown", summary.hazmat_pcts);
-    renderLabRoomStat(summary.lab_room_pct, summary.lab_room_orders, summary.total_orders, summary.unique_skus);
+    renderLabRoomStat(summary.lab_room_pct, summary.lab_room_orders, summary.total_orders);
+    renderSkuStat(summary.unique_skus, summary.total_orders);
   } catch (err) {
     console.error(err);
     document.getElementById("last-updated-text").textContent = "Connection error — check console";
