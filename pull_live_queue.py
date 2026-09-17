@@ -73,6 +73,8 @@ def pull_current_queue(client: ShipStationClient) -> dict[str, dict]:
     print("Pulling user list from ShipStation...")
     user_name_by_id = client.list_users()
     print(f"  {len(user_name_by_id)} users defined")
+    for uid, uname in user_name_by_id.items():
+        print(f"    {uid}: {uname!r}")
 
     state: dict[str, dict] = {}
     print("Pulling current queue from ShipStation (awaiting_shipment + on_hold)...")
