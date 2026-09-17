@@ -153,6 +153,91 @@
     border-color: #4A302B;
   }
 
+  .attack-section {
+    margin-top: 8px;
+  }
+
+  .attack-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 12px;
+  }
+
+  .attack-callouts {
+    margin-bottom: 20px;
+  }
+
+  .summary-card.quickwin .value { color: var(--warehouse); }
+  .summary-card.agingrisk .value { color: var(--alert); }
+
+  #attack-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 13px;
+    margin-bottom: 40px;
+  }
+
+  #attack-table thead th {
+    text-align: left;
+    padding: 10px 14px;
+    background: var(--panel-raised);
+    color: var(--text-muted);
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #attack-table thead th:hover { color: var(--text); }
+
+  #attack-table thead th.sorted::after {
+    content: ' \25be';
+    color: var(--warehouse);
+  }
+
+  #attack-table thead th.sorted.asc::after {
+    content: ' \25b4';
+  }
+
+  #attack-table tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  #attack-table tbody tr:last-child td { border-bottom: none; }
+  #attack-table tbody tr:hover { background: var(--panel-raised); }
+
+  .flag-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    margin-right: 4px;
+  }
+
+  .flag-pill.quickwin { background: var(--warehouse-dim); color: var(--warehouse); }
+  .flag-pill.agingrisk { background: #4A302B; color: var(--alert); }
+
+  .tag-pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .tag-pill.warehouse { background: var(--warehouse-dim); color: var(--warehouse); }
+  .tag-pill.freight { background: var(--freight-dim); color: var(--freight); }
+  .tag-pill.both { background: #35306B; color: var(--both); }
+
   .breakdown-panel {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -467,6 +552,38 @@
         <div id="held-breakdown"></div>
       </div>
     </div>
+  </div>
+
+  <div class="attack-section">
+    <h2 class="attack-section-title">Attack the Queue <span class="h2-note">Warehouse/Freight/Both orders only — held orders excluded, they're not workable right now</span></h2>
+
+    <div class="summary-row attack-callouts">
+      <div class="summary-card quickwin">
+        <div class="value" id="quickwin-count">0</div>
+        <div class="label">Quick wins — single SKU, no Lab Room, no Repack</div>
+      </div>
+      <div class="summary-card agingrisk">
+        <div class="value" id="agingrisk-count">0</div>
+        <div class="label">Aging risk — 5+ days old</div>
+      </div>
+    </div>
+
+    <table id="attack-table">
+      <thead>
+        <tr>
+          <th data-key="orderId">Order ID</th>
+          <th data-key="age">Age</th>
+          <th data-key="weight">Weight (lbs)</th>
+          <th data-key="qty">Qty</th>
+          <th data-key="skuCount">SKUs</th>
+          <th data-key="categories">Category</th>
+          <th data-key="downpack">Downpack</th>
+          <th data-key="coreQueue">Queue</th>
+          <th>Flags</th>
+        </tr>
+      </thead>
+      <tbody id="attack-tbody"></tbody>
+    </table>
   </div>
 
   <div id="empty-state" style="display:none;">No live queue data found yet — check that the "Live Queue Pull" GitHub Action has run at least once.</div>
@@ -926,6 +1043,107 @@ function renderHeldBreakdown(reasonBreakdown) {
   `).join("") : `<div class="bar-empty">Nothing currently on hold</div>`;
 }
 
+const AGING_RISK_DAYS = 5;
+
+function buildQueueList(rows) {
+  // Same scoping as everything else on the page: Warehouse/Freight/Both
+  // only, on_hold excluded (held orders aren't workable right now, so
+  // they don't belong in a list about how to work the queue).
+  const scopedRows = rows.filter(r =>
+    ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
+  );
+  const linesByOrder = new Map();
+  for (const row of scopedRows) {
+    if (!linesByOrder.has(row.order_id)) linesByOrder.set(row.order_id, []);
+    linesByOrder.get(row.order_id).push(row);
+  }
+
+  const orders = [];
+  for (const [oid, lines] of linesByOrder) {
+    const first = lines[0];
+    const age = orderAgeDays(first.order_date) ?? 0;
+    const categories = [...new Set(lines.map(l => (l.category || "").trim()).filter(v => v))];
+    const downpacks = [...new Set(lines.map(l => (l.downpack || "").trim()).filter(v => v))];
+    const skuCount = new Set(lines.map(l => (l.product_id || "").trim()).filter(v => v)).size;
+    const hasLabRoom = lines.some(l => (l.lab_room || "").trim().toLowerCase() === "yes");
+    const hasRepack = downpacks.some(d => d.toLowerCase() === "repack");
+
+    orders.push({
+      orderId: oid,
+      age,
+      weight: parseFloat(first.weight_lbs) || 0,
+      qty: parseInt(first.item_quantity) || 0,
+      skuCount,
+      categories: categories.join(", ") || "—",
+      downpack: downpacks.join(", ") || "—",
+      coreQueue: first.core_queue,
+      // "Quick win": single SKU, no Lab Room handling, no Repack —
+      // ready to clear fast without extra complexity.
+      isQuickWin: skuCount <= 1 && !hasLabRoom && !hasRepack,
+      isAgingRisk: age >= AGING_RISK_DAYS,
+    });
+  }
+  return orders;
+}
+
+let attackSortKey = "age";
+let attackSortAsc = false; // default: oldest first
+let currentAttackOrders = [];
+
+function renderAttackTable(orders) {
+  currentAttackOrders = orders;
+
+  const quickWins = orders.filter(o => o.isQuickWin);
+  const agingRisk = orders.filter(o => o.isAgingRisk);
+  document.getElementById("quickwin-count").textContent = quickWins.length;
+  document.getElementById("agingrisk-count").textContent = agingRisk.length;
+
+  const sorted = [...orders].sort((a, b) => {
+    const av = a[attackSortKey], bv = b[attackSortKey];
+    let cmp;
+    if (typeof av === "number" && typeof bv === "number") {
+      cmp = av - bv;
+    } else {
+      cmp = (av ?? "").toString().localeCompare((bv ?? "").toString(), undefined, { numeric: true });
+    }
+    return attackSortAsc ? cmp : -cmp;
+  });
+
+  document.getElementById("attack-tbody").innerHTML = sorted.map(o => `
+    <tr>
+      <td>${o.orderId}</td>
+      <td>${o.age}d</td>
+      <td>${o.weight.toFixed(1)}</td>
+      <td>${o.qty}</td>
+      <td>${o.skuCount}</td>
+      <td>${o.categories}</td>
+      <td>${o.downpack}</td>
+      <td><span class="tag-pill ${o.coreQueue.toLowerCase()}">${o.coreQueue}</span></td>
+      <td>
+        ${o.isQuickWin ? '<span class="flag-pill quickwin">Quick win</span>' : ''}
+        ${o.isAgingRisk ? '<span class="flag-pill agingrisk">Aging</span>' : ''}
+      </td>
+    </tr>
+  `).join("");
+
+  document.querySelectorAll("#attack-table thead th").forEach(th => {
+    th.classList.toggle("sorted", th.dataset.key === attackSortKey);
+    th.classList.toggle("asc", th.dataset.key === attackSortKey && attackSortAsc);
+  });
+}
+
+document.querySelectorAll("#attack-table thead th[data-key]").forEach(th => {
+  th.addEventListener("click", () => {
+    if (attackSortKey === th.dataset.key) {
+      attackSortAsc = !attackSortAsc;
+    } else {
+      attackSortKey = th.dataset.key;
+      attackSortAsc = true;
+    }
+    renderAttackTable(currentAttackOrders);
+  });
+});
+
 function formatLastUpdated(pulledAtIso) {
   // Data is stored in UTC (correctly, deliberately) — convert to Central
   // time for display, since nobody should have to do that math in their
@@ -961,6 +1179,7 @@ async function refresh() {
     document.querySelectorAll(".breakdowns").forEach(el => el.style.display = currentRows.length ? "grid" : "none");
     document.querySelector(".scope-note").style.display = currentRows.length ? "block" : "none";
     document.querySelector(".held-section").style.display = currentRows.length ? "block" : "none";
+    document.querySelector(".attack-section").style.display = currentRows.length ? "block" : "none";
 
     const summary = buildSummary(currentRows);
     renderSummary(summary);
@@ -978,6 +1197,8 @@ async function refresh() {
     const held = buildHeldSummary(currentRows);
     renderHeldSummary(held);
     renderHeldBreakdown(held.reason_breakdown);
+
+    renderAttackTable(buildQueueList(currentRows));
   } catch (err) {
     console.error(err);
     document.getElementById("last-updated-text").textContent = "Connection error — check console";
