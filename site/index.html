@@ -389,10 +389,17 @@
   }
 
   .bar-row .bar-count {
-    width: 34px;
+    width: 78px;
     text-align: right;
     color: var(--text-muted);
     flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .bar-count-n {
+    color: var(--text-muted);
+    opacity: 0.7;
+    font-size: 11px;
   }
 
   #empty-state {
@@ -877,7 +884,7 @@ function renderBreakdown(elId, pcts, field) {
     <div class="bar-row ${isNotSet ? 'bar-row-clickable' : ''}" ${isNotSet ? `onclick="toggleNotSetDrilldown('${field}','${drilldownId}')"` : ''}>
       <div class="bar-label" title="${label}">${label}${isNotSet ? ' <span class="notset-hint">(click to see SKUs)</span>' : ''}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.min(pct,100).toFixed(0)}%"></div></div>
-      <div class="bar-count">${pct.toFixed(0)}%</div>
+      <div class="bar-count">${pct.toFixed(0)}% <span class="bar-count-n">(${count})</span></div>
     </div>
     ${isNotSet ? `<div id="${drilldownId}"></div>` : ''}
   `;
@@ -914,7 +921,7 @@ function renderHeldBreakdown(reasonBreakdown) {
     <div class="bar-row">
       <div class="bar-label" title="${label}">${label}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.min(pct,100).toFixed(0)}%; background: var(--alert);"></div></div>
-      <div class="bar-count">${pct.toFixed(0)}%</div>
+      <div class="bar-count">${pct.toFixed(0)}% <span class="bar-count-n">(${count})</span></div>
     </div>
   `).join("") : `<div class="bar-empty">Nothing currently on hold</div>`;
 }
