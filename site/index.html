@@ -659,6 +659,14 @@ function notSetLinesFor(field) {
   // for this field — i.e. exactly the orders counted in the "(not set)"
   // bucket. Scoped the same way as everything else (Warehouse/Freight/
   // Both only), so this always matches what's actually on screen.
+  //
+  // Finale's own Orders report sometimes collapses a split/backordered
+  // order's distinct products into one row literally labeled "Multiple
+  // products" for both Product ID and Description — genuinely useless
+  // for tracking down which real SKU to fix. When that happens, we
+  // substitute ShipStation's own real line items (ss_items, captured
+  // directly from the order) instead, so the drilldown always shows
+  // actual, actionable SKUs rather than a placeholder.
   const scopedRows = currentRows.filter(r => ["Warehouse", "Freight", "Both"].includes(r.core_queue));
   const linesByOrder = new Map();
   for (const row of scopedRows) {
@@ -670,6 +678,19 @@ function notSetLinesFor(field) {
     const hasValue = lines.some(l => (l[field] || "").trim());
     if (!hasValue) {
       for (const l of lines) {
+        if ((l.product_id || "").trim() === "Multiple products") {
+          let items = [];
+          try { items = JSON.parse(l.ss_items || "[]"); } catch (e) { items = []; }
+          if (items.length) {
+            for (const item of items) {
+              results.push({ orderId: oid, productId: item.sku || "", description: item.name || "" });
+            }
+            continue;
+          }
+          // ss_items unavailable (e.g. an older row from before this
+          // field existed) — fall through to showing the placeholder
+          // rather than silently dropping the line.
+        }
         results.push({ orderId: oid, productId: l.product_id || "", description: l.description || "" });
       }
     }
@@ -681,9 +702,21 @@ function csvEscape(v) {
   return `"${(v || "").toString().replace(/"/g, '""')}"`;
 }
 
+function dedupSkus(lines) {
+  // Distinct Product ID + Description pairs only — the user doesn't
+  // need to see the same SKU repeated once per affected order, just
+  // what needs fixing in Finale.
+  const seen = new Map();
+  for (const l of lines) {
+    const key = `${l.productId}\u0000${l.description}`;
+    if (!seen.has(key)) seen.set(key, { productId: l.productId, description: l.description });
+  }
+  return Array.from(seen.values());
+}
+
 function downloadNotSetCsv(field) {
-  const lines = notSetLinesFor(field);
-  const csvRows = [["Order ID", "Product ID", "Description"], ...lines.map(l => [l.orderId, l.productId, l.description])];
+  const skus = dedupSkus(notSetLinesFor(field));
+  const csvRows = [["Product ID", "Description"], ...skus.map(s => [s.productId, s.description])];
   const csv = csvRows.map(r => r.map(csvEscape).join(",")).join("\n");
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
@@ -704,20 +737,20 @@ function toggleNotSetDrilldown(field, containerId) {
     el.dataset.open = "false";
     return;
   }
-  const lines = notSetLinesFor(field);
+  const skus = dedupSkus(notSetLinesFor(field));
   el.dataset.open = "true";
-  const rowsHtml = lines.map(l => `
-    <tr><td>${l.orderId}</td><td>${l.productId}</td><td class="description">${l.description}</td></tr>
+  const rowsHtml = skus.map(s => `
+    <tr><td>${s.productId}</td><td class="description">${s.description}</td></tr>
   `).join("");
   el.innerHTML = `
     <div class="notset-drilldown">
       <div class="notset-header">
-        <span>${lines.length} line item${lines.length === 1 ? '' : 's'} missing this field — fix in Finale</span>
+        <span>${skus.length} distinct SKU${skus.length === 1 ? '' : 's'} missing this field — fix in Finale</span>
         <a href="#" onclick="downloadNotSetCsv('${field}'); return false;">Download CSV</a>
       </div>
       <div class="notset-table-wrap">
         <table class="notset-table">
-          <thead><tr><th>Order ID</th><th>Product ID</th><th>Description</th></tr></thead>
+          <thead><tr><th>Product ID</th><th>Description</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
       </div>

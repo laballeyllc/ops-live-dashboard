@@ -44,7 +44,7 @@ from dotenv import load_dotenv
 
 from shipstation_client import ShipStationClient
 from ops_common import (
-    normalize_order_id, tags_for_order, core_queue_for_order,
+    normalize_order_id, tags_for_order, core_queue_for_order, ss_items_for_order,
     fetch_finale_product_lines, replace_live_queue,
     WAREHOUSE_LOCATION_NAME, FREIGHT_LOCATION_NAME,
 )
@@ -95,6 +95,7 @@ def pull_current_queue(client: ShipStationClient) -> dict[str, dict]:
                 "Shipment status": status,
                 "Tags": tags_for_order(order, tag_name_by_id),
                 "Core Queue": core_queue_for_order(order, warehouse_id, freight_id),
+                "SS Items": ss_items_for_order(order),
             }
     return state
 
@@ -136,6 +137,7 @@ def build_rows(finale_lines_by_order: dict[str, list[dict]], queue_state: dict[s
                 "Shipment status": info["Shipment status"],
                 "Tags": info["Tags"],
                 "Core Queue": info["Core Queue"],
+                "SS Items": info["SS Items"],
             })
     return rows
 

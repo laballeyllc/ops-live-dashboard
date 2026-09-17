@@ -12,6 +12,7 @@ CORE_QUEUE_TAGS without re-confirming against a real order the same way.
 """
 import os
 import time
+import json
 import requests
 from dotenv import load_dotenv
 
@@ -75,6 +76,23 @@ def normalize_order_id(value) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def ss_items_for_order(order: dict) -> str:
+    """JSON-encoded list of {sku, name} for every real line item
+    ShipStation has on this order — captured because Finale's own
+    Orders report sometimes collapses a split/backordered order's
+    distinct products into a single row literally labeled "Multiple
+    products" for both Product ID and Description, giving us no way to
+    tell which real SKUs were actually involved. ShipStation's order
+    data always has the genuine per-item detail regardless of how
+    Finale chose to summarize it, so this is the fallback the frontend
+    uses specifically for those collapsed rows."""
+    items = order.get("items") or []
+    return json.dumps([
+        {"sku": (item.get("sku") or "").strip(), "name": (item.get("name") or "").strip()}
+        for item in items
+    ])
 
 
 def tags_for_order(order: dict, tag_name_by_id: dict[int, str]) -> str:
@@ -178,6 +196,7 @@ COLUMN_TO_DB = {
     "LAB ROOM": "lab_room",
     "Downpack Product": "downpack",
     "HAZMAT": "hazmat",
+    "SS Items": "ss_items",
     "Shipment ID": "shipment_id",
     "Ship date actual": "ship_date_actual",
     "Shipment status": "shipment_status",

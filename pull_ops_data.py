@@ -72,7 +72,7 @@ from dotenv import load_dotenv
 from shipstation_client import ShipStationClient
 from pull_stats import ss_datetime
 from ops_common import (
-    normalize_order_id, tags_for_order, core_queue_for_order,
+    normalize_order_id, tags_for_order, core_queue_for_order, ss_items_for_order,
     fetch_finale_product_lines, append_to_snapshots,
     WAREHOUSE_LOCATION_NAME, FREIGHT_LOCATION_NAME,
 )
@@ -119,6 +119,7 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
                 "Shipment ID": "",
                 "Tags": tags_for_order(order, tag_name_by_id),
                 "Core Queue": core_queue_for_order(order, warehouse_id, freight_id),
+                "SS Items": ss_items_for_order(order),
             }
 
     # Step 2: actual shipments for the recent window — the authoritative
@@ -154,6 +155,7 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
                 "Shipment ID": str(shipment.get("shipmentId", "")),
                 "Tags": tags_for_order(order, tag_name_by_id) if order else "",
                 "Core Queue": core_queue_for_order(order, warehouse_id, freight_id) if order else "",
+                "SS Items": ss_items_for_order(order) if order else "[]",
             }
 
     return state
@@ -193,6 +195,7 @@ def build_rows(finale_lines_by_order: dict[str, list[dict]], ss_state: dict[str,
                 "Shipment status": info["Shipment status"],
                 "Tags": info["Tags"],
                 "Core Queue": info["Core Queue"],
+                "SS Items": info["SS Items"],
             })
     return rows
 
