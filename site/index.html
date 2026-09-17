@@ -256,6 +256,78 @@
     padding: 8px 0;
   }
 
+  .bar-row-clickable {
+    cursor: pointer;
+  }
+
+  .bar-row-clickable:hover .bar-label {
+    color: var(--warehouse);
+  }
+
+  .notset-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  .notset-drilldown {
+    margin: 4px 0 12px;
+    background: var(--panel-raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+
+  .notset-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+
+  .notset-header a {
+    color: var(--warehouse);
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .notset-header a:hover {
+    text-decoration: underline;
+  }
+
+  .notset-table-wrap {
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .notset-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+
+  .notset-table th {
+    text-align: left;
+    padding: 4px 8px;
+    color: var(--text-muted);
+    font-weight: 500;
+    position: sticky;
+    top: 0;
+    background: var(--panel-raised);
+  }
+
+  .notset-table td {
+    padding: 4px 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .notset-table td.description {
+    max-width: 240px;
+    white-space: normal;
+  }
+
   .bar-row {
     display: flex;
     align-items: center;
@@ -355,7 +427,7 @@
 // only grants it SELECT, nothing else). Never put the service_role key
 // here; that one belongs only in GitHub Actions Secrets.
 const SUPABASE_URL = "https://pdflsmequzgpeuodnxyg.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_PUzGqmBUePaYAEunZxbBmg_1MlLrl1k";
+const SUPABASE_ANON_KEY = "YOUR_ANON_KEY_HERE";
 // ----------------------------------------------------------------------
 
 const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -582,15 +654,91 @@ function renderPieChart(elId, pcts) {
   ` : `<div class="bar-empty">No data</div>`;
 }
 
-function renderBreakdown(elId, pcts) {
+function notSetLinesFor(field) {
+  // Every product line belonging to an order where NO line has a value
+  // for this field — i.e. exactly the orders counted in the "(not set)"
+  // bucket. Scoped the same way as everything else (Warehouse/Freight/
+  // Both only), so this always matches what's actually on screen.
+  const scopedRows = currentRows.filter(r => ["Warehouse", "Freight", "Both"].includes(r.core_queue));
+  const linesByOrder = new Map();
+  for (const row of scopedRows) {
+    if (!linesByOrder.has(row.order_id)) linesByOrder.set(row.order_id, []);
+    linesByOrder.get(row.order_id).push(row);
+  }
+  const results = [];
+  for (const [oid, lines] of linesByOrder) {
+    const hasValue = lines.some(l => (l[field] || "").trim());
+    if (!hasValue) {
+      for (const l of lines) {
+        results.push({ orderId: oid, productId: l.product_id || "", description: l.description || "" });
+      }
+    }
+  }
+  return results;
+}
+
+function csvEscape(v) {
+  return `"${(v || "").toString().replace(/"/g, '""')}"`;
+}
+
+function downloadNotSetCsv(field) {
+  const lines = notSetLinesFor(field);
+  const csvRows = [["Order ID", "Product ID", "Description"], ...lines.map(l => [l.orderId, l.productId, l.description])];
+  const csv = csvRows.map(r => r.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `not-set-${field}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function toggleNotSetDrilldown(field, containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (el.dataset.open === "true") {
+    el.innerHTML = "";
+    el.dataset.open = "false";
+    return;
+  }
+  const lines = notSetLinesFor(field);
+  el.dataset.open = "true";
+  const rowsHtml = lines.map(l => `
+    <tr><td>${l.orderId}</td><td>${l.productId}</td><td class="description">${l.description}</td></tr>
+  `).join("");
+  el.innerHTML = `
+    <div class="notset-drilldown">
+      <div class="notset-header">
+        <span>${lines.length} line item${lines.length === 1 ? '' : 's'} missing this field — fix in Finale</span>
+        <a href="#" onclick="downloadNotSetCsv('${field}'); return false;">Download CSV</a>
+      </div>
+      <div class="notset-table-wrap">
+        <table class="notset-table">
+          <thead><tr><th>Order ID</th><th>Product ID</th><th>Description</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderBreakdown(elId, pcts, field) {
   const top = pcts.slice(0, 8);
-  document.getElementById(elId).innerHTML = top.map(([label, count, pct]) => `
-    <div class="bar-row">
-      <div class="bar-label" title="${label}">${label}</div>
+  document.getElementById(elId).innerHTML = top.map(([label, count, pct]) => {
+    const isNotSet = label === "(not set)";
+    const drilldownId = `${elId}-notset`;
+    return `
+    <div class="bar-row ${isNotSet ? 'bar-row-clickable' : ''}" ${isNotSet ? `onclick="toggleNotSetDrilldown('${field}','${drilldownId}')"` : ''}>
+      <div class="bar-label" title="${label}">${label}${isNotSet ? ' <span class="notset-hint">(click to see SKUs)</span>' : ''}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${Math.min(pct,100).toFixed(0)}%"></div></div>
       <div class="bar-count">${pct.toFixed(0)}%</div>
     </div>
-  `).join("") || `<div class="bar-empty">No data</div>`;
+    ${isNotSet ? `<div id="${drilldownId}"></div>` : ''}
+  `;
+  }).join("") || `<div class="bar-empty">No data</div>`;
 }
 
 function renderLabRoomStat(pct, count, total) {
@@ -648,11 +796,11 @@ async function refresh() {
     renderAgePanel(summary);
     renderPieChart("category-pie", summary.category_pcts);
     renderPieChart("chemtech-pie", summary.chem_pcts);
-    renderBreakdown("category-breakdown", summary.category_pcts);
-    renderBreakdown("chemtech-breakdown", summary.chem_pcts);
-    renderBreakdown("downpack-breakdown", summary.downpack_pcts);
+    renderBreakdown("category-breakdown", summary.category_pcts, "category");
+    renderBreakdown("chemtech-breakdown", summary.chem_pcts, "chem");
+    renderBreakdown("downpack-breakdown", summary.downpack_pcts, "downpack");
     renderPieChart("hazmat-pie", summary.hazmat_pcts);
-    renderBreakdown("hazmat-breakdown", summary.hazmat_pcts);
+    renderBreakdown("hazmat-breakdown", summary.hazmat_pcts, "hazmat");
     renderLabRoomStat(summary.lab_room_pct, summary.lab_room_orders, summary.total_orders);
     renderSkuStat(summary.unique_skus, summary.total_orders);
   } catch (err) {
