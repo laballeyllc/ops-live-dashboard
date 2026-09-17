@@ -38,15 +38,27 @@ ORDERS_REPORT_URL = (
 # HAZMAT (both confirmed added correctly, alongside the pre-existing
 # Magento field, via direct data verification before saving).
 
-# The two tags that define "our" core Warehouse/Freight queue. Everything
-# else (Biologix, United Scientific, Transene, GT, Post, holds, etc.) is
-# a real tag too, just not part of this specific queue.
+# CONFIRMED (2026-09-16) that Warehouse/Freight routing is NOT reliably
+# determined by tags alone — a real order (000406235) was assigned to
+# Freight purely via a SKU-pattern automation rule that never touches
+# tags at all, so tag-based classification silently misclassified it as
+# Warehouse. The actual, authoritative signal is which ShipStation USER
+# an order is assigned to: every Freight order is assigned to "Jerry",
+# every Warehouse order is assigned to "Warehouse" — confirmed directly
+# by the account owner, not inferred. This is what core_queue_for_order()
+# below uses now; tags_for_order() is kept only as an informational field
+# (drop-ship vendor, holds, restricted-chemical flags, etc.), no longer
+# the mechanism for Warehouse/Freight/Both.
+CORE_QUEUE_USERS = {"Warehouse": "Warehouse", "Jerry": "Freight"}
+
+# Old tag-based mapping, kept only as a fallback/reference — no longer
+# used to compute core_queue. See CORE_QUEUE_USERS above instead.
 CORE_QUEUE_TAGS = {"Austin Warehouse": "Warehouse", "ATX Freight": "Freight"}
 
-# "Jerry" was an early, wrong guess at the Freight tag name — turned out
+# "Jerry" was an early, wrong guess at the Freight TAG name — turned out
 # to be the name of a saved filter/view in ShipStation, not an actual
-# tag. Left empty since the raw tag names are now verified and trusted;
-# add overrides here only once confirmed against a real order.
+# tag. Ironically, "Jerry" IS the correct answer, just as a USER name,
+# not a tag — see CORE_QUEUE_USERS above.
 TAG_DISPLAY_OVERRIDES: dict[str, str] = {}
 
 
@@ -63,23 +75,29 @@ def tags_for_order(order: dict, tag_name_by_id: dict[int, str]) -> str:
     override and trimming stray whitespace (ShipStation has at least one
     tag name with a trailing space — "ATX Freight "). An order can carry
     more than one tag (e.g. a split order needing both Warehouse and a
-    drop-ship vendor), so this is deliberately not a single value."""
+    drop-ship vendor), so this is deliberately not a single value. Kept
+    as an informational field only — see the note above CORE_QUEUE_USERS
+    for why this is no longer what determines core_queue."""
     tag_ids = order.get("tagIds") or []
     names = [tag_name_by_id.get(tid, f"(unknown tag {tid})").strip() for tid in tag_ids]
     names = [TAG_DISPLAY_OVERRIDES.get(n, n) for n in names]
     return ", ".join(names)
 
 
-def core_queue(tags: str) -> str:
-    """Simplified, filterable queue label derived from the raw Tags
-    field: 'Warehouse', 'Freight', 'Both' (a split order carrying both
-    tags), or '' (everything else — other vendor queues, holds, no tag)."""
-    present = [label for tag, label in CORE_QUEUE_TAGS.items() if tag in tags]
-    if len(present) == 2:
-        return "Both"
-    if present:
-        return present[0]
-    return ""
+def core_queue_for_order(order: dict, user_name_by_id: dict[str, str]) -> str:
+    """The real classification: which ShipStation user this order is
+    assigned to (order['userId'], a GUID) — 'Warehouse', 'Freight', or ''
+    (assigned to someone/something else entirely: a drop-ship vendor
+    contact, unassigned, a hold, etc.). Unlike the old tag-based version,
+    an order can only be assigned to ONE user at a time, so there's no
+    longer a genuine 'Both' case — that was an artifact of tags being
+    able to co-occur, which doesn't apply to a single assignment."""
+    user_id = order.get("userId")
+    if not user_id:
+        return ""
+    user_name = (user_name_by_id.get(user_id) or "").strip()
+    return CORE_QUEUE_USERS.get(user_name, "")
+
 
 
 def fetch_finale_report(url: str) -> list[dict]:

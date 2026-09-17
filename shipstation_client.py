@@ -127,6 +127,24 @@ class ShipStationClient:
         data = self._get("/accounts/listtags")
         return {t["tagId"]: t["name"] for t in data}
 
+    def list_users(self) -> dict[str, str]:
+        """
+        Returns {userId: name} for every user on the account. This is how
+        we translate an order's assigned userId (a GUID) into a human
+        name like "Jerry" or "Warehouse" — confirmed as the actual,
+        authoritative signal ShipStation uses to route orders into the
+        Freight/Warehouse queues. An order can get assigned this way
+        through the tag-based automation rule OR a completely separate
+        SKU-based rule that never touches tags at all (e.g. any item SKU
+        ending in "55GAL" auto-assigns straight to Jerry) — which is
+        exactly what caused a real order (000406235) to be missed under
+        the old tag-only classification. Reading the actual assignment
+        directly, rather than trying to enumerate every rule that can
+        produce it, is the robust fix.
+        """
+        data = self._get("/users", {"showInactive": "true"})
+        return {u["userId"]: (u.get("name") or u.get("userName") or "") for u in data}
+
     def get_warehouse_id(self, warehouse_name: str) -> int:
         """Look up a Ship From Location's numeric ID by its display name (case-insensitive)."""
         warehouses = self.list_warehouses()

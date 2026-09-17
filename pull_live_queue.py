@@ -44,7 +44,7 @@ from dotenv import load_dotenv
 
 from shipstation_client import ShipStationClient
 from ops_common import (
-    normalize_order_id, tags_for_order, core_queue,
+    normalize_order_id, tags_for_order, core_queue_for_order,
     fetch_finale_product_lines, replace_live_queue,
 )
 
@@ -62,12 +62,17 @@ STALE_LOCK_MINUTES = 15
 
 
 def pull_current_queue(client: ShipStationClient) -> dict[str, dict]:
-    """Returns dict: Order ID -> {Order date, Shipment status, Tags} for
-    every order currently awaiting_shipment or on_hold. No date limit —
-    a stuck order doesn't stop being "in queue" just because it's old."""
+    """Returns dict: Order ID -> {Order date, Shipment status, Tags, Core
+    Queue} for every order currently awaiting_shipment or on_hold. No
+    date limit — a stuck order doesn't stop being "in queue" just
+    because it's old."""
     print("Pulling tag list from ShipStation...")
     tag_name_by_id = client.list_tags()
     print(f"  {len(tag_name_by_id)} tags defined")
+
+    print("Pulling user list from ShipStation...")
+    user_name_by_id = client.list_users()
+    print(f"  {len(user_name_by_id)} users defined")
 
     state: dict[str, dict] = {}
     print("Pulling current queue from ShipStation (awaiting_shipment + on_hold)...")
@@ -82,6 +87,7 @@ def pull_current_queue(client: ShipStationClient) -> dict[str, dict]:
                 "Order date": (order.get("orderDate") or "")[:10],
                 "Shipment status": status,
                 "Tags": tags_for_order(order, tag_name_by_id),
+                "Core Queue": core_queue_for_order(order, user_name_by_id),
             }
     return state
 
@@ -122,7 +128,7 @@ def build_rows(finale_lines_by_order: dict[str, list[dict]], queue_state: dict[s
                 "HAZMAT": line.get("HAZMAT", ""),
                 "Shipment status": info["Shipment status"],
                 "Tags": info["Tags"],
-                "Core Queue": core_queue(info["Tags"]),
+                "Core Queue": info["Core Queue"],
             })
     return rows
 

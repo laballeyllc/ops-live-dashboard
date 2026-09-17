@@ -458,6 +458,7 @@ function buildSummary(rows) {
     hazmat_pcts: orderPercentagesFor("hazmat"),
     lab_room_pct: totalOrders ? (labRoomOrders / totalOrders * 100) : 0,
     lab_room_orders: labRoomOrders,
+    unique_skus: new Set(scopedRows.map(r => (r.product_id || "").trim()).filter(v => v)).size,
   };
 }
 
@@ -565,11 +566,12 @@ function renderBreakdown(elId, pcts) {
   `).join("") || `<div class="bar-empty">No data</div>`;
 }
 
-function renderLabRoomStat(pct, count, total) {
+function renderLabRoomStat(pct, count, total, uniqueSkus) {
   document.getElementById("labroom-stat").innerHTML = `
     <div class="stat-big">${pct.toFixed(0)}%</div>
     <div class="stat-sub">${count} of ${total} orders require a Lab Room</div>
     <div class="bar-track" style="margin-top:12px;"><div class="bar-fill" style="width:${Math.min(pct,100).toFixed(0)}%"></div></div>
+    <div class="stat-sub" style="margin-top:14px;">${uniqueSkus} unique SKUs in queue</div>
   `;
 }
 
@@ -618,7 +620,7 @@ async function refresh() {
     renderBreakdown("downpack-breakdown", summary.downpack_pcts);
     renderPieChart("hazmat-pie", summary.hazmat_pcts);
     renderBreakdown("hazmat-breakdown", summary.hazmat_pcts);
-    renderLabRoomStat(summary.lab_room_pct, summary.lab_room_orders, summary.total_orders);
+    renderLabRoomStat(summary.lab_room_pct, summary.lab_room_orders, summary.total_orders, summary.unique_skus);
   } catch (err) {
     console.error(err);
     document.getElementById("last-updated-text").textContent = "Connection error — check console";
