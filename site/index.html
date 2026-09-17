@@ -162,16 +162,41 @@
     font-weight: 600;
     color: var(--text);
     margin: 0 0 12px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
   }
+
+  .chevron {
+    display: inline-block;
+    transition: transform 0.15s ease;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .chevron.open { transform: rotate(90deg); }
 
   .attack-callouts {
     margin-bottom: 20px;
   }
 
-  .summary-card.quickwin .value { color: var(--warehouse); }
   .summary-card.agingrisk .value { color: var(--alert); }
+  .summary-card.agingrisk.overdue .value { color: #E85D5D; }
 
-  #attack-table {
+  .attack-subsection {
+    margin-bottom: 28px;
+  }
+
+  .attack-subsection h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    color: var(--text);
+  }
+
+  .attack-table {
     width: 100%;
     border-collapse: collapse;
     background: var(--panel);
@@ -179,40 +204,50 @@
     border-radius: 8px;
     overflow: hidden;
     font-size: 13px;
-    margin-bottom: 40px;
+    margin-top: 10px;
+    margin-bottom: 12px;
   }
 
-  #attack-table thead th {
+  .attack-table thead th {
     text-align: left;
     padding: 10px 14px;
     background: var(--panel-raised);
     color: var(--text-muted);
     font-weight: 500;
-    cursor: pointer;
-    user-select: none;
     white-space: nowrap;
     border-bottom: 1px solid var(--border);
   }
 
-  #attack-table thead th:hover { color: var(--text); }
-
-  #attack-table thead th.sorted::after {
-    content: ' \25be';
-    color: var(--warehouse);
-  }
-
-  #attack-table thead th.sorted.asc::after {
-    content: ' \25b4';
-  }
-
-  #attack-table tbody td {
+  .attack-table tbody td {
     padding: 9px 14px;
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
   }
 
-  #attack-table tbody tr:last-child td { border-bottom: none; }
-  #attack-table tbody tr:hover { background: var(--panel-raised); }
+  .attack-table tbody tr:last-child td { border-bottom: none; }
+  .attack-table tbody tr:hover { background: var(--panel-raised); }
+
+  .priority-pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .priority-pill.channel { background: var(--warehouse-dim); color: var(--warehouse); }
+  .priority-pill.standard { background: var(--panel-raised); color: var(--text-muted); }
+
+  .status-pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .status-pill.atrisk { background: #4A302B; color: var(--alert); }
+  .status-pill.overdue { background: #4A302B; color: #E85D5D; }
 
   .flag-pill {
     display: inline-block;
@@ -224,6 +259,7 @@
   }
 
   .flag-pill.quickwin { background: var(--warehouse-dim); color: var(--warehouse); }
+
   .flag-pill.agingrisk { background: #4A302B; color: var(--alert); }
 
   .tag-pill {
@@ -555,35 +591,55 @@
   </div>
 
   <div class="attack-section">
-    <h2 class="attack-section-title">Attack the Queue <span class="h2-note">Warehouse/Freight/Both orders only — held orders excluded, they're not workable right now</span></h2>
+    <h2 class="attack-section-title" id="attack-toggle">
+      <span class="chevron open" id="attack-chevron">&#9656;</span> Attack the Queue
+      <span class="h2-note">Warehouse/Freight/Both orders only, held orders excluded — company goal: every order shipped within 48 business hours (weekends excluded)</span>
+    </h2>
 
-    <div class="summary-row attack-callouts">
-      <div class="summary-card quickwin">
-        <div class="value" id="quickwin-count">0</div>
-        <div class="label">Quick wins — single SKU, no Lab Room, no Repack</div>
+    <div id="attack-body">
+      <div class="summary-row attack-callouts">
+        <div class="summary-card agingrisk">
+          <div class="value" id="atrisk-count">0</div>
+          <div class="label">Orders 24h+ old (at risk of missing the 48h goal)</div>
+        </div>
+        <div class="summary-card agingrisk overdue">
+          <div class="value" id="overdue-count">0</div>
+          <div class="label">Orders past 48 business hours (already overdue)</div>
+        </div>
       </div>
-      <div class="summary-card agingrisk">
-        <div class="value" id="agingrisk-count">0</div>
-        <div class="label">Aging risk — 5+ days old</div>
+
+      <div class="attack-subsection">
+        <h3>Chemicals to prioritize <span class="h2-note">ranked by how many orders currently need them; Amazon/Walmart-committed orders bump a chemical to the top, matching the build script's own channel-priority rule</span></h3>
+        <table class="attack-table">
+          <thead>
+            <tr>
+              <th>Chemical family</th>
+              <th>SKUs</th>
+              <th>Orders needing it</th>
+              <th>Total units</th>
+              <th>Priority</th>
+            </tr>
+          </thead>
+          <tbody id="priority-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="attack-subsection">
+        <h3>Downpack urgency <span class="h2-note">chemicals requiring Repack that are sitting on aging orders — may not be high-volume, but they're likely why these specific orders are stuck</span></h3>
+        <table class="attack-table">
+          <thead>
+            <tr>
+              <th>Chemical</th>
+              <th>Description</th>
+              <th>Orders affected</th>
+              <th>Oldest order age</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="downpack-urgency-tbody"></tbody>
+        </table>
       </div>
     </div>
-
-    <table id="attack-table">
-      <thead>
-        <tr>
-          <th data-key="orderId">Order ID</th>
-          <th data-key="age">Age</th>
-          <th data-key="weight">Weight (lbs)</th>
-          <th data-key="qty">Qty</th>
-          <th data-key="skuCount">SKUs</th>
-          <th data-key="categories">Category</th>
-          <th data-key="downpack">Downpack</th>
-          <th data-key="coreQueue">Queue</th>
-          <th>Flags</th>
-        </tr>
-      </thead>
-      <tbody id="attack-tbody"></tbody>
-    </table>
   </div>
 
   <div id="empty-state" style="display:none;">No live queue data found yet — check that the "Live Queue Pull" GitHub Action has run at least once.</div>
@@ -1043,12 +1099,215 @@ function renderHeldBreakdown(reasonBreakdown) {
   `).join("") : `<div class="bar-empty">Nothing currently on hold</div>`;
 }
 
-const AGING_RISK_DAYS = 5;
+// ---------------------------------------------------------------------
+// Business-hours math: converts ShipStation's naive order timestamp
+// (wall-clock time in America/Chicago, confirmed directly by the
+// account owner -- no timezone marker in the raw string) into a true
+// UTC instant, correctly handling CST (-6) vs CDT (-5) depending on
+// the date. Then computes hours elapsed with weekends fully excluded
+// (the 48-business-hour SLA clock pauses at midnight Friday night and
+// resumes at midnight Monday morning).
+//
+// Both functions are unit-tested in isolation (DST transition edges,
+// weekend-exclusion boundaries) before being wired into anything below
+// -- see the project notes for the test cases if this ever needs
+// revisiting.
+function chicagoPartsForInstant(dateMs) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false, weekday: 'short'
+  });
+  const parts = {};
+  for (const p of fmt.formatToParts(new Date(dateMs))) parts[p.type] = p.value;
+  return parts;
+}
 
-function buildQueueList(rows) {
-  // Same scoping as everything else on the page: Warehouse/Freight/Both
-  // only, on_hold excluded (held orders aren't workable right now, so
-  // they don't belong in a list about how to work the queue).
+function parseChicagoNaive(naiveStr) {
+  const m = (naiveStr || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const wantY = +m[1], wantMo = +m[2], wantD = +m[3], wantH = +m[4], wantMi = +m[5], wantS = +m[6];
+  const wantMs = Date.UTC(wantY, wantMo - 1, wantD, wantH, wantMi, wantS);
+
+  let guessMs = wantMs;
+  // 3 iterations always converges, even right at a DST transition edge
+  // (each iteration's error is at most one offset-change, i.e. 1 hour).
+  for (let i = 0; i < 3; i++) {
+    const got = chicagoPartsForInstant(guessMs);
+    const gotMs = Date.UTC(+got.year, +got.month - 1, +got.day, +got.hour, +got.minute, +got.second);
+    const errorMs = wantMs - gotMs;
+    if (errorMs === 0) break;
+    guessMs += errorMs;
+  }
+  return new Date(guessMs);
+}
+
+function chicagoMidnightMs(dateMs, dayOffset) {
+  const parts = chicagoPartsForInstant(dateMs);
+  const guessMs = Date.UTC(+parts.year, +parts.month - 1, +parts.day + dayOffset, 0, 0, 0);
+  let g = guessMs;
+  for (let i = 0; i < 3; i++) {
+    const got = chicagoPartsForInstant(g);
+    const gotMs = Date.UTC(+got.year, +got.month - 1, +got.day, +got.hour, +got.minute, +got.second);
+    const err = guessMs - gotMs;
+    if (err === 0) break;
+    g += err;
+  }
+  return g;
+}
+
+function businessHoursElapsed(startMs, endMs) {
+  if (!startMs || endMs <= startMs) return 0;
+  let excludedMs = 0;
+  let dayStart = chicagoMidnightMs(startMs, 0);
+  while (dayStart < endMs) {
+    const dayEnd = chicagoMidnightMs(dayStart, 1);
+    const wd = chicagoPartsForInstant(dayStart).weekday;
+    if (wd === "Sat" || wd === "Sun") {
+      const overlapStart = Math.max(dayStart, startMs);
+      const overlapEnd = Math.min(dayEnd, endMs);
+      if (overlapEnd > overlapStart) excludedMs += (overlapEnd - overlapStart);
+    }
+    dayStart = dayEnd;
+  }
+  return (endMs - startMs - excludedMs) / 3600000;
+}
+
+function businessHoursSinceOrder(orderDatetimeStr) {
+  const orderMs = parseChicagoNaive(orderDatetimeStr);
+  if (!orderMs) return 0;
+  return businessHoursElapsed(orderMs.getTime(), Date.now());
+}
+
+const AT_RISK_HOURS = 24;
+const OVERDUE_HOURS = 48;
+
+// ---------------------------------------------------------------------
+// "Attack the Queue": two chemical-centric lists (not order-centric),
+// per the actual real prioritization logic in Lab Alley's own build
+// scheduler (Sandbox_Build_Script.xlsx) -- channel committment (Amazon/
+// Walmart) takes priority over raw volume, and "needs Downpack" is a
+// distinct, separate concern from "how much of this do we need."
+
+function skuFamily(productId) {
+  // Heuristic: group by everything before the LAST hyphen, so e.g.
+  // "EAPMB200-4LCS" and "EAPMB200-1LCS" (same base chemical, different
+  // pack size) cluster into family "EAPMB200" -- confirmed against
+  // those two real SKUs. This is a heuristic, not guaranteed correct
+  // for every SKU naming pattern in the catalog; revisit if families
+  // look wrong against real data.
+  const idx = productId.lastIndexOf("-");
+  return idx > 0 ? productId.slice(0, idx) : productId;
+}
+
+function buildChemicalPriorityList(rows) {
+  const scopedRows = rows.filter(r =>
+    ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
+  );
+  // For each SKU: which distinct orders need it, total qty, and whether
+  // any of those orders are Amazon/Walmart (channel priority).
+  const bySku = new Map();
+  for (const row of scopedRows) {
+    const sku = (row.product_id || "").trim();
+    if (!sku || sku === "Multiple products") continue;
+    if (!bySku.has(sku)) bySku.set(sku, { sku, description: row.description || "", orders: new Set(), isChannelPriority: false });
+    const entry = bySku.get(sku);
+    entry.orders.add(row.order_id);
+    const store = (row.store_name || "").toLowerCase();
+    if (store.includes("amazon") || store.includes("walmart")) entry.isChannelPriority = true;
+  }
+
+  // Group SKUs into families for display.
+  const families = new Map();
+  for (const entry of bySku.values()) {
+    const fam = skuFamily(entry.sku);
+    if (!families.has(fam)) families.set(fam, { family: fam, skus: [], orders: new Set(), totalQty: 0, isChannelPriority: false });
+    const famEntry = families.get(fam);
+    famEntry.skus.push(entry.sku);
+    for (const oid of entry.orders) famEntry.orders.add(oid);
+    if (entry.isChannelPriority) famEntry.isChannelPriority = true;
+  }
+
+  // Total units per family, from item_quantity on rows carrying this family's SKUs.
+  for (const row of scopedRows) {
+    const sku = (row.product_id || "").trim();
+    if (!sku || sku === "Multiple products") continue;
+    const fam = skuFamily(sku);
+    const famEntry = families.get(fam);
+    if (famEntry) famEntry.totalQty += (parseInt(row.item_quantity) || 0);
+  }
+
+  const list = Array.from(families.values()).map(f => ({
+    family: f.family,
+    skuCount: f.skus.length,
+    orderCount: f.orders.size,
+    totalQty: f.totalQty,
+    isChannelPriority: f.isChannelPriority,
+  }));
+
+  // Channel-priority families first (matching the build script's own
+  // "Amazon/Walmart first" rule), then by order coverage within each tier.
+  list.sort((a, b) => {
+    if (a.isChannelPriority !== b.isChannelPriority) return a.isChannelPriority ? -1 : 1;
+    return b.orderCount - a.orderCount;
+  });
+  return list;
+}
+
+function buildDownpackUrgencyList(rows) {
+  const scopedRows = rows.filter(r =>
+    ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
+  );
+  const bySku = new Map();
+  for (const row of scopedRows) {
+    if ((row.downpack || "").trim().toLowerCase() !== "repack") continue;
+    const sku = (row.product_id || "").trim();
+    if (!sku || sku === "Multiple products") continue;
+    const hours = businessHoursSinceOrder(row.order_datetime);
+    if (!bySku.has(sku)) bySku.set(sku, { sku, description: row.description || "", orders: new Set(), maxHours: 0 });
+    const entry = bySku.get(sku);
+    entry.orders.add(row.order_id);
+    if (hours > entry.maxHours) entry.maxHours = hours;
+  }
+  const list = Array.from(bySku.values())
+    .filter(e => e.maxHours >= AT_RISK_HOURS) // only chemicals actually at risk or overdue
+    .map(e => ({
+      sku: e.sku,
+      description: e.description,
+      orderCount: e.orders.size,
+      maxHours: e.maxHours,
+      isOverdue: e.maxHours >= OVERDUE_HOURS,
+    }));
+  list.sort((a, b) => b.maxHours - a.maxHours);
+  return list;
+}
+
+function renderPriorityTable(list) {
+  document.getElementById("priority-tbody").innerHTML = list.length ? list.map(f => `
+    <tr>
+      <td>${f.family}</td>
+      <td>${f.skuCount}</td>
+      <td>${f.orderCount}</td>
+      <td>${f.totalQty}</td>
+      <td><span class="priority-pill ${f.isChannelPriority ? 'channel' : 'standard'}">${f.isChannelPriority ? 'Amazon/Walmart' : 'Standard'}</span></td>
+    </tr>
+  `).join("") : `<tr><td colspan="5" class="bar-empty">No data</td></tr>`;
+}
+
+function renderDownpackUrgencyTable(list) {
+  document.getElementById("downpack-urgency-tbody").innerHTML = list.length ? list.map(e => `
+    <tr>
+      <td>${e.sku}</td>
+      <td>${e.description}</td>
+      <td>${e.orderCount}</td>
+      <td>${e.maxHours.toFixed(0)}h</td>
+      <td><span class="status-pill ${e.isOverdue ? 'overdue' : 'atrisk'}">${e.isOverdue ? 'Overdue' : 'At risk'}</span></td>
+    </tr>
+  `).join("") : `<tr><td colspan="5" class="bar-empty">Nothing currently at risk</td></tr>`;
+}
+
+function renderAttackSection(rows) {
   const scopedRows = rows.filter(r =>
     ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
   );
@@ -1057,91 +1316,26 @@ function buildQueueList(rows) {
     if (!linesByOrder.has(row.order_id)) linesByOrder.set(row.order_id, []);
     linesByOrder.get(row.order_id).push(row);
   }
-
-  const orders = [];
+  let atRisk = 0, overdue = 0;
   for (const [oid, lines] of linesByOrder) {
-    const first = lines[0];
-    const age = orderAgeDays(first.order_date) ?? 0;
-    const categories = [...new Set(lines.map(l => (l.category || "").trim()).filter(v => v))];
-    const downpacks = [...new Set(lines.map(l => (l.downpack || "").trim()).filter(v => v))];
-    const skuCount = new Set(lines.map(l => (l.product_id || "").trim()).filter(v => v)).size;
-    const hasLabRoom = lines.some(l => (l.lab_room || "").trim().toLowerCase() === "yes");
-    const hasRepack = downpacks.some(d => d.toLowerCase() === "repack");
-
-    orders.push({
-      orderId: oid,
-      age,
-      weight: parseFloat(first.weight_lbs) || 0,
-      qty: parseInt(first.item_quantity) || 0,
-      skuCount,
-      categories: categories.join(", ") || "—",
-      downpack: downpacks.join(", ") || "—",
-      coreQueue: first.core_queue,
-      // "Quick win": single SKU, no Lab Room handling, no Repack —
-      // ready to clear fast without extra complexity.
-      isQuickWin: skuCount <= 1 && !hasLabRoom && !hasRepack,
-      isAgingRisk: age >= AGING_RISK_DAYS,
-    });
+    const hours = businessHoursSinceOrder(lines[0].order_datetime);
+    if (hours >= OVERDUE_HOURS) overdue++;
+    else if (hours >= AT_RISK_HOURS) atRisk++;
   }
-  return orders;
+  document.getElementById("atrisk-count").textContent = atRisk;
+  document.getElementById("overdue-count").textContent = overdue;
+
+  renderPriorityTable(buildChemicalPriorityList(rows));
+  renderDownpackUrgencyTable(buildDownpackUrgencyList(rows));
 }
 
-let attackSortKey = "age";
-let attackSortAsc = false; // default: oldest first
-let currentAttackOrders = [];
-
-function renderAttackTable(orders) {
-  currentAttackOrders = orders;
-
-  const quickWins = orders.filter(o => o.isQuickWin);
-  const agingRisk = orders.filter(o => o.isAgingRisk);
-  document.getElementById("quickwin-count").textContent = quickWins.length;
-  document.getElementById("agingrisk-count").textContent = agingRisk.length;
-
-  const sorted = [...orders].sort((a, b) => {
-    const av = a[attackSortKey], bv = b[attackSortKey];
-    let cmp;
-    if (typeof av === "number" && typeof bv === "number") {
-      cmp = av - bv;
-    } else {
-      cmp = (av ?? "").toString().localeCompare((bv ?? "").toString(), undefined, { numeric: true });
-    }
-    return attackSortAsc ? cmp : -cmp;
-  });
-
-  document.getElementById("attack-tbody").innerHTML = sorted.map(o => `
-    <tr>
-      <td>${o.orderId}</td>
-      <td>${o.age}d</td>
-      <td>${o.weight.toFixed(1)}</td>
-      <td>${o.qty}</td>
-      <td>${o.skuCount}</td>
-      <td>${o.categories}</td>
-      <td>${o.downpack}</td>
-      <td><span class="tag-pill ${o.coreQueue.toLowerCase()}">${o.coreQueue}</span></td>
-      <td>
-        ${o.isQuickWin ? '<span class="flag-pill quickwin">Quick win</span>' : ''}
-        ${o.isAgingRisk ? '<span class="flag-pill agingrisk">Aging</span>' : ''}
-      </td>
-    </tr>
-  `).join("");
-
-  document.querySelectorAll("#attack-table thead th").forEach(th => {
-    th.classList.toggle("sorted", th.dataset.key === attackSortKey);
-    th.classList.toggle("asc", th.dataset.key === attackSortKey && attackSortAsc);
-  });
-}
-
-document.querySelectorAll("#attack-table thead th[data-key]").forEach(th => {
-  th.addEventListener("click", () => {
-    if (attackSortKey === th.dataset.key) {
-      attackSortAsc = !attackSortAsc;
-    } else {
-      attackSortKey = th.dataset.key;
-      attackSortAsc = true;
-    }
-    renderAttackTable(currentAttackOrders);
-  });
+const attackChevron = document.getElementById("attack-chevron");
+const attackBody = document.getElementById("attack-body");
+let attackExpanded = true;
+document.getElementById("attack-toggle").addEventListener("click", () => {
+  attackExpanded = !attackExpanded;
+  attackBody.style.display = attackExpanded ? "block" : "none";
+  attackChevron.classList.toggle("open", attackExpanded);
 });
 
 function formatLastUpdated(pulledAtIso) {
@@ -1198,7 +1392,7 @@ async function refresh() {
     renderHeldSummary(held);
     renderHeldBreakdown(held.reason_breakdown);
 
-    renderAttackTable(buildQueueList(currentRows));
+    renderAttackSection(currentRows);
   } catch (err) {
     console.error(err);
     document.getElementById("last-updated-text").textContent = "Connection error — check console";

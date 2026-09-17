@@ -232,6 +232,7 @@ def fetch_finale_product_lines() -> dict[str, list[dict]]:
 COLUMN_TO_DB = {
     "Order ID": "order_id",
     "Order date": "order_date",
+    "Order datetime": "order_datetime",
     "Product ID": "product_id",
     "Description": "description",
     "Category": "category",

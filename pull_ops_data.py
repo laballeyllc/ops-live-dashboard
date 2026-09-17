@@ -119,6 +119,7 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
                 continue
             state[oid] = {
                 "Order date": (order.get("orderDate") or "")[:10],
+                "Order datetime": order.get("orderDate") or "",
                 "Shipment status": status,
                 "Ship date actual": "",
                 "Shipment ID": "",
@@ -158,6 +159,7 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
             order = order_by_number.get(oid)
             state[oid] = {
                 "Order date": (shipment.get("createDate") or "")[:10],
+                "Order datetime": (order.get("orderDate") if order else None) or shipment.get("createDate") or "",
                 "Shipment status": "voided" if shipment.get("voided") else "shipped",
                 "Ship date actual": (shipment.get("shipDate") or "")[:10],
                 "Shipment ID": str(shipment.get("shipmentId", "")),
@@ -193,6 +195,7 @@ def build_rows(finale_lines_by_order: dict[str, list[dict]], ss_state: dict[str,
             rows.append({
                 "Order ID": oid,
                 "Order date": info["Order date"] or line.get("Order date", ""),
+                "Order datetime": info.get("Order datetime", ""),
                 "Product ID": line.get("Product ID", ""),
                 "Description": line.get("Description", ""),
                 "Category": line.get("Category", ""),

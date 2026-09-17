@@ -100,6 +100,7 @@ def pull_current_queue(client: ShipStationClient) -> dict[str, dict]:
                 continue
             state[oid] = {
                 "Order date": (order.get("orderDate") or "")[:10],
+                "Order datetime": order.get("orderDate") or "",
                 "Shipment status": status,
                 "Tags": tags_for_order(order, tag_name_by_id),
                 "Core Queue": core_queue_for_order(order, warehouse_id, freight_id),
@@ -137,6 +138,7 @@ def build_rows(finale_lines_by_order: dict[str, list[dict]], queue_state: dict[s
             rows.append({
                 "Order ID": oid,
                 "Order date": info["Order date"] or line.get("Order date", ""),
+                "Order datetime": info.get("Order datetime", ""),
                 "Product ID": line.get("Product ID", ""),
                 "Description": line.get("Description", ""),
                 "Category": line.get("Category", ""),
