@@ -95,6 +95,50 @@ def ss_items_for_order(order: dict) -> str:
     ])
 
 
+def order_weight_lbs(order: dict) -> float:
+    """Order weight in pounds, regardless of what unit ShipStation
+    reports it in. Confirmed against a real order (000406235): its
+    internal notes literally state "W=451" and its weight object was
+    {"value": 7216.0, "units": "ounces"} — 7216 / 16 = 451, confirming
+    the ounces-to-pounds conversion lines up with Lab Alley's own
+    packing paperwork. Used for measuring actual queue WORKLOAD, not
+    just order count — a 500 lb order and a 2 lb order currently look
+    identical if you only count orders."""
+    weight = order.get("weight") or {}
+    value = weight.get("value")
+    units = (weight.get("units") or "").lower()
+    if value is None:
+        return 0.0
+    if units == "pounds":
+        return float(value)
+    if units == "ounces":
+        return float(value) / 16.0
+    if units == "grams":
+        return float(value) / 453.592
+    # Unknown/unexpected unit — return 0 rather than silently reporting a
+    # wrong number in an unfamiliar unit; worth noticing in totals if
+    # this ever actually happens.
+    return 0.0
+
+
+def order_item_quantity(order: dict) -> int:
+    """Total unit count across every line item on the order (sum of
+    each item's quantity) — a rough measure of how much physical work
+    one order represents, distinct from how many distinct SKUs it has."""
+    items = order.get("items") or []
+    return sum(int(item.get("quantity") or 0) for item in items)
+
+
+def store_name_for_order(order: dict, store_name_by_id: dict[int, str]) -> str:
+    """Which sales channel (Magento, Amazon, Walmart, etc.) this order
+    came from, resolved from advancedOptions.storeId via
+    client.list_stores()."""
+    store_id = (order.get("advancedOptions") or {}).get("storeId")
+    if store_id is None:
+        return ""
+    return store_name_by_id.get(store_id, f"(unknown store {store_id})")
+
+
 def tags_for_order(order: dict, tag_name_by_id: dict[int, str]) -> str:
     """Comma-separated real tag name(s) for an order, applying any display
     override and trimming stray whitespace (ShipStation has at least one
@@ -197,6 +241,9 @@ COLUMN_TO_DB = {
     "Downpack Product": "downpack",
     "HAZMAT": "hazmat",
     "SS Items": "ss_items",
+    "Weight (lbs)": "weight_lbs",
+    "Item Quantity": "item_quantity",
+    "Store": "store_name",
     "Shipment ID": "shipment_id",
     "Ship date actual": "ship_date_actual",
     "Shipment status": "shipment_status",

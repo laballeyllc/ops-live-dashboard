@@ -73,6 +73,7 @@ from shipstation_client import ShipStationClient
 from pull_stats import ss_datetime
 from ops_common import (
     normalize_order_id, tags_for_order, core_queue_for_order, ss_items_for_order,
+    order_weight_lbs, order_item_quantity, store_name_for_order,
     fetch_finale_product_lines, append_to_snapshots,
     WAREHOUSE_LOCATION_NAME, FREIGHT_LOCATION_NAME,
 )
@@ -88,6 +89,10 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
     print("Pulling tag list from ShipStation...")
     tag_name_by_id = client.list_tags()
     print(f"  {len(tag_name_by_id)} tags defined")
+
+    print("Pulling store list from ShipStation...")
+    store_name_by_id = client.list_stores()
+    print(f"  {len(store_name_by_id)} stores defined")
 
     warehouse_id = client.get_warehouse_id(WAREHOUSE_LOCATION_NAME)
     freight_id = client.get_warehouse_id(FREIGHT_LOCATION_NAME)
@@ -120,6 +125,9 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
                 "Tags": tags_for_order(order, tag_name_by_id),
                 "Core Queue": core_queue_for_order(order, warehouse_id, freight_id),
                 "SS Items": ss_items_for_order(order),
+                "Weight (lbs)": order_weight_lbs(order),
+                "Item Quantity": order_item_quantity(order),
+                "Store": store_name_for_order(order, store_name_by_id),
             }
 
     # Step 2: actual shipments for the recent window — the authoritative
@@ -156,6 +164,9 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
                 "Tags": tags_for_order(order, tag_name_by_id) if order else "",
                 "Core Queue": core_queue_for_order(order, warehouse_id, freight_id) if order else "",
                 "SS Items": ss_items_for_order(order) if order else "[]",
+                "Weight (lbs)": order_weight_lbs(order) if order else 0.0,
+                "Item Quantity": order_item_quantity(order) if order else 0,
+                "Store": store_name_for_order(order, store_name_by_id) if order else "",
             }
 
     return state
@@ -196,6 +207,9 @@ def build_rows(finale_lines_by_order: dict[str, list[dict]], ss_state: dict[str,
                 "Tags": info["Tags"],
                 "Core Queue": info["Core Queue"],
                 "SS Items": info["SS Items"],
+                "Weight (lbs)": info["Weight (lbs)"],
+                "Item Quantity": info["Item Quantity"],
+                "Store": info["Store"],
             })
     return rows
 

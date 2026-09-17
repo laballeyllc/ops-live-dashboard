@@ -145,6 +145,16 @@ class ShipStationClient:
         data = self._get("/users", {"showInactive": "true"})
         return {u["userId"]: (u.get("name") or u.get("userName") or "") for u in data}
 
+    def list_stores(self) -> dict[int, str]:
+        """
+        Returns {storeId: storeName} for every store/channel connected to
+        the account (Magento, Amazon, Walmart, etc.). Used to label which
+        sales channel an order came from — order['advancedOptions']
+        ['storeId'] is the numeric ID; this translates it to a real name.
+        """
+        data = self._get("/stores", {"showInactive": "true"})
+        return {s["storeId"]: s.get("storeName", "") for s in data}
+
     def get_warehouse_id(self, warehouse_name: str) -> int:
         """Look up a Ship From Location's numeric ID by its display name (case-insensitive)."""
         warehouses = self.list_warehouses()
