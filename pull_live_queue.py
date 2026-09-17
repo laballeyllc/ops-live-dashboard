@@ -65,16 +65,19 @@ STALE_LOCK_MINUTES = 15
 
 def pull_current_queue(client: ShipStationClient) -> dict[str, dict]:
     """Returns dict: Order ID -> {Order date, Shipment status, Tags, Core
-    Queue} for every order currently awaiting_shipment. No date limit —
-    a stuck order doesn't stop being "in queue" just because it's old.
+    Queue} for every order currently awaiting_shipment OR on_hold. No
+    date limit — a stuck order doesn't stop being relevant just because
+    it's old.
 
-    Deliberately excludes on_hold orders (confirmed against a real
-    example: order 220199, dated 2026-02-04, sitting on_hold tagged
-    "Austin Warehouse, Roshan" — this is what caused the dashboard to
-    report a 225-day-old "oldest" order). A held order isn't a real,
-    actionable item in the Warehouse/Freight fulfillment queue right
-    now — it's paused pending something else — so it shouldn't count
-    toward "in queue," its age, or any of the breakdowns here."""
+    IMPORTANT: on_hold orders ARE pulled here (for the Held/Compliance
+    panel, which needs them), but they must NEVER be counted in the main
+    Warehouse/Freight queue metrics — that exact bug already happened
+    once (order 220199, on_hold, 225 days old, incorrectly inflating
+    "oldest in queue"). The exclusion now lives in the FRONTEND instead
+    (buildSummary() explicitly filters out shipment_status === "on_hold"
+    before computing anything Warehouse/Freight-related), not here. If
+    you're reading this because a held order snuck back into the main
+    counts, that frontend filter is almost certainly what broke."""
     print("Pulling tag list from ShipStation...")
     tag_name_by_id = client.list_tags()
     print(f"  {len(tag_name_by_id)} tags defined")
@@ -87,8 +90,8 @@ def pull_current_queue(client: ShipStationClient) -> dict[str, dict]:
     freight_id = client.get_warehouse_id(FREIGHT_LOCATION_NAME)
 
     state: dict[str, dict] = {}
-    print("Pulling current queue from ShipStation (awaiting_shipment only — on_hold excluded)...")
-    for status in ("awaiting_shipment",):
+    print("Pulling current queue from ShipStation (awaiting_shipment + on_hold)...")
+    for status in ("awaiting_shipment", "on_hold"):
         orders = client.list_orders(order_status=status)
         print(f"  {status}: {len(orders)} orders")
         for order in orders:
