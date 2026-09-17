@@ -11,6 +11,7 @@ see the project history for how we got here. Don't change
 CORE_QUEUE_TAGS without re-confirming against a real order the same way.
 """
 import os
+import time
 import requests
 from dotenv import load_dotenv
 
@@ -86,10 +87,30 @@ def fetch_finale_report(url: str) -> list[dict]:
     single most expensive step in either script (the Orders report has
     150k+ rows) — Finale's Reporting API has no way to ask for "just
     these N order IDs," so both the full historical pull and the
-    live-queue pull have to download the whole thing and filter locally."""
-    resp = requests.get(url, auth=(FINALE_API_KEY, FINALE_API_SECRET), timeout=180)
-    resp.raise_for_status()
-    return resp.json()
+    live-queue pull have to download the whole thing and filter locally.
+
+    Retries on transient connection failures (confirmed in production:
+    Finale's server sometimes drops the connection mid-response while
+    generating this large a report — "Remote end closed connection
+    without response" — which has nothing to do with our request being
+    wrong, just Finale occasionally timing out on a slow, heavy report).
+    Does NOT retry on actual HTTP error responses (4xx/5xx with a real
+    response) — those indicate a genuine problem worth seeing immediately
+    rather than masking with a retry.
+    """
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.get(url, auth=(FINALE_API_KEY, FINALE_API_SECRET), timeout=180)
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            if attempt == max_attempts:
+                raise
+            wait = 10 * attempt  # 10s, then 20s
+            print(f"  Finale request failed ({e.__class__.__name__}), "
+                  f"retrying in {wait}s (attempt {attempt}/{max_attempts})...")
+            time.sleep(wait)
 
 
 def fetch_finale_product_lines() -> dict[str, list[dict]]:
