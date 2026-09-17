@@ -1207,6 +1207,13 @@ function buildChemicalPriorityList(rows) {
   );
   // For each SKU: which distinct orders need it, total qty, and whether
   // any of those orders are Amazon/Walmart (channel priority).
+  //
+  // CONFIRMED (2026-09-17): store_name can NEVER distinguish these --
+  // Amazon and Walmart orders are not separate ShipStation "stores" in
+  // this account; a real Amazon order (AMZN-000406862) came back with
+  // storeId 528172, identical to every plain Magento order. The real,
+  // reliable signal is the order NUMBER's own prefix (AMZN-, WMT),
+  // confirmed directly against real order numbers.
   const bySku = new Map();
   for (const row of scopedRows) {
     const sku = (row.product_id || "").trim();
@@ -1214,8 +1221,8 @@ function buildChemicalPriorityList(rows) {
     if (!bySku.has(sku)) bySku.set(sku, { sku, description: row.description || "", orders: new Set(), isChannelPriority: false });
     const entry = bySku.get(sku);
     entry.orders.add(row.order_id);
-    const store = (row.store_name || "").toLowerCase();
-    if (store.includes("amazon") || store.includes("walmart")) entry.isChannelPriority = true;
+    const oid = (row.order_id || "").toUpperCase();
+    if (oid.startsWith("AMZN") || oid.startsWith("WMT")) entry.isChannelPriority = true;
   }
 
   // Group SKUs into families for display.
