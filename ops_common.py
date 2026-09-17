@@ -38,27 +38,34 @@ ORDERS_REPORT_URL = (
 # HAZMAT (both confirmed added correctly, alongside the pre-existing
 # Magento field, via direct data verification before saving).
 
-# CONFIRMED (2026-09-16) that Warehouse/Freight routing is NOT reliably
-# determined by tags alone — a real order (000406235) was assigned to
-# Freight purely via a SKU-pattern automation rule that never touches
-# tags at all, so tag-based classification silently misclassified it as
-# Warehouse. The actual, authoritative signal is which ShipStation USER
-# an order is assigned to: every Freight order is assigned to "Jerry",
-# every Warehouse order is assigned to "Warehouse" — confirmed directly
-# by the account owner, not inferred. This is what core_queue_for_order()
-# below uses now; tags_for_order() is kept only as an informational field
-# (drop-ship vendor, holds, restricted-chemical flags, etc.), no longer
-# the mechanism for Warehouse/Freight/Both.
-CORE_QUEUE_USERS = {"Warehouse": "Warehouse", "Jerry": "Freight"}
-
-# Old tag-based mapping, kept only as a fallback/reference — no longer
-# used to compute core_queue. See CORE_QUEUE_USERS above instead.
+# CONFIRMED (2026-09-16) full history of what's been tried and why each
+# was wrong or incomplete:
+#   1. Tags — a real order (000406235) was assigned to Freight purely via
+#      a SKU-pattern automation rule that never touches tags at all, so
+#      tag-based classification silently misclassified it as Warehouse.
+#   2. Assigned user (order['userId']) — seemed right in principle (the
+#      account owner confirmed every Freight order is assigned to user
+#      "Jerry", every Warehouse order to user "Warehouse"), but
+#      ShipStation's own GET /users endpoint returned only 13 users, and
+#      neither the real "Jerry" nor "Warehouse" account's userId appeared
+#      among them AT ALL — confirmed by pulling one order's raw JSON
+#      directly (000406235's real userId, ca55e6e7-..., matched none of
+#      the 13). Whatever that endpoint returns, it isn't the full roster
+#      that order.userId actually references.
+#   3. Ship From Location (advancedOptions.warehouseId) — what we're
+#      using now. The same automation rule that assigns the user ALSO
+#      sets this field in the same action ("Set Ship From Location:
+#      Dripping Springs Freight"), so it carries the identical routing
+#      signal, but resolves through list_warehouses()/get_warehouse_id(),
+#      a completely different, already-proven endpoint from very early
+#      in this project — sidestepping whatever gap exists in /users.
+#      WAREHOUSE_LOCATION_NAME/FREIGHT_LOCATION_NAME below match the
+#      exact location names seen in the automation rule screenshots.
 CORE_QUEUE_TAGS = {"Austin Warehouse": "Warehouse", "ATX Freight": "Freight"}
+CORE_QUEUE_USERS = {"Warehouse": "Warehouse", "Jerry": "Freight"}
+WAREHOUSE_LOCATION_NAME = "Dripping Springs Warehouse"
+FREIGHT_LOCATION_NAME = "Dripping Springs Freight"
 
-# "Jerry" was an early, wrong guess at the Freight TAG name — turned out
-# to be the name of a saved filter/view in ShipStation, not an actual
-# tag. Ironically, "Jerry" IS the correct answer, just as a USER name,
-# not a tag — see CORE_QUEUE_USERS above.
 TAG_DISPLAY_OVERRIDES: dict[str, str] = {}
 
 
@@ -76,27 +83,28 @@ def tags_for_order(order: dict, tag_name_by_id: dict[int, str]) -> str:
     tag name with a trailing space — "ATX Freight "). An order can carry
     more than one tag (e.g. a split order needing both Warehouse and a
     drop-ship vendor), so this is deliberately not a single value. Kept
-    as an informational field only — see the note above CORE_QUEUE_USERS
-    for why this is no longer what determines core_queue."""
+    as an informational field only — see the note above for why this is
+    no longer what determines core_queue."""
     tag_ids = order.get("tagIds") or []
     names = [tag_name_by_id.get(tid, f"(unknown tag {tid})").strip() for tid in tag_ids]
     names = [TAG_DISPLAY_OVERRIDES.get(n, n) for n in names]
     return ", ".join(names)
 
 
-def core_queue_for_order(order: dict, user_name_by_id: dict[str, str]) -> str:
-    """The real classification: which ShipStation user this order is
-    assigned to (order['userId'], a GUID) — 'Warehouse', 'Freight', or ''
-    (assigned to someone/something else entirely: a drop-ship vendor
-    contact, unassigned, a hold, etc.). Unlike the old tag-based version,
-    an order can only be assigned to ONE user at a time, so there's no
-    longer a genuine 'Both' case — that was an artifact of tags being
-    able to co-occur, which doesn't apply to a single assignment."""
-    user_id = order.get("userId")
-    if not user_id:
-        return ""
-    user_name = (user_name_by_id.get(user_id) or "").strip()
-    return CORE_QUEUE_USERS.get(user_name, "")
+def core_queue_for_order(order: dict, warehouse_id: int, freight_id: int) -> str:
+    """The real classification: which Ship From Location this order is
+    set to (order['advancedOptions']['warehouseId']) — 'Warehouse',
+    'Freight', or '' (something else: a drop-ship vendor, unassigned, a
+    hold, etc.). warehouse_id/freight_id come from
+    client.get_warehouse_id(WAREHOUSE_LOCATION_NAME) /
+    client.get_warehouse_id(FREIGHT_LOCATION_NAME), resolved once per run
+    by the caller."""
+    wh_id = (order.get("advancedOptions") or {}).get("warehouseId")
+    if wh_id == warehouse_id:
+        return "Warehouse"
+    if wh_id == freight_id:
+        return "Freight"
+    return ""
 
 
 

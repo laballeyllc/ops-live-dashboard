@@ -74,6 +74,7 @@ from pull_stats import ss_datetime
 from ops_common import (
     normalize_order_id, tags_for_order, core_queue_for_order,
     fetch_finale_product_lines, append_to_snapshots,
+    WAREHOUSE_LOCATION_NAME, FREIGHT_LOCATION_NAME,
 )
 
 load_dotenv()
@@ -88,15 +89,14 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
     tag_name_by_id = client.list_tags()
     print(f"  {len(tag_name_by_id)} tags defined")
 
-    print("Pulling user list from ShipStation...")
-    user_name_by_id = client.list_users()
-    print(f"  {len(user_name_by_id)} users defined")
+    warehouse_id = client.get_warehouse_id(WAREHOUSE_LOCATION_NAME)
+    freight_id = client.get_warehouse_id(FREIGHT_LOCATION_NAME)
 
     state: dict[str, dict] = {}
 
     # Step 1: current queue, no date limit. A stuck order doesn't stop
-    # being "in queue" just because it's old. Tags and assigned user are
-    # on the order object directly here, so no extra lookup needed.
+    # being "in queue" just because it's old. Tags and Ship From Location
+    # are on the order object directly here, so no extra lookup needed.
     print("Pulling current queue from ShipStation (awaiting_shipment + on_hold, no date limit)...")
     for status in ("awaiting_shipment", "on_hold"):
         orders = client.list_orders(order_status=status)
@@ -111,12 +111,12 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
                 "Ship date actual": "",
                 "Shipment ID": "",
                 "Tags": tags_for_order(order, tag_name_by_id),
-                "Core Queue": core_queue_for_order(order, user_name_by_id),
+                "Core Queue": core_queue_for_order(order, warehouse_id, freight_id),
             }
 
     # Step 2: actual shipments for the recent window — the authoritative
-    # ship date and voided-or-not. Tags AND assigned user both live on
-    # the ORDER, not the shipment record, so we also bulk-fetch orders
+    # ship date and voided-or-not. Tags AND Ship From Location both live
+    # on the ORDER, not the shipment record, so we also bulk-fetch orders
     # modified in this same window to pick up both for anything shipped.
     if days > 0:
         window_start = datetime.now() - timedelta(days=days)
@@ -127,7 +127,7 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
         )
         print(f"  {len(shipments)} shipments")
 
-        print("Pulling matching orders (for Tags and assigned user)...")
+        print("Pulling matching orders (for Tags and Ship From Location)...")
         recent_orders = client.list_orders(
             modify_date_start=ss_datetime(window_start - timedelta(days=3)),
             modify_date_end=ss_datetime(window_end + timedelta(days=1)),
@@ -146,7 +146,7 @@ def pull_shipstation_state(client: ShipStationClient, days: int) -> dict[str, di
                 "Ship date actual": (shipment.get("shipDate") or "")[:10],
                 "Shipment ID": str(shipment.get("shipmentId", "")),
                 "Tags": tags_for_order(order, tag_name_by_id) if order else "",
-                "Core Queue": core_queue_for_order(order, user_name_by_id) if order else "",
+                "Core Queue": core_queue_for_order(order, warehouse_id, freight_id) if order else "",
             }
 
     return state

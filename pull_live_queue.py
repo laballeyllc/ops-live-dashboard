@@ -46,6 +46,7 @@ from shipstation_client import ShipStationClient
 from ops_common import (
     normalize_order_id, tags_for_order, core_queue_for_order,
     fetch_finale_product_lines, replace_live_queue,
+    WAREHOUSE_LOCATION_NAME, FREIGHT_LOCATION_NAME,
 )
 
 load_dotenv()
@@ -70,11 +71,8 @@ def pull_current_queue(client: ShipStationClient) -> dict[str, dict]:
     tag_name_by_id = client.list_tags()
     print(f"  {len(tag_name_by_id)} tags defined")
 
-    print("Pulling user list from ShipStation...")
-    user_name_by_id = client.list_users()
-    print(f"  {len(user_name_by_id)} users defined")
-    for uid, uname in user_name_by_id.items():
-        print(f"    {uid}: {uname!r}")
+    warehouse_id = client.get_warehouse_id(WAREHOUSE_LOCATION_NAME)
+    freight_id = client.get_warehouse_id(FREIGHT_LOCATION_NAME)
 
     state: dict[str, dict] = {}
     print("Pulling current queue from ShipStation (awaiting_shipment + on_hold)...")
@@ -89,7 +87,7 @@ def pull_current_queue(client: ShipStationClient) -> dict[str, dict]:
                 "Order date": (order.get("orderDate") or "")[:10],
                 "Shipment status": status,
                 "Tags": tags_for_order(order, tag_name_by_id),
-                "Core Queue": core_queue_for_order(order, user_name_by_id),
+                "Core Queue": core_queue_for_order(order, warehouse_id, freight_id),
             }
     return state
 
