@@ -34,6 +34,91 @@
     -webkit-font-smoothing: antialiased;
   }
 
+  .tab-nav {
+    display: flex;
+    gap: 4px;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+
+  .tab-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+
+  .tab-btn:hover {
+    color: var(--text);
+  }
+
+  .tab-btn.active {
+    color: var(--warehouse);
+    border-bottom-color: var(--warehouse);
+  }
+
+  .subsection-toggle {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .list-controls {
+    margin-bottom: 10px;
+  }
+
+  .toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .expand-toggle {
+    cursor: pointer;
+    color: var(--warehouse);
+  }
+
+  .expand-caret {
+    display: inline-block;
+    font-size: 10px;
+    transition: transform 0.15s ease;
+  }
+
+  .expand-caret.open {
+    transform: rotate(90deg);
+  }
+
+  .detail-row td {
+    padding: 0 14px 12px !important;
+    background: var(--panel-raised);
+  }
+
+  .detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 6px;
+  }
+
+  .detail-table th {
+    text-align: left;
+    padding: 4px 10px;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .detail-table td {
+    padding: 4px 10px;
+    border-top: 1px solid var(--border);
+  }
+
   header {
     display: flex;
     align-items: center;
@@ -543,7 +628,15 @@
   <div id="last-updated"><span class="dot" id="last-updated-dot"></span><span id="last-updated-text">Loading…</span></div>
 </header>
 
+<div class="tab-nav">
+  <button class="tab-btn active" id="tab-btn-breakdown" onclick="switchTab('breakdown')">Queue Breakdown</button>
+  <button class="tab-btn" id="tab-btn-strategy" onclick="switchTab('strategy')">Queue Strategy Tools</button>
+</div>
+
 <main>
+  <div id="empty-state" style="display:none;">No live queue data found yet — check that the "Live Queue Pull" GitHub Action has run at least once.</div>
+
+  <div id="tab-breakdown" class="tab-panel">
   <div class="summary-row" id="summary-row"></div>
   <div class="scope-note">Showing orders Lab Alley itself fulfills (Warehouse/Freight) — drop-ship orders (Biologix, United Scientific, Transene, Post Apple Scientific, GT) and anything not tagged Warehouse/Freight/Both are excluded entirely.</div>
 
@@ -591,27 +684,28 @@
       </div>
     </div>
   </div>
+  </div>
 
-  <div class="attack-section">
-    <h2 class="attack-section-title" id="attack-toggle">
-      <span class="chevron open" id="attack-chevron">&#9656;</span> Attack the Queue
-      <span class="h2-note">Warehouse/Freight/Both orders only, held orders excluded — company goal: every order shipped within 48 business hours (weekends excluded)</span>
-    </h2>
+  <div id="tab-strategy" class="tab-panel" style="display:none;">
+    <div class="scope-note">Warehouse/Freight/Both orders only, held orders excluded — company goal: every order shipped within 48 business hours (weekends excluded)</div>
 
-    <div id="attack-body">
-      <div class="summary-row attack-callouts">
-        <div class="summary-card agingrisk">
-          <div class="value" id="atrisk-count">0</div>
-          <div class="label">Orders 24h+ old (at risk of missing the 48h goal)</div>
-        </div>
-        <div class="summary-card agingrisk overdue">
-          <div class="value" id="overdue-count">0</div>
-          <div class="label">Orders past 48 business hours (already overdue)</div>
-        </div>
+    <div class="summary-row attack-callouts">
+      <div class="summary-card agingrisk">
+        <div class="value" id="atrisk-count">0</div>
+        <div class="label">Orders 24h+ old (at risk of missing the 48h goal)</div>
       </div>
+      <div class="summary-card agingrisk overdue">
+        <div class="value" id="overdue-count">0</div>
+        <div class="label">Orders past 48 business hours (already overdue)</div>
+      </div>
+    </div>
 
-      <div class="attack-subsection">
-        <h3>Chemicals to prioritize <span class="h2-note">ranked by how many orders currently need them; Amazon/Walmart-committed orders bump a chemical to the top, matching the build script's own channel-priority rule</span></h3>
+    <div class="attack-subsection">
+      <h3 class="subsection-toggle" onclick="toggleSubsection('priority-body','priority-chevron')">
+        <span class="chevron open" id="priority-chevron">&#9656;</span>
+        Chemicals to prioritize <span class="h2-note">ranked by how many orders currently need them; Amazon/Walmart-committed orders bump a chemical to the top, matching the build script's own channel-priority rule</span>
+      </h3>
+      <div id="priority-body">
         <table class="attack-table">
           <thead>
             <tr>
@@ -625,9 +719,14 @@
           <tbody id="priority-tbody"></tbody>
         </table>
       </div>
+    </div>
 
-      <div class="attack-subsection">
-        <h3>Downpack urgency <span class="h2-note">chemicals requiring Repack that are sitting on aging orders — may not be high-volume, but they're likely why these specific orders are stuck</span></h3>
+    <div class="attack-subsection">
+      <h3 class="subsection-toggle" onclick="toggleSubsection('downpack-urgency-body','downpack-urgency-chevron')">
+        <span class="chevron open" id="downpack-urgency-chevron">&#9656;</span>
+        Downpack urgency <span class="h2-note">chemicals requiring Repack that are sitting on aging orders — may not be high-volume, but they're likely why these specific orders are stuck</span>
+      </h3>
+      <div id="downpack-urgency-body">
         <table class="attack-table">
           <thead>
             <tr>
@@ -641,9 +740,20 @@
           <tbody id="downpack-urgency-tbody"></tbody>
         </table>
       </div>
+    </div>
 
-      <div class="attack-subsection">
-        <h3>Shipping list <span class="h2-note">what to pick and pack right now, based on usable stock — prioritized by Amazon/Walmart, then FIFO; blocked orders need Production first</span></h3>
+    <div class="attack-subsection">
+      <h3 class="subsection-toggle" onclick="toggleSubsection('shipping-list-body','shipping-list-chevron')">
+        <span class="chevron open" id="shipping-list-chevron">&#9656;</span>
+        Shipping list <span class="h2-note">what to pick and pack right now, based on usable stock — prioritized by Amazon/Walmart, then FIFO; blocked orders need Production first</span>
+      </h3>
+      <div id="shipping-list-body">
+        <div class="list-controls">
+          <label class="toggle-label">
+            <input type="checkbox" id="shipping-blocked-checkbox" onchange="toggleShippingBlockedVisibility()">
+            Show blocked orders
+          </label>
+        </div>
         <table class="attack-table">
           <thead>
             <tr>
@@ -651,15 +761,42 @@
               <th>Status</th>
               <th>Age</th>
               <th>Priority</th>
+              <th>SKU(s)</th>
+              <th>Quantity</th>
               <th>Blocked by</th>
             </tr>
           </thead>
           <tbody id="shipping-list-tbody"></tbody>
         </table>
       </div>
+    </div>
 
-      <div class="attack-subsection">
-        <h3>Production list <span class="h2-note">chemicals to build, ranked by orders blocked and age — quantity builds up to Reorder Point Max, not just current demand</span></h3>
+    <div class="attack-subsection">
+      <h3 class="subsection-toggle" onclick="toggleSubsection('stock-builds-body','stock-builds-chevron')">
+        <span class="chevron open" id="stock-builds-chevron">&#9656;</span>
+        Stock builds <span class="h2-note">chemicals below Reorder Point Max with NO current order demand or backorder — proactive builds to stay ahead of high-selling items before they run out</span>
+      </h3>
+      <div id="stock-builds-body">
+        <table class="attack-table">
+          <thead>
+            <tr>
+              <th>Chemical</th>
+              <th>Usable stock</th>
+              <th>Reorder pt. max</th>
+              <th>Deficit</th>
+            </tr>
+          </thead>
+          <tbody id="stock-builds-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="attack-subsection">
+      <h3 class="subsection-toggle" onclick="toggleSubsection('production-list-body','production-list-chevron')">
+        <span class="chevron open" id="production-list-chevron">&#9656;</span>
+        Production list <span class="h2-note">chemicals actively blocking live orders, ranked by orders blocked and age — quantity builds up to Reorder Point Max, not just current demand</span>
+      </h3>
+      <div id="production-list-body">
         <table class="attack-table">
           <thead>
             <tr>
@@ -677,8 +814,6 @@
       </div>
     </div>
   </div>
-
-  <div id="empty-state" style="display:none;">No live queue data found yet — check that the "Live Queue Pull" GitHub Action has run at least once.</div>
 </main>
 
 <script>
@@ -1237,6 +1372,28 @@ function skuFamily(productId) {
   return idx > 0 ? productId.slice(0, idx) : productId;
 }
 
+function resolveRealSkus(lines) {
+  // Shared fallback for Finale's "Multiple products" collapse: when a
+  // split/backordered order's line got summarized into one placeholder
+  // row with no real per-SKU detail, fall back to ShipStation's own
+  // item list (ss_items) instead of silently dropping the order from
+  // every SKU-level count. Same fix as the Shipping list's pickability
+  // bug, applied here too so "Chemicals to prioritize" doesn't
+  // undercount orders that happen to be collapsed this way.
+  let distinctSkus = [...new Set(
+    lines.map(l => (l.product_id || "").trim()).filter(v => v && v !== "Multiple products")
+  )];
+  const hasCollapsedRow = lines.some(l => (l.product_id || "").trim() === "Multiple products");
+  if (hasCollapsedRow) {
+    const first = lines[0];
+    let ssItems = [];
+    try { ssItems = JSON.parse(first.ss_items || "[]"); } catch (e) { ssItems = []; }
+    const realSkus = ssItems.map(item => (item.sku || "").trim()).filter(v => v);
+    distinctSkus = [...new Set([...distinctSkus, ...realSkus])];
+  }
+  return distinctSkus;
+}
+
 function buildChemicalPriorityList(rows) {
   const scopedRows = rows.filter(r =>
     ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
@@ -1250,15 +1407,26 @@ function buildChemicalPriorityList(rows) {
   // storeId 528172, identical to every plain Magento order. The real,
   // reliable signal is the order NUMBER's own prefix (AMZN-, WMT),
   // confirmed directly against real order numbers.
-  const bySku = new Map();
+  const linesByOrder = new Map();
   for (const row of scopedRows) {
-    const sku = (row.product_id || "").trim();
-    if (!sku || sku === "Multiple products") continue;
-    if (!bySku.has(sku)) bySku.set(sku, { sku, description: row.description || "", orders: new Set(), isChannelPriority: false });
-    const entry = bySku.get(sku);
-    entry.orders.add(row.order_id);
-    const oid = (row.order_id || "").toUpperCase();
-    if (oid.startsWith("AMZN") || oid.startsWith("WMT")) entry.isChannelPriority = true;
+    if (!linesByOrder.has(row.order_id)) linesByOrder.set(row.order_id, []);
+    linesByOrder.get(row.order_id).push(row);
+  }
+
+  const bySku = new Map();
+  for (const [oid, lines] of linesByOrder) {
+    const first = lines[0];
+    const skus = resolveRealSkus(lines);
+    const oidUpper = oid.toUpperCase();
+    const isChannelPriority = oidUpper.startsWith("AMZN") || oidUpper.startsWith("WMT");
+    const qty = parseInt(first.item_quantity) || 0;
+    for (const sku of skus) {
+      if (!bySku.has(sku)) bySku.set(sku, { sku, orders: new Set(), isChannelPriority: false, totalQty: 0 });
+      const entry = bySku.get(sku);
+      entry.orders.add(oid);
+      if (isChannelPriority) entry.isChannelPriority = true;
+      entry.totalQty += qty;
+    }
   }
 
   // Group SKUs into families for display.
@@ -1269,16 +1437,8 @@ function buildChemicalPriorityList(rows) {
     const famEntry = families.get(fam);
     famEntry.skus.push(entry.sku);
     for (const oid of entry.orders) famEntry.orders.add(oid);
+    famEntry.totalQty += entry.totalQty;
     if (entry.isChannelPriority) famEntry.isChannelPriority = true;
-  }
-
-  // Total units per family, from item_quantity on rows carrying this family's SKUs.
-  for (const row of scopedRows) {
-    const sku = (row.product_id || "").trim();
-    if (!sku || sku === "Multiple products") continue;
-    const fam = skuFamily(sku);
-    const famEntry = families.get(fam);
-    if (famEntry) famEntry.totalQty += (parseInt(row.item_quantity) || 0);
   }
 
   const list = Array.from(families.values()).map(f => ({
@@ -1390,21 +1550,47 @@ function buildShippingList(rows) {
       if (item.sku) qtyBySku.set(item.sku, (qtyBySku.get(item.sku) || 0) + (item.qty || 0));
     }
 
-    const distinctSkus = [...new Set(
+    // Real distinct SKUs for this order. CRITICAL FIX: when Finale
+    // collapsed a split/backordered order into a single "Multiple
+    // products" row, that row gives us NO real per-SKU detail — the
+    // OLD code simply filtered it out, leaving zero SKUs to check,
+    // which meant zero blockers were ever found and the order defaulted
+    // to "Pickable" regardless of whether the real items were actually
+    // in stock. Now falls back to ss_items (ShipStation's own real item
+    // list) for exactly this case, same fallback already used for the
+    // "(not set)" drilldown elsewhere on this page.
+    let distinctSkus = [...new Set(
       lines.map(l => (l.product_id || "").trim()).filter(v => v && v !== "Multiple products")
     )];
+    const hasCollapsedRow = lines.some(l => (l.product_id || "").trim() === "Multiple products");
+    if (hasCollapsedRow && ssItems.length) {
+      const realSkus = ssItems.map(item => (item.sku || "").trim()).filter(v => v);
+      distinctSkus = [...new Set([...distinctSkus, ...realSkus])];
+    }
+
+    const items = [];
     const blockers = [];
-    for (const sku of distinctSkus) {
-      const needed = qtyBySku.get(sku) || 1;
-      const s = stock.get(sku);
-      const usable = s ? s.usableStock : 0;
-      if (usable < needed) blockers.push({ sku, needed, usable });
+    if (distinctSkus.length === 0) {
+      // Genuinely no way to know what's in this order (collapsed row,
+      // no ss_items data either) — never default to "Pickable" when we
+      // can't actually confirm that.
+      blockers.push({ sku: "(unknown — no item data)", needed: "?", usable: "?" });
+    } else {
+      for (const sku of distinctSkus) {
+        const needed = qtyBySku.get(sku) || 1;
+        const s = stock.get(sku);
+        const usable = s ? s.usableStock : 0;
+        const isBlocked = usable < needed;
+        items.push({ sku, needed, usable, isBlocked });
+        if (isBlocked) blockers.push({ sku, needed, usable });
+      }
     }
 
     const oidUpper = oid.toUpperCase();
     results.push({
       orderId: oid,
       isPickable: blockers.length === 0,
+      items,
       blockers,
       isChannelPriority: oidUpper.startsWith("AMZN") || oidUpper.startsWith("WMT"),
       hours: businessHoursSinceOrder(first.order_datetime),
@@ -1429,6 +1615,7 @@ function buildProductionList(shippingList) {
   const blockedByProduct = new Map();
   for (const order of shippingList) {
     for (const b of order.blockers) {
+      if (typeof b.needed !== "number") continue; // "(unknown)" placeholder — can't attribute to a real product
       if (!blockedByProduct.has(b.sku)) {
         blockedByProduct.set(b.sku, { orderCount: 0, maxHours: 0, hasChannelPriority: false, neededTotal: 0 });
       }
@@ -1441,14 +1628,13 @@ function buildProductionList(shippingList) {
   }
 
   const stock = stockByProduct();
-  const allSkus = new Set([...blockedByProduct.keys(), ...stock.keys()]);
   const results = [];
-  for (const sku of allSkus) {
+  for (const [sku, entry] of blockedByProduct) {
+    // Only chemicals ACTUALLY blocking a live order right now belong
+    // here — pure reorder-point deficits with zero current demand moved
+    // to the separate "Stock builds" list instead, so this stays a
+    // purely actionable, urgent list.
     const s = stock.get(sku) || { usableStock: 0, reorderPointMax: null, unitsBackorder: 0 };
-    const blocked = blockedByProduct.get(sku);
-    const hasDeficit = s.reorderPointMax != null && s.usableStock < s.reorderPointMax;
-    const hasBackorder = s.unitsBackorder > 0;
-    if (!blocked && !hasDeficit && !hasBackorder) continue;
 
     // Build UP TO Reorder Point Max, not just enough for current
     // demand — the explicit rule: demand of 5 but a reorder max of 10
@@ -1457,7 +1643,7 @@ function buildProductionList(shippingList) {
     if (s.reorderPointMax != null) {
       buildQty = Math.max(0, s.reorderPointMax - s.usableStock);
     } else {
-      buildQty = Math.max(s.unitsBackorder, blocked ? blocked.neededTotal : 0);
+      buildQty = Math.max(s.unitsBackorder, entry.neededTotal);
     }
     if (buildQty <= 0) continue;
 
@@ -1466,9 +1652,9 @@ function buildProductionList(shippingList) {
       buildQty,
       usableStock: s.usableStock,
       reorderPointMax: s.reorderPointMax,
-      ordersBlocked: blocked ? blocked.orderCount : 0,
-      maxHours: blocked ? blocked.maxHours : 0,
-      isChannelPriority: blocked ? blocked.hasChannelPriority : false,
+      ordersBlocked: entry.orderCount,
+      maxHours: entry.maxHours,
+      isChannelPriority: entry.hasChannelPriority,
     });
   }
 
@@ -1483,16 +1669,97 @@ function buildProductionList(shippingList) {
   return results;
 }
 
+function buildStockBuilds(shippingList) {
+  // Proactive restocking targets: below Reorder Point Max, but NOT
+  // currently blocking any live order and no open backorder either —
+  // i.e. nothing urgent is demanding it yet, but it's trending toward
+  // running out. A Reorder Point Max existing at all implies it's a
+  // real, tracked seller worth staying ahead of.
+  const blockedSkus = new Set();
+  for (const order of shippingList) {
+    for (const b of order.blockers) {
+      if (typeof b.needed === "number") blockedSkus.add(b.sku);
+    }
+  }
+  const stock = stockByProduct();
+  const results = [];
+  for (const [sku, s] of stock) {
+    if (s.reorderPointMax == null) continue;
+    if (s.unitsBackorder > 0) continue;
+    if (blockedSkus.has(sku)) continue;
+    const deficit = s.reorderPointMax - s.usableStock;
+    if (deficit <= 0) continue;
+    results.push({ sku, deficit, usableStock: s.usableStock, reorderPointMax: s.reorderPointMax });
+  }
+  // Biggest deficit first, per Casey's call.
+  results.sort((a, b) => b.deficit - a.deficit);
+  return results;
+}
+
+let currentShippingList = [];
+let shippingShowBlocked = false;
+
 function renderShippingList(list) {
-  document.getElementById("shipping-list-tbody").innerHTML = list.length ? list.map(o => `
+  currentShippingList = list;
+  const filtered = shippingShowBlocked ? list : list.filter(o => o.isPickable);
+
+  document.getElementById("shipping-list-tbody").innerHTML = filtered.length ? filtered.map((o, i) => {
+    const rowId = `ship-${i}`;
+    let skuCell, qtyCell;
+    if (o.items.length > 1) {
+      skuCell = `<span class="expand-toggle" onclick="toggleShippingDetail('${rowId}')">Multiple SKUs <span class="expand-caret" id="${rowId}-caret">&#9656;</span></span>`;
+      qtyCell = o.items.reduce((sum, it) => sum + (typeof it.needed === "number" ? it.needed : 0), 0);
+    } else if (o.items.length === 1) {
+      skuCell = o.items[0].sku;
+      qtyCell = o.items[0].needed;
+    } else {
+      skuCell = "(unknown)";
+      qtyCell = "?";
+    }
+
+    const detailRow = o.items.length > 1 ? `
+      <tr class="detail-row" id="${rowId}-detail" style="display:none;">
+        <td colspan="7">
+          <table class="detail-table">
+            <thead><tr><th>SKU</th><th>Needed</th><th>Usable</th><th>Status</th></tr></thead>
+            <tbody>
+              ${o.items.map(it => `
+                <tr>
+                  <td>${it.sku}</td>
+                  <td>${it.needed}</td>
+                  <td>${it.usable}</td>
+                  <td>${it.isBlocked ? '<span class="status-pill blocked">Blocked</span>' : '<span class="status-pill pickable">OK</span>'}</td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+        </td>
+      </tr>` : "";
+
+    return `
     <tr>
       <td>${o.orderId}</td>
       <td><span class="status-pill ${o.isPickable ? 'pickable' : 'blocked'}">${o.isPickable ? 'Pickable' : 'Blocked'}</span></td>
       <td>${o.hours.toFixed(0)}h</td>
       <td>${o.isChannelPriority ? '<span class="priority-pill channel">Amazon/Walmart</span>' : ''}</td>
+      <td>${skuCell}</td>
+      <td>${qtyCell}</td>
       <td>${o.blockers.map(b => `${b.sku} (need ${b.needed}, have ${b.usable})`).join(', ')}</td>
-    </tr>
-  `).join("") : `<tr><td colspan="5" class="bar-empty">No data</td></tr>`;
+    </tr>${detailRow}`;
+  }).join("") : `<tr><td colspan="7" class="bar-empty">${shippingShowBlocked ? 'No data' : 'Nothing pickable right now'}</td></tr>`;
+}
+
+function toggleShippingDetail(rowId) {
+  const row = document.getElementById(`${rowId}-detail`);
+  const caret = document.getElementById(`${rowId}-caret`);
+  if (!row) return;
+  const isOpen = row.style.display !== "none";
+  row.style.display = isOpen ? "none" : "table-row";
+  if (caret) caret.classList.toggle("open", !isOpen);
+}
+
+function toggleShippingBlockedVisibility() {
+  shippingShowBlocked = document.getElementById("shipping-blocked-checkbox").checked;
+  renderShippingList(currentShippingList);
 }
 
 function renderProductionList(list) {
@@ -1506,7 +1773,18 @@ function renderProductionList(list) {
       <td>${p.ordersBlocked ? p.maxHours.toFixed(0) + 'h' : '—'}</td>
       <td>${p.isChannelPriority ? '<span class="priority-pill channel">Amazon/Walmart</span>' : ''}</td>
     </tr>
-  `).join("") : `<tr><td colspan="7" class="bar-empty">Nothing needs building right now</td></tr>`;
+  `).join("") : `<tr><td colspan="7" class="bar-empty">Nothing currently blocking an order</td></tr>`;
+}
+
+function renderStockBuilds(list) {
+  document.getElementById("stock-builds-tbody").innerHTML = list.length ? list.map(p => `
+    <tr>
+      <td>${p.sku}</td>
+      <td>${p.usableStock.toFixed(1)}</td>
+      <td>${p.reorderPointMax}</td>
+      <td>${p.deficit.toFixed(0)}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="4" class="bar-empty">Nothing needs proactive restocking right now</td></tr>`;
 }
 
 function renderAttackSection(rows) {
@@ -1533,16 +1811,38 @@ function renderAttackSection(rows) {
   const shippingList = buildShippingList(rows);
   renderShippingList(shippingList);
   renderProductionList(buildProductionList(shippingList));
+  renderStockBuilds(buildStockBuilds(shippingList));
 }
 
-const attackChevron = document.getElementById("attack-chevron");
-const attackBody = document.getElementById("attack-body");
-let attackExpanded = true;
-document.getElementById("attack-toggle").addEventListener("click", () => {
-  attackExpanded = !attackExpanded;
-  attackBody.style.display = attackExpanded ? "block" : "none";
-  attackChevron.classList.toggle("open", attackExpanded);
-});
+let hasData = false;
+let activeTab = "breakdown";
+
+function updateTabVisibility() {
+  const breakdownEl = document.getElementById("tab-breakdown");
+  const strategyEl = document.getElementById("tab-strategy");
+  if (!hasData) {
+    breakdownEl.style.display = "none";
+    strategyEl.style.display = "none";
+    return;
+  }
+  breakdownEl.style.display = activeTab === "breakdown" ? "block" : "none";
+  strategyEl.style.display = activeTab === "strategy" ? "block" : "none";
+}
+
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById("tab-btn-breakdown").classList.toggle("active", tab === "breakdown");
+  document.getElementById("tab-btn-strategy").classList.toggle("active", tab === "strategy");
+  updateTabVisibility();
+}
+
+function toggleSubsection(bodyId, chevronId) {
+  const body = document.getElementById(bodyId);
+  const chevron = document.getElementById(chevronId);
+  const isOpen = body.style.display !== "none";
+  body.style.display = isOpen ? "none" : "block";
+  chevron.classList.toggle("open", !isOpen);
+}
 
 function formatLastUpdated(pulledAtIso) {
   // Data is stored in UTC (correctly, deliberately) — convert to Central
@@ -1590,12 +1890,11 @@ async function refresh() {
     }
 
     document.getElementById("empty-state").style.display = currentRows.length ? "none" : "block";
-    document.querySelector(".summary-row").style.display = currentRows.length ? "grid" : "none";
-    document.querySelector(".age-row").style.display = currentRows.length ? "grid" : "none";
-    document.querySelectorAll(".breakdowns").forEach(el => el.style.display = currentRows.length ? "grid" : "none");
-    document.querySelector(".scope-note").style.display = currentRows.length ? "block" : "none";
-    document.querySelector(".held-section").style.display = currentRows.length ? "block" : "none";
-    document.querySelector(".attack-section").style.display = currentRows.length ? "block" : "none";
+    // Tab panel visibility is data-presence AND active-tab, together —
+    // see updateTabVisibility(), which both this and switchTab() call,
+    // so the two states never fight each other.
+    hasData = currentRows.length > 0;
+    updateTabVisibility();
 
     const summary = buildSummary(currentRows);
     renderSummary(summary);
