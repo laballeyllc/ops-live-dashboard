@@ -115,14 +115,20 @@ def is_usable_sublocation(name: str) -> bool:
 
 
 def fetch_usable_stock() -> dict[str, dict]:
-    """Returns {product_id: {"usable_stock": float, "description": str}},
-    quantity summed only across sublocations that pass
-    is_usable_sublocation() — excludes Quality Hold, Inventory Hold, Do
-    Not Inventory, Amazon FBA stock, and staging/processing areas that
-    aren't real, currently-pickable inventory. This is what makes "38.8
-    units on hand" correctly read as "36.3 usable" when ~2.5 of those
-    units are actually sitting in Quality Hold — the exact real example
-    that started this feature."""
+    """Returns {product_id: {"usable_stock": float, "description": str,
+    "lots": {lot_id: qty}}}, quantity summed only across sublocations
+    that pass is_usable_sublocation() — excludes Quality Hold, Inventory
+    Hold, Do Not Inventory, Amazon FBA stock, and staging/processing
+    areas that aren't real, currently-pickable inventory. This is what
+    makes "38.8 units on hand" correctly read as "36.3 usable" when
+    ~2.5 of those units are actually sitting in Quality Hold — the exact
+    real example that started this feature.
+
+    The per-lot breakdown (confirmed against real data, 2026-09-18) is
+    what powers the same-lot fulfillment check: a single lot's stock is
+    often split across several usable sublocations (e.g. one real lot,
+    '5001997/21.1', appeared at 4 different bins for the same product),
+    so this sums by lot ID across all of them, not just one row each."""
     rows = fetch_finale_report(STOCK_BY_SUBLOCATION_REPORT_URL)
     stock: dict[str, dict] = {}
     for row in rows:
@@ -132,7 +138,7 @@ def fetch_usable_stock() -> dict[str, dict]:
             continue
         pid = pid.strip()
         if pid not in stock:
-            stock[pid] = {"usable_stock": 0.0, "description": row.get("Description") or ""}
+            stock[pid] = {"usable_stock": 0.0, "description": row.get("Description") or "", "lots": {}}
         elif not stock[pid]["description"] and row.get("Description"):
             stock[pid]["description"] = row.get("Description")
         if not is_usable_sublocation(sublocation):
@@ -140,6 +146,9 @@ def fetch_usable_stock() -> dict[str, dict]:
         qoh = row.get("Units\nQoH")
         if isinstance(qoh, (int, float)):
             stock[pid]["usable_stock"] += qoh
+            lot_id = (row.get("Lot ID unprefixed") or "").strip()
+            if lot_id:
+                stock[pid]["lots"][lot_id] = stock[pid]["lots"].get(lot_id, 0.0) + qoh
     return stock
 
 
@@ -475,6 +484,7 @@ def build_stock_levels() -> list[dict]:
             "reorder_point_max": d.get("reorder_point_max"),
             "units_backorder": d.get("units_backorder", 0),
             "units_on_hand_reserved": d.get("units_on_hand_reserved", 0),
+            "lots": json.dumps(s.get("lots", {})),
         })
     return rows
 
@@ -626,6 +636,116 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
                 entry = blocked_by_sku.setdefault(sku, {"needed_total": 0.0})
                 entry["needed_total"] += max(0.0, needed - usable)
 
+def _is_case_sku(sku: str) -> bool:
+    """All Lab Alley case SKUs end in 'CS', nothing ever follows it —
+    confirmed directly. Mirrors isCaseSku() in site/index.html."""
+    return sku.endswith("CS")
+
+
+def _pair_sku_for(sku: str) -> str:
+    """Case -> single: strip trailing 'CS'. Single -> case: append 'CS'.
+    1 case = 4 singles, universally. Mirrors pairSkuFor()."""
+    return sku[:-2] if _is_case_sku(sku) else sku + "CS"
+
+
+def _resolve_sku_availability(sku: str, stock: dict[str, dict]) -> float:
+    """Effective availability accounting for case<->single conversion —
+    mirrors resolveSkuAvailability() in site/index.html exactly."""
+    direct = stock.get(sku, {})
+    direct_usable = direct.get("usable_stock", 0.0) or 0.0
+    pair = stock.get(_pair_sku_for(sku), {})
+    pair_usable = pair.get("usable_stock", 0.0) or 0.0
+    if _is_case_sku(sku):
+        return direct_usable + (pair_usable // 4)
+    return direct_usable + (pair_usable * 4)
+
+
+def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
+    """Server-side port of the frontend's buildShippingList() /
+    buildProductionList() logic (site/index.html) for a periodic history
+    snapshot. The Supabase publishable key is deliberately read-only, so
+    the frontend can never write these snapshots itself; this is why the
+    computation has to be duplicated here rather than shared.
+
+    IMPORTANT: this MUST stay logically consistent with the JS version.
+    If the frontend's shortage/pickability logic changes, this needs a
+    matching update, or Build Health's live number and its own logged
+    history will silently drift apart. There is deliberately no shared
+    source of truth between them (JS runs in the browser, this runs in
+    GitHub Actions) — this comment is the closest thing to one.
+    CONFIRMED DRIFT ALREADY HAPPENED ONCE (2026-09-18): the Build %
+    formula was redefined on the frontend (from "total build units vs
+    queue units" to "orders 48h+ overdue AND shortage-blocked vs total
+    queue orders") and this function wasn't updated to match at the same
+    time — the first real logged snapshot used the old formula. Fixed
+    here; if this happens again, that's the bug to look for.
+
+    `rows` is the same shape build_rows() produces (Title Case keys,
+    pre-to_db_rows). `stock` is {product_id: {usable_stock,
+    reorder_point_max, units_backorder}} as returned by
+    build_stock_levels(), keyed by product_id.
+    """
+    scoped = [
+        r for r in rows
+        if r.get("Core Queue") in ("Warehouse", "Freight", "Both")
+        and r.get("Shipment status") != "on_hold"
+    ]
+
+    by_order: dict[str, list[dict]] = {}
+    for r in scoped:
+        by_order.setdefault(r["Order ID"], []).append(r)
+
+    queue_count = len(by_order)
+    total_units = 0
+    aged_24h = 0
+    aged_48h = 0
+    shortage_overdue_count = 0  # 48h+ overdue AND currently shortage-blocked
+    blocked_by_sku: dict[str, dict] = {}
+
+    for oid, lines in by_order.items():
+        first = lines[0]
+        total_units += int(first.get("Item Quantity") or 0)
+
+        hours = business_hours_since(first.get("Order datetime"))
+        is_overdue = hours >= 48
+        if is_overdue:
+            aged_48h += 1
+        elif hours >= 24:
+            aged_24h += 1
+
+        try:
+            ss_items = json.loads(first.get("SS Items") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            ss_items = []
+        qty_by_sku: dict[str, float] = {}
+        for item in ss_items:
+            sku = (item.get("sku") or "").strip()
+            if sku:
+                qty_by_sku[sku] = qty_by_sku.get(sku, 0) + (item.get("qty") or 0)
+
+        distinct_skus = {(l.get("Product ID") or "").strip() for l in lines}
+        distinct_skus.discard("")
+        distinct_skus.discard("Multiple products")
+        has_collapsed = any((l.get("Product ID") or "").strip() == "Multiple products" for l in lines)
+        if has_collapsed and ss_items:
+            distinct_skus |= {s for s in qty_by_sku if s}
+
+        order_is_blocked = False
+        for sku in distinct_skus:
+            needed = qty_by_sku.get(sku, 1)
+            usable = _resolve_sku_availability(sku, stock)
+            if usable < needed:
+                order_is_blocked = True
+                entry = blocked_by_sku.setdefault(sku, {"needed_total": 0.0})
+                entry["needed_total"] += max(0.0, needed - usable)
+
+        if is_overdue and order_is_blocked:
+            shortage_overdue_count += 1
+
+    # Kept as a secondary, still-useful figure (total build burden in
+    # units) — no longer what drives the Build Health card's status,
+    # which now uses shortage_overdue_count/queue_count instead (see
+    # below).
     build_units = 0.0
     for sku, entry in blocked_by_sku.items():
         s = stock.get(sku, {})
@@ -638,13 +758,16 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
             build_qty = max(backorder, entry["needed_total"])
         build_units += build_qty
 
-    build_pct = (build_units / total_units * 100) if total_units else 0.0
+    build_units_pct = (build_units / total_units * 100) if total_units else 0.0
+    build_hit_rate_pct = (100 - (shortage_overdue_count / queue_count * 100)) if queue_count else 100.0
 
     return {
         "queue_count": queue_count,
         "total_units": total_units,
         "build_units": round(build_units),
-        "build_pct": round(build_pct, 1),
+        "build_pct": round(build_units_pct, 1),
+        "shortage_overdue_count": shortage_overdue_count,
+        "build_hit_rate_pct": round(build_hit_rate_pct, 1),
         "aged_24h_count": aged_24h,
         "aged_48h_count": aged_48h,
     }

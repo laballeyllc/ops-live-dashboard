@@ -455,6 +455,17 @@
   .status-pill.atrisk { background: #4A302B; color: var(--alert); }
   .status-pill.overdue { background: #4A302B; color: #E85D5D; }
   .status-pill.pickable { background: var(--warehouse-dim); color: var(--warehouse); }
+
+  .lot-check {
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .lot-check.yes { color: var(--warehouse); }
+  .lot-check.no { color: var(--alert); }
+  .lot-detail {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
   .status-pill.blocked { background: #4A302B; color: var(--alert); }
 
   .flag-pill {
@@ -826,6 +837,14 @@
           <div class="value" id="overdue-count">0</div>
           <div class="label">Orders past 48 business hours (already overdue)</div>
         </div>
+        <div class="summary-card">
+          <div class="value" id="pickable-count">0</div>
+          <div class="label">Orders that can be picked right now</div>
+        </div>
+        <div class="summary-card">
+          <div class="value" id="builds-needed-count">0</div>
+          <div class="label">Unique SKUs needing a build</div>
+        </div>
       </div>
     </div>
 
@@ -841,12 +860,14 @@
 <table class="attack-table sticky-table">
         <thead>
           <tr>
+            <th>#</th>
             <th>Order ID</th>
             <th>Status</th>
             <th>Age</th>
             <th>Priority</th>
             <th>SKU(s)</th>
             <th>Quantity</th>
+            <th>Same Lot</th>
             <th>Blocked by</th>
           </tr>
         </thead>
@@ -861,6 +882,7 @@
 <table class="attack-table sticky-table">
         <thead>
           <tr>
+            <th>#</th>
             <th>Chemical</th>
             <th>Build qty</th>
             <th>Usable stock</th>
@@ -881,10 +903,13 @@
 <table class="attack-table sticky-table">
         <thead>
           <tr>
+            <th>#</th>
             <th>Chemical</th>
             <th>Usable stock</th>
             <th>Reorder pt. max</th>
             <th>Deficit</th>
+            <th>% of max</th>
+            <th>Flag</th>
           </tr>
         </thead>
         <tbody id="stock-builds-tbody"></tbody>
@@ -1452,16 +1477,119 @@ const OVERDUE_HOURS = 48;
 // Walmart) takes priority over raw volume, and "needs Downpack" is a
 // distinct, separate concern from "how much of this do we need."
 
+function skuFamily(productId) {
+  // Heuristic: group by everything before the LAST hyphen, so e.g.
+  // "EAPMB200-4LCS" and "EAPMB200-1LCS" (same base chemical, different
+  // pack size) cluster into family "EAPMB200". Confirmed as the right
+  // grouping rule for the Production List / Stock Builds clustering
+  // (any other SKU sharing the same parent chemical should move up
+  // together, so the downpacker handles a whole bulk container's worth
+  // of SKUs in one pass).
+  const idx = productId.lastIndexOf("-");
+  return idx > 0 ? productId.slice(0, idx) : productId;
+}
+
+function clusterByFamily(sortedList, skuKeyFn) {
+  // Re-groups an ALREADY priority-sorted list so every SKU sharing a
+  // parent chemical sits together, at the position of whichever member
+  // of that family ranked highest in the original sort — i.e. process
+  // items in priority order, and the first time a family is seen sets
+  // where the whole family lands; nothing about the individual items'
+  // own priority changes, just where clusters of them sit.
+  const familyOrder = [];
+  const familyGroups = new Map();
+  for (const item of sortedList) {
+    const fam = skuFamily(skuKeyFn(item));
+    if (!familyGroups.has(fam)) {
+      familyGroups.set(fam, []);
+      familyOrder.push(fam);
+    }
+    familyGroups.get(fam).push(item);
+  }
+  const result = [];
+  for (const fam of familyOrder) result.push(...familyGroups.get(fam));
+  return result;
+}
+
 function stockByProduct() {
   const map = new Map();
   for (const s of currentStockLevels) {
+    let lots = {};
+    try { lots = JSON.parse(s.lots || "{}"); } catch (e) { lots = {}; }
     map.set(s.product_id, {
       usableStock: parseFloat(s.usable_stock) || 0,
       reorderPointMax: s.reorder_point_max != null ? parseFloat(s.reorder_point_max) : null,
       unitsBackorder: parseFloat(s.units_backorder) || 0,
+      lots,
     });
   }
   return map;
+}
+
+function lotSortKey(lotId) {
+  // Two real lot-numbering schemes, confirmed against real data
+  // (2026-09-18): purchased goods use "PONUMBER/X.Y" (smaller PO number
+  // = older, since POs are issued sequentially); in-house-made goods use
+  // "U-MMDDYY-D" (the embedded production date orders them). Returns
+  // [formatType, sortValue] so the two schemes never get inappropriately
+  // cross-compared against each other within the same product.
+  const poMatch = lotId.match(/^(\d+)\//);
+  if (poMatch) return [0, parseInt(poMatch[1], 10)];
+  const dateMatch = lotId.match(/^U-(\d{2})(\d{2})(\d{2})-/);
+  if (dateMatch) {
+    const [, mm, dd, yy] = dateMatch;
+    return [1, parseInt(`20${yy}${mm}${dd}`, 10)]; // YYYYMMDD, sortable as a plain number
+  }
+  return [2, 0]; // unrecognized format — sorts after both known types, never silently mismatched
+}
+
+function sameLotCheck(sku, needed, stock) {
+  // Whether this order line can be filled from a SINGLE lot (Casey's
+  // stated preference — ship cases of the same lot together), and if
+  // so, which lot to prefer (oldest first, real FIFO). Deliberately
+  // scoped to the ordered SKU directly (not case/singles-converted) —
+  // that interaction wasn't asked for, and guessing at it risks
+  // recommending a lot switch that doesn't actually reflect physical
+  // reality.
+  const s = stock.get(sku);
+  const lots = s ? s.lots : {};
+  const qualifying = Object.entries(lots).filter(([lotId, qty]) => qty >= needed);
+  if (qualifying.length === 0) return { available: false, preferredLot: null };
+  qualifying.sort((a, b) => {
+    const [ta, va] = lotSortKey(a[0]);
+    const [tb, vb] = lotSortKey(b[0]);
+    if (ta !== tb) return ta - tb;
+    return va - vb;
+  });
+  return { available: true, preferredLot: qualifying[0][0] };
+}
+
+function isCaseSku(sku) {
+  // All Lab Alley case SKUs end in "CS", with nothing ever following it
+  // — confirmed directly. The leading number is chemical concentration
+  // (irrelevant here); the suffix before "CS" (e.g. "4L", "1L") is size.
+  return /CS$/.test(sku);
+}
+
+function pairSkuFor(sku) {
+  // Case -> single: strip trailing "CS" (same size, no case suffix).
+  // Single -> case: append "CS". 1 case = 4 singles, universally.
+  return isCaseSku(sku) ? sku.slice(0, -2) : sku + "CS";
+}
+
+function resolveSkuAvailability(sku, stock) {
+  // We build cases from singles and break cases into singles, so a
+  // shortage in the SKU actually ordered can still be covered by its
+  // case/single counterpart. Effective availability = direct stock of
+  // the ordered SKU + whatever its pair converts to. Shipping-only per
+  // Casey's call — Production List build recommendations are untouched.
+  const direct = stock.get(sku);
+  const directUsable = direct ? direct.usableStock : 0;
+  const pair = stock.get(pairSkuFor(sku));
+  const pairUsable = pair ? pair.usableStock : 0;
+  return isCaseSku(sku)
+    ? directUsable + Math.floor(pairUsable / 4)   // singles converting up to cases
+    : directUsable + (pairUsable * 4);             // cases converting down to singles
 }
 
 function buildShippingList(rows) {
@@ -1520,10 +1648,10 @@ function buildShippingList(rows) {
     } else {
       for (const sku of distinctSkus) {
         const needed = qtyBySku.get(sku) || 1;
-        const s = stock.get(sku);
-        const usable = s ? s.usableStock : 0;
+        const usable = resolveSkuAvailability(sku, stock);
         const isBlocked = usable < needed;
-        items.push({ sku, needed, usable, isBlocked });
+        const lotCheck = sameLotCheck(sku, needed, stock);
+        items.push({ sku, needed, usable, isBlocked, sameLot: lotCheck.available, preferredLot: lotCheck.preferredLot });
         if (isBlocked) blockers.push({ sku, needed, usable });
       }
     }
@@ -1608,7 +1736,7 @@ function buildProductionList(shippingList) {
     if (a.ordersBlocked !== b.ordersBlocked) return b.ordersBlocked - a.ordersBlocked;
     return b.maxHours - a.maxHours;
   });
-  return results;
+  return clusterByFamily(results, p => p.sku);
 }
 
 function buildStockBuilds(shippingList) {
@@ -1631,11 +1759,15 @@ function buildStockBuilds(shippingList) {
     if (blockedSkus.has(sku)) continue;
     const deficit = s.reorderPointMax - s.usableStock;
     if (deficit <= 0) continue;
-    results.push({ sku, deficit, usableStock: s.usableStock, reorderPointMax: s.reorderPointMax });
+    const pctOfMax = s.reorderPointMax > 0 ? (s.usableStock / s.reorderPointMax * 100) : 0;
+    results.push({ sku, deficit, usableStock: s.usableStock, reorderPointMax: s.reorderPointMax, pctOfMax });
   }
-  // Biggest deficit first, per Casey's call.
-  results.sort((a, b) => b.deficit - a.deficit);
-  return results;
+  // Lowest % of Reorder Point Max first — the ones closest to actually
+  // running out, not just the ones with the biggest raw unit gap
+  // (a high-volume item can have a huge deficit while still being
+  // comfortably stocked percentage-wise; this ranks true urgency).
+  results.sort((a, b) => a.pctOfMax - b.pctOfMax);
+  return clusterByFamily(results, p => p.sku);
 }
 
 let currentShippingList = [];
@@ -1647,23 +1779,30 @@ function renderShippingList(list) {
 
   document.getElementById("shipping-list-tbody").innerHTML = filtered.length ? filtered.map((o, i) => {
     const rowId = `ship-${i}`;
-    let skuCell, qtyCell;
+    let skuCell, qtyCell, lotCell;
+    const allSameLot = o.items.length > 0 && o.items.every(it => it.sameLot);
     if (o.items.length > 1) {
       skuCell = `<span class="expand-toggle" onclick="toggleShippingDetail('${rowId}')">Multiple SKUs <span class="expand-caret" id="${rowId}-caret">&#9656;</span></span>`;
       qtyCell = o.items.reduce((sum, it) => sum + (typeof it.needed === "number" ? it.needed : 0), 0);
+      lotCell = allSameLot ? '<span class="lot-check yes">&#10003;</span>' : '<span class="lot-check no">&#10007;</span>';
     } else if (o.items.length === 1) {
-      skuCell = o.items[0].sku;
-      qtyCell = o.items[0].needed;
+      const it = o.items[0];
+      skuCell = it.sku;
+      qtyCell = it.needed;
+      lotCell = it.sameLot
+        ? `<span class="lot-check yes">&#10003;</span> <span class="lot-detail">(Lot ${it.preferredLot})</span>`
+        : '<span class="lot-check no">&#10007;</span>';
     } else {
       skuCell = "(unknown)";
       qtyCell = "?";
+      lotCell = "—";
     }
 
     const detailRow = o.items.length > 1 ? `
       <tr class="detail-row" id="${rowId}-detail" style="display:none;">
-        <td colspan="7">
+        <td colspan="9">
           <table class="detail-table">
-            <thead><tr><th>SKU</th><th>Needed</th><th>Usable</th><th>Status</th></tr></thead>
+            <thead><tr><th>SKU</th><th>Needed</th><th>Usable</th><th>Status</th><th>Same Lot</th></tr></thead>
             <tbody>
               ${o.items.map(it => `
                 <tr>
@@ -1671,6 +1810,7 @@ function renderShippingList(list) {
                   <td>${it.needed}</td>
                   <td>${it.usable}</td>
                   <td>${it.isBlocked ? '<span class="status-pill blocked">Blocked</span>' : '<span class="status-pill pickable">OK</span>'}</td>
+                  <td>${it.sameLot ? `<span class="lot-check yes">&#10003;</span> (Lot ${it.preferredLot})` : '<span class="lot-check no">&#10007;</span>'}</td>
                 </tr>`).join("")}
             </tbody>
           </table>
@@ -1679,15 +1819,17 @@ function renderShippingList(list) {
 
     return `
     <tr>
+      <td>${i + 1}</td>
       <td>${o.orderId}</td>
       <td><span class="status-pill ${o.isPickable ? 'pickable' : 'blocked'}">${o.isPickable ? 'Pickable' : 'Blocked'}</span></td>
       <td>${formatAge(o.hours)}</td>
       <td>${o.isChannelPriority ? '<span class="priority-pill channel">Amazon/Walmart</span>' : ''}</td>
       <td>${skuCell}</td>
       <td>${qtyCell}</td>
+      <td>${lotCell}</td>
       <td>${o.blockers.map(b => `${b.sku} (need ${b.needed}, have ${b.usable})`).join(', ')}</td>
     </tr>${detailRow}`;
-  }).join("") : `<tr><td colspan="7" class="bar-empty">${shippingShowBlocked ? 'No data' : 'Nothing pickable right now'}</td></tr>`;
+  }).join("") : `<tr><td colspan="9" class="bar-empty">${shippingShowBlocked ? 'No data' : 'Nothing pickable right now'}</td></tr>`;
 }
 
 function toggleShippingDetail(rowId) {
@@ -1705,8 +1847,9 @@ function toggleShippingBlockedVisibility() {
 }
 
 function renderProductionList(list) {
-  document.getElementById("production-list-tbody").innerHTML = list.length ? list.map(p => `
+  document.getElementById("production-list-tbody").innerHTML = list.length ? list.map((p, i) => `
     <tr>
+      <td>${i + 1}</td>
       <td>${p.sku}</td>
       <td>${p.buildQty.toFixed(0)}</td>
       <td>${p.usableStock.toFixed(1)}</td>
@@ -1715,18 +1858,21 @@ function renderProductionList(list) {
       <td>${p.ordersBlocked ? formatAge(p.maxHours) : '—'}</td>
       <td>${p.isChannelPriority ? '<span class="priority-pill channel">Amazon/Walmart</span>' : ''}</td>
     </tr>
-  `).join("") : `<tr><td colspan="7" class="bar-empty">Nothing currently blocking an order</td></tr>`;
+  `).join("") : `<tr><td colspan="8" class="bar-empty">Nothing currently blocking an order</td></tr>`;
 }
 
 function renderStockBuilds(list) {
-  document.getElementById("stock-builds-tbody").innerHTML = list.length ? list.map(p => `
+  document.getElementById("stock-builds-tbody").innerHTML = list.length ? list.map((p, i) => `
     <tr>
+      <td>${i + 1}</td>
       <td>${p.sku}</td>
       <td>${p.usableStock.toFixed(1)}</td>
       <td>${p.reorderPointMax}</td>
       <td>${p.deficit.toFixed(0)}</td>
+      <td>${p.pctOfMax.toFixed(0)}%</td>
+      <td>${p.pctOfMax < 25 ? '<span class="status-pill overdue">Action now</span>' : ''}</td>
     </tr>
-  `).join("") : `<tr><td colspan="4" class="bar-empty">Nothing needs proactive restocking right now</td></tr>`;
+  `).join("") : `<tr><td colspan="7" class="bar-empty">Nothing needs proactive restocking right now</td></tr>`;
 }
 
 function renderAttackSection(rows) {
@@ -1739,12 +1885,11 @@ function renderAttackSection(rows) {
     linesByOrder.get(row.order_id).push(row);
   }
   let atRisk = 0, overdue = 0;
-  let totalQueueUnits = 0;
+  const totalQueueOrders = linesByOrder.size;
   for (const [oid, lines] of linesByOrder) {
     const hours = businessHoursSinceOrder(lines[0].order_datetime);
     if (hours >= OVERDUE_HOURS) overdue++;
     else if (hours >= AT_RISK_HOURS) atRisk++;
-    totalQueueUnits += parseInt(lines[0].item_quantity) || 0;
   }
   document.getElementById("atrisk-count").textContent = atRisk;
   document.getElementById("overdue-count").textContent = overdue;
@@ -1755,23 +1900,45 @@ function renderAttackSection(rows) {
   renderProductionList(productionList);
   renderStockBuilds(buildStockBuilds(shippingList));
 
-  renderHealthRow(productionList, totalQueueUnits);
+  const pickableCount = shippingList.filter(o => o.isPickable).length;
+  const buildsNeededCount = productionList.length; // Production List is already per unique SKU
+  document.getElementById("pickable-count").textContent = pickableCount;
+  document.getElementById("builds-needed-count").textContent = buildsNeededCount;
+
+  // Orders that are 48h+ overdue SPECIFICALLY because they're currently
+  // blocked by a stock shortage — the exact set the redefined Build %
+  // needs (see renderHealthRow).
+  const shortageOverdueCount = shippingList.filter(o => !o.isPickable && o.hours >= OVERDUE_HOURS).length;
+
+  renderHealthRow(shortageOverdueCount, totalQueueOrders);
 }
 
-const BUILD_HEALTH_THRESHOLDS = { good: 10, watch: 25 }; // % of queue units needing build
+// Build %, redefined (2026-09-18) after the original "total build units
+// vs total queue units" formula produced a misleading 94% — it was
+// answering "how much total restocking would fully replenish everything
+// touching the queue" (inflated by Reorder-Point-Max build-ahead
+// targets sized for future sales velocity, not today's backlog), not
+// "how much of our overdue problem is actually production's fault."
+//
+// New formula, confirmed against Casey's own worked example (100 orders,
+// 10 overdue, 5 of those shortage-blocked -> 95% "hit rate"):
+//   bad% = (orders 48h+ overdue AND currently shortage-blocked) / (total queue orders) * 100
+//   shown inverted (100 - bad%) since the positive framing reads
+//   unambiguously as good/bad to someone unfamiliar with the metric.
+const BUILD_HEALTH_THRESHOLDS = { good: 10, watch: 25 }; // bad% cutoffs; shown as the inverse (hit rate)
 
-function renderHealthRow(productionList, totalQueueUnits) {
-  const totalBuildUnits = productionList.reduce((sum, p) => sum + p.buildQty, 0);
-  const buildPct = totalQueueUnits > 0 ? (totalBuildUnits / totalQueueUnits * 100) : 0;
+function renderHealthRow(shortageOverdueCount, totalQueueOrders) {
+  const badPct = totalQueueOrders > 0 ? (shortageOverdueCount / totalQueueOrders * 100) : 0;
+  const hitRate = 100 - badPct;
 
   let buildStatus, buildLabel;
-  if (totalQueueUnits === 0) {
+  if (totalQueueOrders === 0) {
     buildStatus = "pending";
     buildLabel = "No queue data";
-  } else if (buildPct < BUILD_HEALTH_THRESHOLDS.good) {
+  } else if (badPct < BUILD_HEALTH_THRESHOLDS.good) {
     buildStatus = "good";
     buildLabel = "Good";
-  } else if (buildPct < BUILD_HEALTH_THRESHOLDS.watch) {
+  } else if (badPct < BUILD_HEALTH_THRESHOLDS.watch) {
     buildStatus = "watch";
     buildLabel = "Watch";
   } else {
@@ -1779,8 +1946,8 @@ function renderHealthRow(productionList, totalQueueUnits) {
     buildLabel = "Concerning";
   }
 
-  const buildSub = totalQueueUnits > 0
-    ? `${buildPct.toFixed(0)}% of queue units need building`
+  const buildSub = totalQueueOrders > 0
+    ? `${hitRate.toFixed(0)}% of the queue isn't overdue due to production (${shortageOverdueCount} of ${totalQueueOrders} orders are)`
     : "";
 
   document.getElementById("health-row").innerHTML = `
