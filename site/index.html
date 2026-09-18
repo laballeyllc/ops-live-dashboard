@@ -521,9 +521,20 @@
   .scope-note {
     font-size: 12px;
     color: var(--text-muted);
-    margin: -18px 0 24px;
+    margin: 8px 0 24px;
     max-width: 780px;
     line-height: 1.5;
+  }
+
+  /* The Breakdown tab's scope-note sits directly under the summary
+     cards and was designed to sit close to them — everywhere else (the
+     three Strategy Tools subtabs), this same class sits right after the
+     sticky header instead, where that same negative margin caused it to
+     render UNDER the sticky header, hiding most of the text. Scoped
+     specifically to that one context instead of changing the shared
+     default. */
+  #summary-row + .scope-note {
+    margin-top: -18px;
   }
 
   .age-row {
@@ -1543,16 +1554,39 @@ function lotSortKey(lotId) {
   return [2, 0]; // unrecognized format — sorts after both known types, never silently mismatched
 }
 
+function mergedLotsFor(sku, stock) {
+  // Combines a SKU's own lot data with its case/single pair's lot data,
+  // converted into the SAME unit as `sku` — but ONLY merges quantities
+  // under a matching lot ID between the two. Confirmed against a real
+  // example: CANLCMS-4L (singles) and CANLCMS-4LCS (cases) both had
+  // stock under the SAME lot "5002362/1.2" (5 singles + 518 cases) —
+  // physically the same lot, just currently split across two packaging
+  // forms, so it's correct to treat that as one combined pool. A
+  // DIFFERENT lot ID appearing only in the pair SKU is a genuinely
+  // different physical lot and must never get merged in just because
+  // it's the same chemical.
+  const direct = stock.get(sku);
+  const directLots = direct ? direct.lots : {};
+  const pairSku = pairSkuFor(sku);
+  const pair = stock.get(pairSku);
+  const pairLots = pair ? pair.lots : {};
+
+  const merged = { ...directLots };
+  for (const [lotId, qty] of Object.entries(pairLots)) {
+    const converted = isCaseSku(sku) ? Math.floor(qty / 4) : qty * 4;
+    merged[lotId] = (merged[lotId] || 0) + converted;
+  }
+  return merged;
+}
+
 function sameLotCheck(sku, needed, stock) {
   // Whether this order line can be filled from a SINGLE lot (Casey's
   // stated preference — ship cases of the same lot together), and if
-  // so, which lot to prefer (oldest first, real FIFO). Deliberately
-  // scoped to the ordered SKU directly (not case/singles-converted) —
-  // that interaction wasn't asked for, and guessing at it risks
-  // recommending a lot switch that doesn't actually reflect physical
-  // reality.
-  const s = stock.get(sku);
-  const lots = s ? s.lots : {};
+  // so, which lot to prefer (oldest first, real FIFO). Spans the
+  // case/singles pair (see mergedLotsFor) — confirmed correct against
+  // a real product where the exact same lot had stock recorded under
+  // both packaging forms simultaneously.
+  const lots = mergedLotsFor(sku, stock);
   const qualifying = Object.entries(lots).filter(([lotId, qty]) => qty >= needed);
   if (qualifying.length === 0) return { available: false, preferredLot: null };
   qualifying.sort((a, b) => {
