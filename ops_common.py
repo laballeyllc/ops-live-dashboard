@@ -564,78 +564,6 @@ def business_hours_since(naive_str: str) -> float:
     return business_hours_elapsed(start, datetime.now(timezone.utc))
 
 
-def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
-    """Server-side port of the frontend's buildShippingList() /
-    buildProductionList() logic (site/index.html) — specifically the
-    parts needed to compute the Build Health indicator's "total build
-    units" figure for a periodic history snapshot. The Supabase
-    publishable key is deliberately read-only, so the frontend can never
-    write these snapshots itself; this is why the computation has to be
-    duplicated here rather than shared.
-
-    IMPORTANT: this MUST stay logically consistent with the JS version.
-    If the frontend's shortage/pickability logic changes, this needs a
-    matching update, or Build Health's live number and its own logged
-    history will silently drift apart. There is deliberately no shared
-    source of truth between them (JS runs in the browser, this runs in
-    GitHub Actions) — this comment is the closest thing to one.
-
-    `rows` is the same shape build_rows() produces (Title Case keys,
-    pre-to_db_rows). `stock` is {product_id: {usable_stock,
-    reorder_point_max, units_backorder}} as returned by
-    build_stock_levels(), keyed by product_id.
-    """
-    scoped = [
-        r for r in rows
-        if r.get("Core Queue") in ("Warehouse", "Freight", "Both")
-        and r.get("Shipment status") != "on_hold"
-    ]
-
-    by_order: dict[str, list[dict]] = {}
-    for r in scoped:
-        by_order.setdefault(r["Order ID"], []).append(r)
-
-    queue_count = len(by_order)
-    total_units = 0
-    aged_24h = 0
-    aged_48h = 0
-    blocked_by_sku: dict[str, dict] = {}
-
-    for oid, lines in by_order.items():
-        first = lines[0]
-        total_units += int(first.get("Item Quantity") or 0)
-
-        hours = business_hours_since(first.get("Order datetime"))
-        if hours >= 48:
-            aged_48h += 1
-        elif hours >= 24:
-            aged_24h += 1
-
-        try:
-            ss_items = json.loads(first.get("SS Items") or "[]")
-        except (json.JSONDecodeError, TypeError):
-            ss_items = []
-        qty_by_sku: dict[str, float] = {}
-        for item in ss_items:
-            sku = (item.get("sku") or "").strip()
-            if sku:
-                qty_by_sku[sku] = qty_by_sku.get(sku, 0) + (item.get("qty") or 0)
-
-        distinct_skus = {(l.get("Product ID") or "").strip() for l in lines}
-        distinct_skus.discard("")
-        distinct_skus.discard("Multiple products")
-        has_collapsed = any((l.get("Product ID") or "").strip() == "Multiple products" for l in lines)
-        if has_collapsed and ss_items:
-            distinct_skus |= {s for s in qty_by_sku if s}
-
-        for sku in distinct_skus:
-            needed = qty_by_sku.get(sku, 1)
-            s = stock.get(sku, {})
-            usable = s.get("usable_stock", 0.0) or 0.0
-            if usable < needed:
-                entry = blocked_by_sku.setdefault(sku, {"needed_total": 0.0})
-                entry["needed_total"] += max(0.0, needed - usable)
-
 def _is_case_sku(sku: str) -> bool:
     """All Lab Alley case SKUs end in 'CS', nothing ever follows it —
     confirmed directly. Mirrors isCaseSku() in site/index.html."""
@@ -648,16 +576,78 @@ def _pair_sku_for(sku: str) -> str:
     return sku[:-2] if _is_case_sku(sku) else sku + "CS"
 
 
-def _resolve_sku_availability(sku: str, stock: dict[str, dict]) -> float:
-    """Effective availability accounting for case<->single conversion —
-    mirrors resolveSkuAvailability() in site/index.html exactly."""
-    direct = stock.get(sku, {})
-    direct_usable = direct.get("usable_stock", 0.0) or 0.0
-    pair = stock.get(_pair_sku_for(sku), {})
-    pair_usable = pair.get("usable_stock", 0.0) or 0.0
-    if _is_case_sku(sku):
-        return direct_usable + (pair_usable // 4)
-    return direct_usable + (pair_usable * 4)
+def _build_working_stock(stock: dict[str, dict]) -> dict[str, dict]:
+    """Deep, mutable copy of stock, split per SKU into {lots: {lotId:
+    qty}, untracked: qty} — mirrors buildWorkingStock() in
+    site/index.html. untracked covers usable stock with no lot ID
+    (confirmed against real data: exclusively packaging/supplies, never
+    actual order-able chemicals)."""
+    working: dict[str, dict] = {}
+    for sku, s in stock.items():
+        lots = dict(s.get("lots") or {})
+        lots_sum = sum(lots.values())
+        usable = s.get("usable_stock", 0.0) or 0.0
+        working[sku] = {
+            "lots": lots,
+            "untracked": max(0.0, usable - lots_sum),
+        }
+    return working
+
+
+def _entry_total(entry: dict | None) -> float:
+    if not entry:
+        return 0.0
+    return sum(entry["lots"].values()) + entry["untracked"]
+
+
+def _deplete_from(entry: dict, qty: float) -> None:
+    """Removes qty units from an entry's lots then untracked, mutating
+    in place. Caller guarantees qty <= _entry_total(entry). Lot order
+    doesn't matter here (unlike the frontend) — this function only
+    needs the correct TOTAL depleted for shortage/build-burden purposes,
+    not which specific lot a picker would choose, so it skips the FIFO
+    lot-ordering the JS version needs for its Same Lot display column."""
+    remaining = qty
+    for lot_id in list(entry["lots"].keys()):
+        if remaining <= 0:
+            break
+        take = min(remaining, entry["lots"][lot_id])
+        entry["lots"][lot_id] -= take
+        remaining -= take
+    if remaining > 0:
+        take = min(remaining, entry["untracked"])
+        entry["untracked"] -= take
+
+
+def _claim_stock(sku: str, needed: float, working: dict[str, dict]) -> tuple[float, bool]:
+    """Checks availability AND, if satisfiable, depletes the mutable
+    working stock — mirrors claimStock() in site/index.html (the fix
+    for the real bug Casey found: multiple orders competing for the
+    same limited stock were each checked independently against the same
+    static figure, so e.g. 4 orders needing 1 unit each with only 2 in
+    stock ALL showed as fulfillable). Orders must be processed in
+    allocation-priority order by the caller. Returns (usable, is_blocked)."""
+    pair_sku = _pair_sku_for(sku)
+    direct = working.setdefault(sku, {"lots": {}, "untracked": 0.0})
+    pair = working.setdefault(pair_sku, {"lots": {}, "untracked": 0.0})
+
+    direct_total = _entry_total(direct)
+    pair_total = _entry_total(pair)
+    pair_converted = (pair_total // 4) if _is_case_sku(sku) else (pair_total * 4)
+    total_usable = direct_total + pair_converted
+
+    if total_usable < needed:
+        return total_usable, True  # blocked — deplete nothing
+
+    from_direct = min(needed, direct_total)
+    _deplete_from(direct, from_direct)
+    still_needed = needed - from_direct
+
+    if still_needed > 0:
+        pair_units_needed = (still_needed * 4) if _is_case_sku(sku) else (-(-still_needed // 4))  # ceil div
+        _deplete_from(pair, min(pair_units_needed, pair_total))
+
+    return total_usable, False
 
 
 def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
@@ -673,16 +663,22 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
     history will silently drift apart. There is deliberately no shared
     source of truth between them (JS runs in the browser, this runs in
     GitHub Actions) — this comment is the closest thing to one.
-    CONFIRMED DRIFT ALREADY HAPPENED ONCE (2026-09-18): the Build %
-    formula was redefined on the frontend (from "total build units vs
-    queue units" to "orders 48h+ overdue AND shortage-blocked vs total
-    queue orders") and this function wasn't updated to match at the same
-    time — the first real logged snapshot used the old formula. Fixed
-    here; if this happens again, that's the bug to look for.
+
+    CONFIRMED DRIFT HAS ALREADY HAPPENED TWICE (2026-09-18):
+      1. The Build % formula was redefined on the frontend and this
+         function wasn't updated to match at the same time.
+      2. This function checked every order independently against a
+         static stock snapshot, the same cross-order depletion bug
+         found and fixed on the frontend (see _claim_stock above) —
+         it just hadn't been noticed here yet, since it doesn't show
+         up as visibly in a single aggregate percentage the way it did
+         in a per-order Pickable/Blocked table.
+    Both fixed here; if this happens a third time, drift between the two
+    implementations is the first thing to check.
 
     `rows` is the same shape build_rows() produces (Title Case keys,
     pre-to_db_rows). `stock` is {product_id: {usable_stock,
-    reorder_point_max, units_backorder}} as returned by
+    reorder_point_max, units_backorder, lots}} as returned by
     build_stock_levels(), keyed by product_id.
     """
     scoped = [
@@ -695,14 +691,27 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
     for r in scoped:
         by_order.setdefault(r["Order ID"], []).append(r)
 
+    # Allocation priority order — channel priority (Amazon/Walmart order
+    # number prefix), then FIFO — matching the frontend exactly, so
+    # whichever order has the strongest claim depletes stock first.
+    order_items = sorted(
+        by_order.items(),
+        key=lambda kv: (
+            0 if (kv[0].upper().startswith("AMZN") or kv[0].upper().startswith("WMT")) else 1,
+            kv[1][0].get("Order datetime") or "",
+        ),
+    )
+
+    working = _build_working_stock(stock)
+
     queue_count = len(by_order)
     total_units = 0
     aged_24h = 0
     aged_48h = 0
-    shortage_overdue_count = 0  # 48h+ overdue AND currently shortage-blocked
+    shortage_overdue_count = 0
     blocked_by_sku: dict[str, dict] = {}
 
-    for oid, lines in by_order.items():
+    for oid, lines in order_items:
         first = lines[0]
         total_units += int(first.get("Item Quantity") or 0)
 
@@ -733,8 +742,8 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
         order_is_blocked = False
         for sku in distinct_skus:
             needed = qty_by_sku.get(sku, 1)
-            usable = _resolve_sku_availability(sku, stock)
-            if usable < needed:
+            usable, is_blocked = _claim_stock(sku, needed, working)
+            if is_blocked:
                 order_is_blocked = True
                 entry = blocked_by_sku.setdefault(sku, {"needed_total": 0.0})
                 entry["needed_total"] += max(0.0, needed - usable)
@@ -744,8 +753,7 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
 
     # Kept as a secondary, still-useful figure (total build burden in
     # units) — no longer what drives the Build Health card's status,
-    # which now uses shortage_overdue_count/queue_count instead (see
-    # below).
+    # which uses shortage_overdue_count/queue_count instead.
     build_units = 0.0
     for sku, entry in blocked_by_sku.items():
         s = stock.get(sku, {})

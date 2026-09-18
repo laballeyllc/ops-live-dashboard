@@ -1626,6 +1626,115 @@ function resolveSkuAvailability(sku, stock) {
     : directUsable + (pairUsable * 4);             // cases converting down to singles
 }
 
+function buildWorkingStock() {
+  // Deep, mutable copy of stock, split per SKU into {lots: {lotId: qty},
+  // untracked: qty} — untracked covers the ~7.6% of usable-location
+  // stock that genuinely has no lot ID (confirmed against real data:
+  // exclusively packaging/supplies, never actual order-able chemicals).
+  // Deriving usableStock as lots+untracked (rather than storing it
+  // separately) means the aggregate and per-lot pictures can never
+  // drift out of sync as we deplete them below.
+  const stock = stockByProduct();
+  const working = new Map();
+  for (const [sku, s] of stock) {
+    const lotsCopy = { ...s.lots };
+    const lotsSum = Object.values(lotsCopy).reduce((a, b) => a + b, 0);
+    working.set(sku, {
+      lots: lotsCopy,
+      untracked: Math.max(0, s.usableStock - lotsSum),
+      reorderPointMax: s.reorderPointMax,
+      unitsBackorder: s.unitsBackorder,
+    });
+  }
+  return working;
+}
+
+function entryTotal(entry) {
+  if (!entry) return 0;
+  return Object.values(entry.lots).reduce((a, b) => a + b, 0) + entry.untracked;
+}
+
+function sortedLotIds(lots) {
+  return Object.keys(lots).sort((a, b) => {
+    const [ta, va] = lotSortKey(a);
+    const [tb, vb] = lotSortKey(b);
+    return ta !== tb ? ta - tb : va - vb;
+  });
+}
+
+function depleteFrom(entry, qty) {
+  // Removes qty units from an entry's lots (FIFO order) then untracked,
+  // mutating it in place. Caller guarantees qty <= entryTotal(entry).
+  let remaining = qty;
+  for (const lotId of sortedLotIds(entry.lots)) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, entry.lots[lotId]);
+    entry.lots[lotId] -= take;
+    remaining -= take;
+  }
+  if (remaining > 0) {
+    const take = Math.min(remaining, entry.untracked);
+    entry.untracked -= take;
+    remaining -= take;
+  }
+}
+
+function claimStock(sku, needed, working) {
+  // Checks availability AND, if satisfiable, actually depletes the
+  // MUTABLE working stock — this is what fixes the real bug Casey
+  // found: 4 separate orders each needing 1 unit of a SKU with only 2
+  // in stock were ALL showing Pickable, because every order was
+  // checked against the same static, undiminished figure. Orders are
+  // now processed in allocation-priority order (see buildShippingList)
+  // and each one claims its share before the next is checked.
+  const pairSku = pairSkuFor(sku);
+  const direct = working.get(sku) || { lots: {}, untracked: 0 };
+  const pair = working.get(pairSku) || { lots: {}, untracked: 0 };
+
+  const directTotal = entryTotal(direct);
+  const pairTotal = entryTotal(pair);
+  const pairConverted = isCaseSku(sku) ? Math.floor(pairTotal / 4) : pairTotal * 4;
+  const totalUsable = directTotal + pairConverted;
+
+  // Same-lot check against CURRENT (already-depleted-by-earlier-orders)
+  // lot quantities — per Casey's confirmation, a later order competing
+  // for the same lot must see it correctly reduced, not the original.
+  const mergedLots = { ...direct.lots };
+  for (const [lotId, qty] of Object.entries(pair.lots)) {
+    const converted = isCaseSku(sku) ? Math.floor(qty / 4) : qty * 4;
+    mergedLots[lotId] = (mergedLots[lotId] || 0) + converted;
+  }
+  const qualifying = sortedLotIds(mergedLots).filter(lotId => mergedLots[lotId] >= needed);
+  const sameLot = qualifying.length > 0;
+  const preferredLot = sameLot ? qualifying[0] : null;
+
+  if (totalUsable < needed) {
+    // Blocked — deplete NOTHING, so this unfulfillable need doesn't
+    // wrongly reduce stock that a different, smaller order could
+    // actually use.
+    return { usable: totalUsable, isBlocked: true, sameLot, preferredLot };
+  }
+
+  // Satisfiable. Consumption order confirmed directly: prefer the
+  // direct/native form first, only reach into the case/singles pair
+  // once the direct form alone can't cover it (don't break open a case
+  // if loose singles already suffice, and vice versa).
+  const fromDirect = Math.min(needed, directTotal);
+  depleteFrom(direct, fromDirect);
+  const stillNeeded = needed - fromDirect;
+
+  if (stillNeeded > 0) {
+    const pairUnitsNeeded = isCaseSku(sku)
+      ? stillNeeded * 4                // sku=case, pair=singles
+      : Math.ceil(stillNeeded / 4);    // sku=single, pair=cases
+    depleteFrom(pair, Math.min(pairUnitsNeeded, pairTotal));
+  }
+
+  working.set(sku, direct);
+  working.set(pairSku, pair);
+  return { usable: totalUsable, isBlocked: false, sameLot, preferredLot };
+}
+
 function buildShippingList(rows) {
   // Same scope as the rest of Attack the Queue: Warehouse/Freight/Both,
   // held orders excluded (nothing here is workable for a held order
@@ -1638,11 +1747,29 @@ function buildShippingList(rows) {
     if (!linesByOrder.has(row.order_id)) linesByOrder.set(row.order_id, []);
     linesByOrder.get(row.order_id).push(row);
   }
-  const stock = stockByProduct();
+  const working = buildWorkingStock();
+
+  // Process orders in ALLOCATION priority order — channel priority,
+  // then FIFO — so whichever order has the strongest claim gets first
+  // right to limited stock, confirmed directly with Casey as the
+  // correct priority for WHO gets stock (separate from how the final
+  // list is displayed, sorted again below).
+  const orderEntries = Array.from(linesByOrder.entries()).map(([oid, lines]) => {
+    const first = lines[0];
+    const oidUpper = oid.toUpperCase();
+    return {
+      oid, lines, first,
+      isChannelPriority: oidUpper.startsWith("AMZN") || oidUpper.startsWith("WMT"),
+      orderDatetime: first.order_datetime || "",
+    };
+  });
+  orderEntries.sort((a, b) => {
+    if (a.isChannelPriority !== b.isChannelPriority) return a.isChannelPriority ? -1 : 1;
+    return a.orderDatetime.localeCompare(b.orderDatetime);
+  });
 
   const results = [];
-  for (const [oid, lines] of linesByOrder) {
-    const first = lines[0];
+  for (const { oid, lines, first, isChannelPriority, orderDatetime } of orderEntries) {
     // Real per-SKU quantity needed, from ShipStation's own item data
     // (captured in ss_items). Falls back to "assume at least 1" for
     // rows pulled before this field existed, rather than silently
@@ -1682,23 +1809,20 @@ function buildShippingList(rows) {
     } else {
       for (const sku of distinctSkus) {
         const needed = qtyBySku.get(sku) || 1;
-        const usable = resolveSkuAvailability(sku, stock);
-        const isBlocked = usable < needed;
-        const lotCheck = sameLotCheck(sku, needed, stock);
-        items.push({ sku, needed, usable, isBlocked, sameLot: lotCheck.available, preferredLot: lotCheck.preferredLot });
-        if (isBlocked) blockers.push({ sku, needed, usable });
+        const claim = claimStock(sku, needed, working);
+        items.push({ sku, needed, usable: claim.usable, isBlocked: claim.isBlocked, sameLot: claim.sameLot, preferredLot: claim.preferredLot });
+        if (claim.isBlocked) blockers.push({ sku, needed, usable: claim.usable });
       }
     }
 
-    const oidUpper = oid.toUpperCase();
     results.push({
       orderId: oid,
       isPickable: blockers.length === 0,
       items,
       blockers,
-      isChannelPriority: oidUpper.startsWith("AMZN") || oidUpper.startsWith("WMT"),
-      hours: businessHoursSinceOrder(first.order_datetime),
-      orderDatetime: first.order_datetime || "",
+      isChannelPriority,
+      hours: businessHoursSinceOrder(orderDatetime),
+      orderDatetime,
     });
   }
 
