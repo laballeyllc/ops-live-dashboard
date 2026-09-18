@@ -47,6 +47,7 @@ from ops_common import (
     normalize_order_id, tags_for_order, core_queue_for_order, ss_items_for_order,
     order_weight_lbs, order_item_quantity, store_name_for_order,
     fetch_finale_product_lines, replace_live_queue,
+    read_stock_levels, log_health_snapshot,
     WAREHOUSE_LOCATION_NAME, FREIGHT_LOCATION_NAME,
 )
 
@@ -241,6 +242,17 @@ def main():
 
         if not args.no_supabase:
             replace_live_queue(rows, pulled_at)
+
+            # Health snapshot logging: a separate, non-fatal step (its
+            # own try/except) — a failure here shouldn't take down the
+            # live queue update itself, since that's the higher-priority
+            # write. Reads stock_levels back from Supabase rather than
+            # re-fetching from Finale (see read_stock_levels() for why).
+            try:
+                stock = read_stock_levels()
+                log_health_snapshot(rows, stock, pulled_at)
+            except Exception as e:
+                print(f"Health snapshot logging failed (non-fatal): {e}")
 
         total = time.time() - run_start
         print(f"Total run time: {total:.1f}s")

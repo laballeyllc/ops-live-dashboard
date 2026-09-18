@@ -40,6 +40,9 @@
     padding: 0 32px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
+    position: sticky;
+    top: 0;
+    z-index: 30;
   }
 
   .tab-btn {
@@ -60,6 +63,55 @@
   .tab-btn.active {
     color: var(--warehouse);
     border-bottom-color: var(--warehouse);
+  }
+
+  .subtab-nav {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 14px;
+  }
+
+  .subtab-btn {
+    background: var(--panel-raised);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 7px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .subtab-btn:hover {
+    color: var(--text);
+  }
+
+  .subtab-btn.active {
+    color: var(--warehouse);
+    border-color: var(--warehouse);
+    background: var(--warehouse-dim);
+  }
+
+  .strategy-sticky-header {
+    position: sticky;
+    top: 42px; /* measured height of .tab-nav */
+    z-index: 20;
+    background: var(--bg);
+    padding-top: 16px;
+    padding-bottom: 4px;
+  }
+
+  .table-scroll-wrap {
+    max-height: calc(100vh - 260px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-radius: 8px;
+  }
+
+  .sticky-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
   }
 
   .subsection-toggle {
@@ -185,6 +237,51 @@
     margin-bottom: 28px;
   }
 
+  .health-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .health-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+
+  .health-card .health-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+
+  .health-card .health-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .health-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .health-dot.good { background: var(--warehouse); }
+  .health-dot.watch { background: #D9A441; }
+  .health-dot.concerning { background: var(--alert); }
+  .health-dot.pending { background: var(--text-muted); }
+
+  .health-status.good { color: var(--warehouse); }
+  .health-status.watch { color: #D9A441; }
+  .health-status.concerning { color: var(--alert); }
+  .health-status.pending { color: var(--text-muted); font-weight: 400; font-size: 12px; }
+
   .summary-card {
     background: var(--panel);
     padding: 18px 20px;
@@ -292,6 +389,30 @@
     margin-top: 10px;
     margin-bottom: 12px;
   }
+
+  .sticky-table {
+    /* border-collapse: collapse breaks position:sticky on <th> in
+       Chromium — confirmed directly (bounding box showed the header
+       scrolling away with content instead of staying pinned). separate
+       + zero spacing looks visually identical but keeps sticky working. */
+    border-collapse: separate;
+    border-spacing: 0;
+    /* overflow:hidden on the table itself (inherited from .attack-table,
+       there for rounded corners) ALSO breaks sticky — it creates its
+       own scrolling/containing context that intercepts the sticky
+       positioning meant for the outer .table-scroll-wrap instead.
+       Confirmed directly: removing just this one property was what
+       actually fixed it, after border-collapse alone wasn't enough. */
+    overflow: visible;
+    border-radius: 0;
+  }
+
+  .table-scroll-wrap {
+    border-radius: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
 
   .attack-table thead th {
     text-align: left;
@@ -637,7 +758,9 @@
   <div id="empty-state" style="display:none;">No live queue data found yet — check that the "Live Queue Pull" GitHub Action has run at least once.</div>
 
   <div id="tab-breakdown" class="tab-panel">
+  <div class="health-row" id="health-row"></div>
   <div class="summary-row" id="summary-row"></div>
+
   <div class="scope-note">Showing orders Lab Alley itself fulfills (Warehouse/Freight) — drop-ship orders (Biologix, United Scientific, Transene, Post Apple Scientific, GT) and anything not tagged Warehouse/Freight/Both are excluded entirely.</div>
 
   <div class="age-row" id="age-panel"></div>
@@ -687,131 +810,86 @@
   </div>
 
   <div id="tab-strategy" class="tab-panel" style="display:none;">
-    <div class="scope-note">Warehouse/Freight/Both orders only, held orders excluded — company goal: every order shipped within 48 business hours (weekends excluded)</div>
-
-    <div class="summary-row attack-callouts">
-      <div class="summary-card agingrisk">
-        <div class="value" id="atrisk-count">0</div>
-        <div class="label">Orders 24h+ old (at risk of missing the 48h goal)</div>
+    <div class="strategy-sticky-header">
+      <div class="subtab-nav">
+        <button class="subtab-btn active" id="subtab-btn-shipping" onclick="switchSubtab('shipping')">Shipping List</button>
+        <button class="subtab-btn" id="subtab-btn-production" onclick="switchSubtab('production')">Production List</button>
+        <button class="subtab-btn" id="subtab-btn-stockbuilds" onclick="switchSubtab('stockbuilds')">Stock Builds</button>
       </div>
-      <div class="summary-card agingrisk overdue">
-        <div class="value" id="overdue-count">0</div>
-        <div class="label">Orders past 48 business hours (already overdue)</div>
-      </div>
-    </div>
 
-    <div class="attack-subsection">
-      <h3 class="subsection-toggle" onclick="toggleSubsection('priority-body','priority-chevron')">
-        <span class="chevron open" id="priority-chevron">&#9656;</span>
-        Chemicals to prioritize <span class="h2-note">ranked by how many orders currently need them; Amazon/Walmart-committed orders bump a chemical to the top, matching the build script's own channel-priority rule</span>
-      </h3>
-      <div id="priority-body">
-        <table class="attack-table">
-          <thead>
-            <tr>
-              <th>Chemical family</th>
-              <th>SKUs</th>
-              <th>Orders needing it</th>
-              <th>Total units</th>
-              <th>Priority</th>
-            </tr>
-          </thead>
-          <tbody id="priority-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="attack-subsection">
-      <h3 class="subsection-toggle" onclick="toggleSubsection('downpack-urgency-body','downpack-urgency-chevron')">
-        <span class="chevron open" id="downpack-urgency-chevron">&#9656;</span>
-        Downpack urgency <span class="h2-note">chemicals requiring Repack that are sitting on aging orders — may not be high-volume, but they're likely why these specific orders are stuck</span>
-      </h3>
-      <div id="downpack-urgency-body">
-        <table class="attack-table">
-          <thead>
-            <tr>
-              <th>Chemical</th>
-              <th>Description</th>
-              <th>Orders affected</th>
-              <th>Oldest order age</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody id="downpack-urgency-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="attack-subsection">
-      <h3 class="subsection-toggle" onclick="toggleSubsection('shipping-list-body','shipping-list-chevron')">
-        <span class="chevron open" id="shipping-list-chevron">&#9656;</span>
-        Shipping list <span class="h2-note">what to pick and pack right now, based on usable stock — prioritized by Amazon/Walmart, then FIFO; blocked orders need Production first</span>
-      </h3>
-      <div id="shipping-list-body">
-        <div class="list-controls">
-          <label class="toggle-label">
-            <input type="checkbox" id="shipping-blocked-checkbox" onchange="toggleShippingBlockedVisibility()">
-            Show blocked orders
-          </label>
+      <div class="summary-row attack-callouts">
+        <div class="summary-card agingrisk">
+          <div class="value" id="atrisk-count">0</div>
+          <div class="label">Orders 24h+ old (at risk of missing the 48h goal)</div>
         </div>
-        <table class="attack-table">
-          <thead>
-            <tr>
-              <th>Order ID</th>
-              <th>Status</th>
-              <th>Age</th>
-              <th>Priority</th>
-              <th>SKU(s)</th>
-              <th>Quantity</th>
-              <th>Blocked by</th>
-            </tr>
-          </thead>
-          <tbody id="shipping-list-tbody"></tbody>
-        </table>
+        <div class="summary-card agingrisk overdue">
+          <div class="value" id="overdue-count">0</div>
+          <div class="label">Orders past 48 business hours (already overdue)</div>
+        </div>
       </div>
     </div>
 
-    <div class="attack-subsection">
-      <h3 class="subsection-toggle" onclick="toggleSubsection('stock-builds-body','stock-builds-chevron')">
-        <span class="chevron open" id="stock-builds-chevron">&#9656;</span>
-        Stock builds <span class="h2-note">chemicals below Reorder Point Max with NO current order demand or backorder — proactive builds to stay ahead of high-selling items before they run out</span>
-      </h3>
-      <div id="stock-builds-body">
-        <table class="attack-table">
-          <thead>
-            <tr>
-              <th>Chemical</th>
-              <th>Usable stock</th>
-              <th>Reorder pt. max</th>
-              <th>Deficit</th>
-            </tr>
-          </thead>
-          <tbody id="stock-builds-tbody"></tbody>
-        </table>
+    <div id="subtab-shipping" class="subtab-panel">
+      <div class="scope-note">Warehouse/Freight/Both orders only, held orders excluded — company goal: every order shipped within 48 business hours (weekends excluded). What to pick and pack right now, based on usable stock — prioritized by Amazon/Walmart, then FIFO; blocked orders need Production first.</div>
+      <div class="list-controls">
+        <label class="toggle-label">
+          <input type="checkbox" id="shipping-blocked-checkbox" onchange="toggleShippingBlockedVisibility()">
+          Show blocked orders
+        </label>
       </div>
+      <div class="table-scroll-wrap">
+<table class="attack-table sticky-table">
+        <thead>
+          <tr>
+            <th>Order ID</th>
+            <th>Status</th>
+            <th>Age</th>
+            <th>Priority</th>
+            <th>SKU(s)</th>
+            <th>Quantity</th>
+            <th>Blocked by</th>
+          </tr>
+        </thead>
+        <tbody id="shipping-list-tbody"></tbody>
+      </table>
+</div>
     </div>
 
-    <div class="attack-subsection">
-      <h3 class="subsection-toggle" onclick="toggleSubsection('production-list-body','production-list-chevron')">
-        <span class="chevron open" id="production-list-chevron">&#9656;</span>
-        Production list <span class="h2-note">chemicals actively blocking live orders, ranked by orders blocked and age — quantity builds up to Reorder Point Max, not just current demand</span>
-      </h3>
-      <div id="production-list-body">
-        <table class="attack-table">
-          <thead>
-            <tr>
-              <th>Chemical</th>
-              <th>Build qty</th>
-              <th>Usable stock</th>
-              <th>Reorder pt. max</th>
-              <th>Orders blocked</th>
-              <th>Oldest blocked order</th>
-              <th>Priority</th>
-            </tr>
-          </thead>
-          <tbody id="production-list-tbody"></tbody>
-        </table>
-      </div>
+    <div id="subtab-production" class="subtab-panel" style="display:none;">
+      <div class="scope-note">Chemicals actively blocking live orders, ranked by orders blocked and age — quantity builds up to Reorder Point Max, not just current demand.</div>
+      <div class="table-scroll-wrap">
+<table class="attack-table sticky-table">
+        <thead>
+          <tr>
+            <th>Chemical</th>
+            <th>Build qty</th>
+            <th>Usable stock</th>
+            <th>Reorder pt. max</th>
+            <th>Orders blocked</th>
+            <th>Oldest blocked order</th>
+            <th>Priority</th>
+          </tr>
+        </thead>
+        <tbody id="production-list-tbody"></tbody>
+      </table>
+</div>
+    </div>
+
+    <div id="subtab-stockbuilds" class="subtab-panel" style="display:none;">
+      <div class="scope-note">Chemicals below Reorder Point Max with NO current order demand or backorder — proactive builds to stay ahead of high-selling items before they run out.</div>
+      <div class="table-scroll-wrap">
+<table class="attack-table sticky-table">
+        <thead>
+          <tr>
+            <th>Chemical</th>
+            <th>Usable stock</th>
+            <th>Reorder pt. max</th>
+            <th>Deficit</th>
+          </tr>
+        </thead>
+        <tbody id="stock-builds-tbody"></tbody>
+      </table>
+</div>
     </div>
   </div>
 </main>
@@ -1351,6 +1429,19 @@ function businessHoursSinceOrder(orderDatetimeStr) {
   return businessHoursElapsed(orderMs.getTime(), Date.now());
 }
 
+function formatAge(hours) {
+  // "2d 18h" once past a full day, otherwise just "Xh" — reads faster
+  // than a raw hour count once orders start aging past 24h. Rounds the
+  // TOTAL first, then decomposes — avoids an edge case where rounding
+  // the remainder alone could produce something like "1d 24h" instead
+  // of the correct "2d 0h".
+  const rounded = Math.round(hours);
+  if (rounded < 24) return `${rounded}h`;
+  const days = Math.floor(rounded / 24);
+  const remHours = rounded % 24;
+  return `${days}d ${remHours}h`;
+}
+
 const AT_RISK_HOURS = 24;
 const OVERDUE_HOURS = 48;
 
@@ -1360,155 +1451,6 @@ const OVERDUE_HOURS = 48;
 // scheduler (Sandbox_Build_Script.xlsx) -- channel committment (Amazon/
 // Walmart) takes priority over raw volume, and "needs Downpack" is a
 // distinct, separate concern from "how much of this do we need."
-
-function skuFamily(productId) {
-  // Heuristic: group by everything before the LAST hyphen, so e.g.
-  // "EAPMB200-4LCS" and "EAPMB200-1LCS" (same base chemical, different
-  // pack size) cluster into family "EAPMB200" -- confirmed against
-  // those two real SKUs. This is a heuristic, not guaranteed correct
-  // for every SKU naming pattern in the catalog; revisit if families
-  // look wrong against real data.
-  const idx = productId.lastIndexOf("-");
-  return idx > 0 ? productId.slice(0, idx) : productId;
-}
-
-function resolveRealSkus(lines) {
-  // Shared fallback for Finale's "Multiple products" collapse: when a
-  // split/backordered order's line got summarized into one placeholder
-  // row with no real per-SKU detail, fall back to ShipStation's own
-  // item list (ss_items) instead of silently dropping the order from
-  // every SKU-level count. Same fix as the Shipping list's pickability
-  // bug, applied here too so "Chemicals to prioritize" doesn't
-  // undercount orders that happen to be collapsed this way.
-  let distinctSkus = [...new Set(
-    lines.map(l => (l.product_id || "").trim()).filter(v => v && v !== "Multiple products")
-  )];
-  const hasCollapsedRow = lines.some(l => (l.product_id || "").trim() === "Multiple products");
-  if (hasCollapsedRow) {
-    const first = lines[0];
-    let ssItems = [];
-    try { ssItems = JSON.parse(first.ss_items || "[]"); } catch (e) { ssItems = []; }
-    const realSkus = ssItems.map(item => (item.sku || "").trim()).filter(v => v);
-    distinctSkus = [...new Set([...distinctSkus, ...realSkus])];
-  }
-  return distinctSkus;
-}
-
-function buildChemicalPriorityList(rows) {
-  const scopedRows = rows.filter(r =>
-    ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
-  );
-  // For each SKU: which distinct orders need it, total qty, and whether
-  // any of those orders are Amazon/Walmart (channel priority).
-  //
-  // CONFIRMED (2026-09-17): store_name can NEVER distinguish these --
-  // Amazon and Walmart orders are not separate ShipStation "stores" in
-  // this account; a real Amazon order (AMZN-000406862) came back with
-  // storeId 528172, identical to every plain Magento order. The real,
-  // reliable signal is the order NUMBER's own prefix (AMZN-, WMT),
-  // confirmed directly against real order numbers.
-  const linesByOrder = new Map();
-  for (const row of scopedRows) {
-    if (!linesByOrder.has(row.order_id)) linesByOrder.set(row.order_id, []);
-    linesByOrder.get(row.order_id).push(row);
-  }
-
-  const bySku = new Map();
-  for (const [oid, lines] of linesByOrder) {
-    const first = lines[0];
-    const skus = resolveRealSkus(lines);
-    const oidUpper = oid.toUpperCase();
-    const isChannelPriority = oidUpper.startsWith("AMZN") || oidUpper.startsWith("WMT");
-    const qty = parseInt(first.item_quantity) || 0;
-    for (const sku of skus) {
-      if (!bySku.has(sku)) bySku.set(sku, { sku, orders: new Set(), isChannelPriority: false, totalQty: 0 });
-      const entry = bySku.get(sku);
-      entry.orders.add(oid);
-      if (isChannelPriority) entry.isChannelPriority = true;
-      entry.totalQty += qty;
-    }
-  }
-
-  // Group SKUs into families for display.
-  const families = new Map();
-  for (const entry of bySku.values()) {
-    const fam = skuFamily(entry.sku);
-    if (!families.has(fam)) families.set(fam, { family: fam, skus: [], orders: new Set(), totalQty: 0, isChannelPriority: false });
-    const famEntry = families.get(fam);
-    famEntry.skus.push(entry.sku);
-    for (const oid of entry.orders) famEntry.orders.add(oid);
-    famEntry.totalQty += entry.totalQty;
-    if (entry.isChannelPriority) famEntry.isChannelPriority = true;
-  }
-
-  const list = Array.from(families.values()).map(f => ({
-    family: f.family,
-    skuCount: f.skus.length,
-    orderCount: f.orders.size,
-    totalQty: f.totalQty,
-    isChannelPriority: f.isChannelPriority,
-  }));
-
-  // Channel-priority families first (matching the build script's own
-  // "Amazon/Walmart first" rule), then by order coverage within each tier.
-  list.sort((a, b) => {
-    if (a.isChannelPriority !== b.isChannelPriority) return a.isChannelPriority ? -1 : 1;
-    return b.orderCount - a.orderCount;
-  });
-  return list;
-}
-
-function buildDownpackUrgencyList(rows) {
-  const scopedRows = rows.filter(r =>
-    ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
-  );
-  const bySku = new Map();
-  for (const row of scopedRows) {
-    if ((row.downpack || "").trim().toLowerCase() !== "repack") continue;
-    const sku = (row.product_id || "").trim();
-    if (!sku || sku === "Multiple products") continue;
-    const hours = businessHoursSinceOrder(row.order_datetime);
-    if (!bySku.has(sku)) bySku.set(sku, { sku, description: row.description || "", orders: new Set(), maxHours: 0 });
-    const entry = bySku.get(sku);
-    entry.orders.add(row.order_id);
-    if (hours > entry.maxHours) entry.maxHours = hours;
-  }
-  const list = Array.from(bySku.values())
-    .filter(e => e.maxHours >= AT_RISK_HOURS) // only chemicals actually at risk or overdue
-    .map(e => ({
-      sku: e.sku,
-      description: e.description,
-      orderCount: e.orders.size,
-      maxHours: e.maxHours,
-      isOverdue: e.maxHours >= OVERDUE_HOURS,
-    }));
-  list.sort((a, b) => b.maxHours - a.maxHours);
-  return list;
-}
-
-function renderPriorityTable(list) {
-  document.getElementById("priority-tbody").innerHTML = list.length ? list.map(f => `
-    <tr>
-      <td>${f.family}</td>
-      <td>${f.skuCount}</td>
-      <td>${f.orderCount}</td>
-      <td>${f.totalQty}</td>
-      <td><span class="priority-pill ${f.isChannelPriority ? 'channel' : 'standard'}">${f.isChannelPriority ? 'Amazon/Walmart' : 'Standard'}</span></td>
-    </tr>
-  `).join("") : `<tr><td colspan="5" class="bar-empty">No data</td></tr>`;
-}
-
-function renderDownpackUrgencyTable(list) {
-  document.getElementById("downpack-urgency-tbody").innerHTML = list.length ? list.map(e => `
-    <tr>
-      <td>${e.sku}</td>
-      <td>${e.description}</td>
-      <td>${e.orderCount}</td>
-      <td>${e.maxHours.toFixed(0)}h</td>
-      <td><span class="status-pill ${e.isOverdue ? 'overdue' : 'atrisk'}">${e.isOverdue ? 'Overdue' : 'At risk'}</span></td>
-    </tr>
-  `).join("") : `<tr><td colspan="5" class="bar-empty">Nothing currently at risk</td></tr>`;
-}
 
 function stockByProduct() {
   const map = new Map();
@@ -1739,7 +1681,7 @@ function renderShippingList(list) {
     <tr>
       <td>${o.orderId}</td>
       <td><span class="status-pill ${o.isPickable ? 'pickable' : 'blocked'}">${o.isPickable ? 'Pickable' : 'Blocked'}</span></td>
-      <td>${o.hours.toFixed(0)}h</td>
+      <td>${formatAge(o.hours)}</td>
       <td>${o.isChannelPriority ? '<span class="priority-pill channel">Amazon/Walmart</span>' : ''}</td>
       <td>${skuCell}</td>
       <td>${qtyCell}</td>
@@ -1770,7 +1712,7 @@ function renderProductionList(list) {
       <td>${p.usableStock.toFixed(1)}</td>
       <td>${p.reorderPointMax != null ? p.reorderPointMax : '—'}</td>
       <td>${p.ordersBlocked}</td>
-      <td>${p.ordersBlocked ? p.maxHours.toFixed(0) + 'h' : '—'}</td>
+      <td>${p.ordersBlocked ? formatAge(p.maxHours) : '—'}</td>
       <td>${p.isChannelPriority ? '<span class="priority-pill channel">Amazon/Walmart</span>' : ''}</td>
     </tr>
   `).join("") : `<tr><td colspan="7" class="bar-empty">Nothing currently blocking an order</td></tr>`;
@@ -1797,21 +1739,80 @@ function renderAttackSection(rows) {
     linesByOrder.get(row.order_id).push(row);
   }
   let atRisk = 0, overdue = 0;
+  let totalQueueUnits = 0;
   for (const [oid, lines] of linesByOrder) {
     const hours = businessHoursSinceOrder(lines[0].order_datetime);
     if (hours >= OVERDUE_HOURS) overdue++;
     else if (hours >= AT_RISK_HOURS) atRisk++;
+    totalQueueUnits += parseInt(lines[0].item_quantity) || 0;
   }
   document.getElementById("atrisk-count").textContent = atRisk;
   document.getElementById("overdue-count").textContent = overdue;
 
-  renderPriorityTable(buildChemicalPriorityList(rows));
-  renderDownpackUrgencyTable(buildDownpackUrgencyList(rows));
-
   const shippingList = buildShippingList(rows);
+  const productionList = buildProductionList(shippingList);
   renderShippingList(shippingList);
-  renderProductionList(buildProductionList(shippingList));
+  renderProductionList(productionList);
   renderStockBuilds(buildStockBuilds(shippingList));
+
+  renderHealthRow(productionList, totalQueueUnits);
+}
+
+const BUILD_HEALTH_THRESHOLDS = { good: 10, watch: 25 }; // % of queue units needing build
+
+function renderHealthRow(productionList, totalQueueUnits) {
+  const totalBuildUnits = productionList.reduce((sum, p) => sum + p.buildQty, 0);
+  const buildPct = totalQueueUnits > 0 ? (totalBuildUnits / totalQueueUnits * 100) : 0;
+
+  let buildStatus, buildLabel;
+  if (totalQueueUnits === 0) {
+    buildStatus = "pending";
+    buildLabel = "No queue data";
+  } else if (buildPct < BUILD_HEALTH_THRESHOLDS.good) {
+    buildStatus = "good";
+    buildLabel = "Good";
+  } else if (buildPct < BUILD_HEALTH_THRESHOLDS.watch) {
+    buildStatus = "watch";
+    buildLabel = "Watch";
+  } else {
+    buildStatus = "concerning";
+    buildLabel = "Concerning";
+  }
+
+  const buildSub = totalQueueUnits > 0
+    ? `${buildPct.toFixed(0)}% of queue units need building`
+    : "";
+
+  document.getElementById("health-row").innerHTML = `
+    <div class="health-card">
+      <div class="health-label">Build</div>
+      <div class="health-status ${buildStatus}"><span class="health-dot ${buildStatus}"></span>${buildLabel}</div>
+      <div class="health-label" style="margin-top:4px;">${buildSub}</div>
+    </div>
+    <div class="health-card">
+      <div class="health-label">Aging</div>
+      <div class="health-status pending"><span class="health-dot pending"></span>Gathering baseline data</div>
+      <div class="health-label" style="margin-top:4px;">Needs ~1 month of history to compare against</div>
+    </div>
+    <div class="health-card">
+      <div class="health-label">Volume</div>
+      <div class="health-status pending"><span class="health-dot pending"></span>Gathering baseline data</div>
+      <div class="health-label" style="margin-top:4px;">Needs ~1 month of history to compare against</div>
+    </div>
+    <div class="health-card">
+      <div class="health-label">Overall</div>
+      <div class="health-status pending"><span class="health-dot pending"></span>Gathering baseline data</div>
+      <div class="health-label" style="margin-top:4px;">Combines all three once history exists</div>
+    </div>
+  `;
+}
+
+function switchSubtab(tab) {
+  const tabs = ["shipping", "production", "stockbuilds"];
+  for (const t of tabs) {
+    document.getElementById(`subtab-btn-${t}`).classList.toggle("active", t === tab);
+    document.getElementById(`subtab-${t}`).style.display = t === tab ? "block" : "none";
+  }
 }
 
 let hasData = false;

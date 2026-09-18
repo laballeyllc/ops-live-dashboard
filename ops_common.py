@@ -15,6 +15,8 @@ import re
 import time
 import json
 import requests
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -490,3 +492,193 @@ def replace_stock_levels(rows: list[dict], pulled_at: str) -> None:
     db_rows = [{**row, "pulled_at": pulled_at} for row in rows]
     insert_in_batches(client, "stock_levels", db_rows)
     print(f"Wrote {len(db_rows)} rows to Supabase 'stock_levels' (pulled_at: {pulled_at})")
+
+
+# --- Health snapshot logging (for the dashboard's Build/Aging/Volume
+# health indicators — the Aging and Volume indicators need historical
+# data to compare against, which doesn't exist yet; this is what starts
+# building that history, one snapshot per pull run). ---
+
+CHICAGO_TZ = ZoneInfo("America/Chicago")
+
+
+def parse_chicago_naive(naive_str: str):
+    """Parses a naive datetime string (no timezone marker) as wall-clock
+    time in America/Chicago, returning a timezone-aware UTC datetime.
+    Python's zoneinfo resolves CST/CDT correctly natively here — unlike
+    the frontend's JS equivalent (parseChicagoNaive in site/index.html),
+    which needs an iterative correction trick to get the same result,
+    since JS has no first-class named-timezone parsing. Verified against
+    the exact same test cases (including both DST transition edges) as
+    that JS version to confirm they agree."""
+    if not naive_str:
+        return None
+    try:
+        base = naive_str.split(".")[0]
+        naive_dt = datetime.strptime(base, "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+    chicago_dt = naive_dt.replace(tzinfo=CHICAGO_TZ)
+    return chicago_dt.astimezone(timezone.utc)
+
+
+def business_hours_elapsed(start: datetime, end: datetime) -> float:
+    """Hours elapsed between start and end, weekends fully excluded
+    (Saturday 00:00 through Monday 00:00, Chicago time) — the 48-hour
+    SLA clock pauses at midnight Friday night, resumes midnight Monday.
+    Mirrors the frontend's businessHoursElapsed(); verified against the
+    same 4 test scenarios (including a span landing entirely inside one
+    weekend) to confirm the two implementations agree."""
+    if not start or end <= start:
+        return 0.0
+    total_seconds = (end - start).total_seconds()
+    excluded_seconds = 0.0
+    cursor = start.astimezone(CHICAGO_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    while cursor.astimezone(timezone.utc) < end:
+        day_end = cursor + timedelta(days=1)
+        if cursor.weekday() in (5, 6):  # Saturday=5, Sunday=6
+            day_start_utc = cursor.astimezone(timezone.utc)
+            day_end_utc = day_end.astimezone(timezone.utc)
+            overlap_start = max(day_start_utc, start)
+            overlap_end = min(day_end_utc, end)
+            if overlap_end > overlap_start:
+                excluded_seconds += (overlap_end - overlap_start).total_seconds()
+        cursor = day_end
+    return (total_seconds - excluded_seconds) / 3600.0
+
+
+def business_hours_since(naive_str: str) -> float:
+    start = parse_chicago_naive(naive_str)
+    if not start:
+        return 0.0
+    return business_hours_elapsed(start, datetime.now(timezone.utc))
+
+
+def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
+    """Server-side port of the frontend's buildShippingList() /
+    buildProductionList() logic (site/index.html) — specifically the
+    parts needed to compute the Build Health indicator's "total build
+    units" figure for a periodic history snapshot. The Supabase
+    publishable key is deliberately read-only, so the frontend can never
+    write these snapshots itself; this is why the computation has to be
+    duplicated here rather than shared.
+
+    IMPORTANT: this MUST stay logically consistent with the JS version.
+    If the frontend's shortage/pickability logic changes, this needs a
+    matching update, or Build Health's live number and its own logged
+    history will silently drift apart. There is deliberately no shared
+    source of truth between them (JS runs in the browser, this runs in
+    GitHub Actions) — this comment is the closest thing to one.
+
+    `rows` is the same shape build_rows() produces (Title Case keys,
+    pre-to_db_rows). `stock` is {product_id: {usable_stock,
+    reorder_point_max, units_backorder}} as returned by
+    build_stock_levels(), keyed by product_id.
+    """
+    scoped = [
+        r for r in rows
+        if r.get("Core Queue") in ("Warehouse", "Freight", "Both")
+        and r.get("Shipment status") != "on_hold"
+    ]
+
+    by_order: dict[str, list[dict]] = {}
+    for r in scoped:
+        by_order.setdefault(r["Order ID"], []).append(r)
+
+    queue_count = len(by_order)
+    total_units = 0
+    aged_24h = 0
+    aged_48h = 0
+    blocked_by_sku: dict[str, dict] = {}
+
+    for oid, lines in by_order.items():
+        first = lines[0]
+        total_units += int(first.get("Item Quantity") or 0)
+
+        hours = business_hours_since(first.get("Order datetime"))
+        if hours >= 48:
+            aged_48h += 1
+        elif hours >= 24:
+            aged_24h += 1
+
+        try:
+            ss_items = json.loads(first.get("SS Items") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            ss_items = []
+        qty_by_sku: dict[str, float] = {}
+        for item in ss_items:
+            sku = (item.get("sku") or "").strip()
+            if sku:
+                qty_by_sku[sku] = qty_by_sku.get(sku, 0) + (item.get("qty") or 0)
+
+        distinct_skus = {(l.get("Product ID") or "").strip() for l in lines}
+        distinct_skus.discard("")
+        distinct_skus.discard("Multiple products")
+        has_collapsed = any((l.get("Product ID") or "").strip() == "Multiple products" for l in lines)
+        if has_collapsed and ss_items:
+            distinct_skus |= {s for s in qty_by_sku if s}
+
+        for sku in distinct_skus:
+            needed = qty_by_sku.get(sku, 1)
+            s = stock.get(sku, {})
+            usable = s.get("usable_stock", 0.0) or 0.0
+            if usable < needed:
+                entry = blocked_by_sku.setdefault(sku, {"needed_total": 0.0})
+                entry["needed_total"] += max(0.0, needed - usable)
+
+    build_units = 0.0
+    for sku, entry in blocked_by_sku.items():
+        s = stock.get(sku, {})
+        reorder_max = s.get("reorder_point_max")
+        usable = s.get("usable_stock", 0.0) or 0.0
+        backorder = s.get("units_backorder", 0.0) or 0.0
+        if reorder_max is not None:
+            build_qty = max(0.0, reorder_max - usable)
+        else:
+            build_qty = max(backorder, entry["needed_total"])
+        build_units += build_qty
+
+    build_pct = (build_units / total_units * 100) if total_units else 0.0
+
+    return {
+        "queue_count": queue_count,
+        "total_units": total_units,
+        "build_units": round(build_units),
+        "build_pct": round(build_pct, 1),
+        "aged_24h_count": aged_24h,
+        "aged_48h_count": aged_48h,
+    }
+
+
+def log_health_snapshot(rows: list[dict], stock: dict[str, dict], pulled_at: str) -> None:
+    """Appends one row to health_snapshots — unlike live_queue/
+    stock_levels, this is a history log, not a "right now" replace."""
+    snapshot = compute_health_snapshot(rows, stock)
+    snapshot["pulled_at"] = pulled_at
+    client = get_supabase_client()
+    client.table("health_snapshots").insert(snapshot).execute()
+    print(f"Logged health snapshot: {snapshot}")
+
+
+def read_stock_levels() -> dict[str, dict]:
+    """Reads the current stock_levels table back from Supabase (written
+    by pull_stock_levels.py, roughly the same 30-min cadence as the live
+    queue pull) and returns it as {product_id: {usable_stock,
+    reorder_point_max, units_backorder}} — the shape
+    compute_health_snapshot() needs. Deliberately reads the
+    already-written table rather than re-fetching from Finale directly:
+    avoids a second, redundant hit against the same slow/heavy Finale
+    reports pull_stock_levels.py already pulls on its own schedule."""
+    client = get_supabase_client()
+    result = client.table("stock_levels").select("*").execute()
+    stock: dict[str, dict] = {}
+    for row in result.data or []:
+        pid = row.get("product_id")
+        if not pid:
+            continue
+        stock[pid] = {
+            "usable_stock": row.get("usable_stock") or 0.0,
+            "reorder_point_max": row.get("reorder_point_max"),
+            "units_backorder": row.get("units_backorder") or 0.0,
+        }
+    return stock
