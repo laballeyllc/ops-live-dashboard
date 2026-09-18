@@ -248,6 +248,8 @@
 
   .status-pill.atrisk { background: #4A302B; color: var(--alert); }
   .status-pill.overdue { background: #4A302B; color: #E85D5D; }
+  .status-pill.pickable { background: var(--warehouse-dim); color: var(--warehouse); }
+  .status-pill.blocked { background: #4A302B; color: var(--alert); }
 
   .flag-pill {
     display: inline-block;
@@ -637,6 +639,40 @@
             </tr>
           </thead>
           <tbody id="downpack-urgency-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="attack-subsection">
+        <h3>Shipping list <span class="h2-note">what to pick and pack right now, based on usable stock — prioritized by Amazon/Walmart, then FIFO; blocked orders need Production first</span></h3>
+        <table class="attack-table">
+          <thead>
+            <tr>
+              <th>Order ID</th>
+              <th>Status</th>
+              <th>Age</th>
+              <th>Priority</th>
+              <th>Blocked by</th>
+            </tr>
+          </thead>
+          <tbody id="shipping-list-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="attack-subsection">
+        <h3>Production list <span class="h2-note">chemicals to build, ranked by orders blocked and age — quantity builds up to Reorder Point Max, not just current demand</span></h3>
+        <table class="attack-table">
+          <thead>
+            <tr>
+              <th>Chemical</th>
+              <th>Build qty</th>
+              <th>Usable stock</th>
+              <th>Reorder pt. max</th>
+              <th>Orders blocked</th>
+              <th>Oldest blocked order</th>
+              <th>Priority</th>
+            </tr>
+          </thead>
+          <tbody id="production-list-tbody"></tbody>
         </table>
       </div>
     </div>
@@ -1314,6 +1350,165 @@ function renderDownpackUrgencyTable(list) {
   `).join("") : `<tr><td colspan="5" class="bar-empty">Nothing currently at risk</td></tr>`;
 }
 
+function stockByProduct() {
+  const map = new Map();
+  for (const s of currentStockLevels) {
+    map.set(s.product_id, {
+      usableStock: parseFloat(s.usable_stock) || 0,
+      reorderPointMax: s.reorder_point_max != null ? parseFloat(s.reorder_point_max) : null,
+      unitsBackorder: parseFloat(s.units_backorder) || 0,
+    });
+  }
+  return map;
+}
+
+function buildShippingList(rows) {
+  // Same scope as the rest of Attack the Queue: Warehouse/Freight/Both,
+  // held orders excluded (nothing here is workable for a held order
+  // regardless of stock).
+  const scopedRows = rows.filter(r =>
+    ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
+  );
+  const linesByOrder = new Map();
+  for (const row of scopedRows) {
+    if (!linesByOrder.has(row.order_id)) linesByOrder.set(row.order_id, []);
+    linesByOrder.get(row.order_id).push(row);
+  }
+  const stock = stockByProduct();
+
+  const results = [];
+  for (const [oid, lines] of linesByOrder) {
+    const first = lines[0];
+    // Real per-SKU quantity needed, from ShipStation's own item data
+    // (captured in ss_items). Falls back to "assume at least 1" for
+    // rows pulled before this field existed, rather than silently
+    // treating an unknown quantity as zero risk.
+    let ssItems = [];
+    try { ssItems = JSON.parse(first.ss_items || "[]"); } catch (e) { ssItems = []; }
+    const qtyBySku = new Map();
+    for (const item of ssItems) {
+      if (item.sku) qtyBySku.set(item.sku, (qtyBySku.get(item.sku) || 0) + (item.qty || 0));
+    }
+
+    const distinctSkus = [...new Set(
+      lines.map(l => (l.product_id || "").trim()).filter(v => v && v !== "Multiple products")
+    )];
+    const blockers = [];
+    for (const sku of distinctSkus) {
+      const needed = qtyBySku.get(sku) || 1;
+      const s = stock.get(sku);
+      const usable = s ? s.usableStock : 0;
+      if (usable < needed) blockers.push({ sku, needed, usable });
+    }
+
+    const oidUpper = oid.toUpperCase();
+    results.push({
+      orderId: oid,
+      isPickable: blockers.length === 0,
+      blockers,
+      isChannelPriority: oidUpper.startsWith("AMZN") || oidUpper.startsWith("WMT"),
+      hours: businessHoursSinceOrder(first.order_datetime),
+      orderDatetime: first.order_datetime || "",
+    });
+  }
+
+  // Pickable orders first (nothing blocking them), then channel
+  // priority, then FIFO (oldest first) — exactly "priority source and
+  // FIFO" as specified.
+  results.sort((a, b) => {
+    if (a.isPickable !== b.isPickable) return a.isPickable ? -1 : 1;
+    if (a.isChannelPriority !== b.isChannelPriority) return a.isChannelPriority ? -1 : 1;
+    return a.orderDatetime.localeCompare(b.orderDatetime);
+  });
+  return results;
+}
+
+function buildProductionList(shippingList) {
+  // Which chemicals are actually blocking a live order right now,
+  // cross-referenced from the shipping list above.
+  const blockedByProduct = new Map();
+  for (const order of shippingList) {
+    for (const b of order.blockers) {
+      if (!blockedByProduct.has(b.sku)) {
+        blockedByProduct.set(b.sku, { orderCount: 0, maxHours: 0, hasChannelPriority: false, neededTotal: 0 });
+      }
+      const entry = blockedByProduct.get(b.sku);
+      entry.orderCount += 1;
+      entry.maxHours = Math.max(entry.maxHours, order.hours);
+      if (order.isChannelPriority) entry.hasChannelPriority = true;
+      entry.neededTotal += Math.max(0, b.needed - b.usable);
+    }
+  }
+
+  const stock = stockByProduct();
+  const allSkus = new Set([...blockedByProduct.keys(), ...stock.keys()]);
+  const results = [];
+  for (const sku of allSkus) {
+    const s = stock.get(sku) || { usableStock: 0, reorderPointMax: null, unitsBackorder: 0 };
+    const blocked = blockedByProduct.get(sku);
+    const hasDeficit = s.reorderPointMax != null && s.usableStock < s.reorderPointMax;
+    const hasBackorder = s.unitsBackorder > 0;
+    if (!blocked && !hasDeficit && !hasBackorder) continue;
+
+    // Build UP TO Reorder Point Max, not just enough for current
+    // demand — the explicit rule: demand of 5 but a reorder max of 10
+    // means building 10, to get ahead of near-future orders too.
+    let buildQty;
+    if (s.reorderPointMax != null) {
+      buildQty = Math.max(0, s.reorderPointMax - s.usableStock);
+    } else {
+      buildQty = Math.max(s.unitsBackorder, blocked ? blocked.neededTotal : 0);
+    }
+    if (buildQty <= 0) continue;
+
+    results.push({
+      sku,
+      buildQty,
+      usableStock: s.usableStock,
+      reorderPointMax: s.reorderPointMax,
+      ordersBlocked: blocked ? blocked.orderCount : 0,
+      maxHours: blocked ? blocked.maxHours : 0,
+      isChannelPriority: blocked ? blocked.hasChannelPriority : false,
+    });
+  }
+
+  // Channel priority first, then how many live orders it's blocking,
+  // then the oldest affected order's age — balances "fulfill the most
+  // orders quickly" against "don't let aging orders sit."
+  results.sort((a, b) => {
+    if (a.isChannelPriority !== b.isChannelPriority) return a.isChannelPriority ? -1 : 1;
+    if (a.ordersBlocked !== b.ordersBlocked) return b.ordersBlocked - a.ordersBlocked;
+    return b.maxHours - a.maxHours;
+  });
+  return results;
+}
+
+function renderShippingList(list) {
+  document.getElementById("shipping-list-tbody").innerHTML = list.length ? list.map(o => `
+    <tr>
+      <td>${o.orderId}</td>
+      <td><span class="status-pill ${o.isPickable ? 'pickable' : 'blocked'}">${o.isPickable ? 'Pickable' : 'Blocked'}</span></td>
+      <td>${o.hours.toFixed(0)}h</td>
+      <td>${o.isChannelPriority ? '<span class="priority-pill channel">Amazon/Walmart</span>' : ''}</td>
+      <td>${o.blockers.map(b => `${b.sku} (need ${b.needed}, have ${b.usable})`).join(', ')}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="5" class="bar-empty">No data</td></tr>`;
+}
+
+function renderProductionList(list) {
+  document.getElementById("production-list-tbody").innerHTML = list.length ? list.map(p => `
+    <tr>
+      <td>${p.sku}</td>
+      <td>${p.buildQty.toFixed(0)}</td>
+      <td>${p.usableStock.toFixed(1)}</td>
+      <td>${p.reorderPointMax != null ? p.reorderPointMax : '—'}</td>
+      <td>${p.ordersBlocked}</td>
+      <td>${p.ordersBlocked ? p.maxHours.toFixed(0) + 'h' : '—'}</td>
+      <td>${p.isChannelPriority ? '<span class="priority-pill channel">Amazon/Walmart</span>' : ''}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="7" class="bar-empty">Nothing needs building right now</td></tr>`;
+}
+
 function renderAttackSection(rows) {
   const scopedRows = rows.filter(r =>
     ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
@@ -1334,6 +1529,10 @@ function renderAttackSection(rows) {
 
   renderPriorityTable(buildChemicalPriorityList(rows));
   renderDownpackUrgencyTable(buildDownpackUrgencyList(rows));
+
+  const shippingList = buildShippingList(rows);
+  renderShippingList(shippingList);
+  renderProductionList(buildProductionList(shippingList));
 }
 
 const attackChevron = document.getElementById("attack-chevron");
@@ -1357,12 +1556,28 @@ function formatLastUpdated(pulledAtIso) {
   }) + " CT";
 }
 
+let currentStockLevels = [];
+
 async function refresh() {
   try {
     const { data, error } = await client.from("live_queue").select("*");
     if (error) throw error;
 
     currentRows = data || [];
+
+    // Stock levels: fetched separately and non-fatally — if this table
+    // is empty or the query fails (e.g. before the first Stock Levels
+    // Pull run), the rest of the dashboard should still work; only the
+    // stock-dependent sections (Shipping List, Production List) will
+    // show as empty rather than the whole page erroring out.
+    try {
+      const stockResult = await client.from("stock_levels").select("*");
+      currentStockLevels = stockResult.data || [];
+    } catch (stockErr) {
+      console.error("stock_levels fetch failed (non-fatal):", stockErr);
+      currentStockLevels = [];
+    }
+
     const dot = document.getElementById("last-updated-dot");
 
     if (currentRows.length) {

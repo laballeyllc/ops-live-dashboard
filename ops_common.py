@@ -200,18 +200,22 @@ def normalize_order_id(value) -> str:
 
 
 def ss_items_for_order(order: dict) -> str:
-    """JSON-encoded list of {sku, name} for every real line item
-    ShipStation has on this order — captured because Finale's own
-    Orders report sometimes collapses a split/backordered order's
-    distinct products into a single row literally labeled "Multiple
-    products" for both Product ID and Description, giving us no way to
-    tell which real SKUs were actually involved. ShipStation's order
-    data always has the genuine per-item detail regardless of how
-    Finale chose to summarize it, so this is the fallback the frontend
-    uses specifically for those collapsed rows."""
+    """JSON-encoded list of {sku, name, qty} for every real line item
+    ShipStation has on this order. Originally captured just for the
+    "Multiple products" fallback (Finale's own Orders report sometimes
+    collapses a split/backordered order's distinct products into one
+    summary row, so we can't tell which real SKUs were involved). Now
+    also carries per-item quantity, since ShipStation's order data has
+    it — this is what makes it possible to check "does this order
+    actually need MORE units than we have usable stock for," not just
+    "does some usable stock exist at all.\""""
     items = order.get("items") or []
     return json.dumps([
-        {"sku": (item.get("sku") or "").strip(), "name": (item.get("name") or "").strip()}
+        {
+            "sku": (item.get("sku") or "").strip(),
+            "name": (item.get("name") or "").strip(),
+            "qty": item.get("quantity") or 0,
+        }
         for item in items
     ])
 
