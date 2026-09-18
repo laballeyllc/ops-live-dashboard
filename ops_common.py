@@ -11,6 +11,7 @@ see the project history for how we got here. Don't change
 CORE_QUEUE_TAGS without re-confirming against a real order the same way.
 """
 import os
+import re
 import time
 import json
 import requests
@@ -63,6 +64,126 @@ ORDERS_REPORT_URL = (
 #      WAREHOUSE_LOCATION_NAME/FREIGHT_LOCATION_NAME below match the
 #      exact location names seen in the automation rule screenshots.
 CORE_QUEUE_TAGS = {"Austin Warehouse": "Warehouse", "ATX Freight": "Freight"}
+# --- Stock/inventory reports (for usable-stock and reorder-point data,
+# powering the "Attack the Queue" chemical prioritization) ---
+
+STOCK_BY_SUBLOCATION_REPORT_URL = (
+    "https://app.finaleinventory.com/laballeyllc/doc/report/pivotTable/"
+    "1789740705597/Report.json?format=jsonObject&data=stock"
+    "&attrName=%23%23stock030"
+    "&rowDimensions=~lZrNA0erU3VibG9jYXRpb27M_sDAwMDAwMCazQH-wMtAaWZmZmZmZsDAwMDAwMCazQHUwMtAiWZmZmZmZsDAwMDAwMCazQILqVN0ZFxuUGtuZ8tAaWZmZmZmZsDAwMDAwMCatHN0b2NrTG90SWRVbnByZWZpeGVkwMz-wMDAwMDAwA"
+    "&metrics=~lZrNBLiqVW5pdHNcblFvSMtAaWZmZmZmZsDAwMDAwMCazQS7rVVuaXRzXG5QYWNrZWTLQGlmZmZmZmbAwMDAwMDAms0Ev65Vbml0c1xuVHJhbnNpdMtAaWZmZmZmZsDAwMDAwMCazQTAqlVuaXRzXG5XSVDLQGlmZmZmZmbAwMDAwMDAmr9zdG9ja0xvdElkVW5wcmVmaXhlZENvbnNvbGlkYXRlwMz-wMDAwMDAwA"
+    "&filters=W1sic3RvY2tUeXBlIixbIlNUT0NLX0lURU1fT05fSEFORCIsIlNUT0NLX0lURU1fSU5fVFJBTlNJVCIsIlNUT0NLX0lURU1fV0lQIiwiU1RPQ0tfSVRFTV9QQUNLRUQiXSxudWxsXSxbInByb2R1Y3RTdGF0dXMiLFsiUFJPRFVDVF9BQ1RJVkUiXSxudWxsXSxbInByb2R1Y3RQcm9kdWN0VXJsIixudWxsLG51bGxdLFsicHJvZHVjdENhdGVnb3J5IixudWxsLG51bGxdLFsicHJvZHVjdE1hbnVmYWN0dXJlciIsbnVsbCxudWxsXSxbInN0b2NrTG9jYXRpb24iLG51bGwsbnVsbF0sWyJzdG9ja01hZ2F6aW5lIixudWxsLG51bGxdLFsic3RvY2tFZmZlY3RpdmVEYXRlIixudWxsLG51bGxdXQ%3D%3D"
+    "&reportTitle=Stock%20Quantity%20by%20Sublocation%20In%20Units"
+)
+
+BACKORDER_DEMAND_REPORT_URL = (
+    "https://app.finaleinventory.com/laballeyllc/doc/report/pivotTable/"
+    "1789740640527/Report.json?format=jsonObject&data=stock"
+    "&attrName=%23%23sale013"
+    "&rowDimensions=~mJrNA2HAy0BpZmZmZmZmwMDAwMDAwJrNA2LAy0BpZmZmZmZmwMDAwMDAwJrNA2XAzP7AwMDAAcDAms0B_sDLQGlmZmZmZmbAwMDAwMDAmrRwcm9kdWN0VXNlclVzZXIxMDAyOMDNAX3AwMDAwMDAms0BzcDM_sDAwMDAwMCauXN0b2NrT3JkZXJTaGlwcGluZ1NlcnZpY2XAzP7AwMDAwMDAmrRwcm9kdWN0VXNlclVzZXIxMDAzNcDM_sDAwMDAwMA"
+    "&metrics=~m5rNBL6zVW5pdHMgcnN2ZFxub24gaGFuZMtAaWZmZmZmZsDAwMDAwMCazQS9tlVuaXRzIHJzdmRcbmJhY2sgb3JkZXLLQGlmZmZmZmbAwMDAwMDAms0Eu61Vbml0c1xucGFja2Vky0BpZmZmZmZmwMDAwMDAwJrZPXByb2R1Y3RSZW9yZGVyTGV2ZWxNYXhMYWJhbGxleWxsY2FwaWZhY2lsaXR5MTAwMzA4Q29uc29saWRhdGXAzP7AwMDAwMDAmr9wcm9kdWN0VXNlclVzZXIxMDAzMkNvbnNvbGlkYXRlsUxvdCBJRCB0byBQcm9kdWNlzP7AwMDAwMDAmr9wcm9kdWN0VXNlclVzZXIxMDAzMkNvbnNvbGlkYXRlwMz-wMDAwMDAwJq_cHJvZHVjdFVzZXJVc2VyMTAwMzJDb25zb2xpZGF0ZatTdWJsb2NhdGlvbsz-wMDAwMDAwJq_cHJvZHVjdFVzZXJVc2VyMTAwMjhDb25zb2xpZGF0ZatEZXNjcmlwdGlvbsz-wMDAwMDAwJq_cHJvZHVjdFVzZXJVc2VyMTAwMzJDb25zb2xpZGF0ZaVCbGFua8z-wMDAwMDAwJq_cHJvZHVjdFVzZXJVc2VyMTAwMzNDb25zb2xpZGF0ZcDM_sDAwMDAwMCav3Byb2R1Y3RVc2VyVXNlcjEwMDMyQ29uc29saWRhdGWmVmVyaWZ5zP7AwMDAwMDA"
+    "&filters=W1sic3RvY2tUeXBlIixbIlNUT0NLX0lURU1fUlNWRCIsIlNUT0NLX0lURU1fUEFDS0VEIl0sbnVsbF0sWyJwcm9kdWN0UHJvZHVjdFVybCIsbnVsbCxudWxsXSxbInByb2R1Y3RDYXRlZ29yeSIsbnVsbCxudWxsXSxbInByb2R1Y3RNYW51ZmFjdHVyZXIiLG51bGwsbnVsbF0sWyJwcm9kdWN0U3VwcGxpZXIiLG51bGwsbnVsbF0sWyJzdG9ja09yZGVyT3JkZXJVcmwiLG51bGwsbnVsbF0sWyJzdG9ja09yZGVyT3JpZ2luIixudWxsLG51bGxdLFsic3RvY2tPcmRlck9yZGVyRGF0ZSIsIltudWxsLG51bGxdIixudWxsXSxbInN0b2NrT3JkZXJDdXN0b21lciIsbnVsbCxudWxsXSxbInN0b2NrTG9jYXRpb24iLG51bGwsbnVsbF1d"
+    "&reportTitle=Backordered%20sales%20by%20order%20(SkD)"
+)
+
+# CONFIRMED (2026-09-18) against the complete real list of 681 distinct
+# sublocation names in the account: this pattern separates all 13 known-
+# excluded locations (Quality Hold "*-QH", Inventory Hold "*-IH", Do Not
+# Inventory "*-DNI", Amazon FBA, Lab Room storage, Supplies, Receiving,
+# Downpacking staging) from the 668 genuine pickable storage bins, with
+# zero false positives or negatives against that full list. An allowlist
+# by design: any NEW sublocation added later that doesn't match one of
+# these three shapes is excluded by default (safer than silently
+# counting an unknown location as real, pickable stock) — Casey will
+# extend this pattern if a legitimate new location format shows up.
+USABLE_SUBLOCATION_PATTERN = re.compile(
+    r"^[A-Za-z]-\d+\.\d+$"      # e.g. "C-1.06"
+    r"|^[A-Za-z]-BULK$"          # e.g. "D-BULK", "E-Bulk"
+    r"|^[A-Za-z]\d+\.\d+$",      # e.g. "L1.01" (no hyphen — a distinct, confirmed-usable naming convention)
+    re.IGNORECASE,
+)
+
+
+def is_usable_sublocation(name: str) -> bool:
+    """Whether a sublocation represents real, pickable stock — see
+    USABLE_SUBLOCATION_PATTERN above for how this was derived and
+    verified."""
+    return bool(USABLE_SUBLOCATION_PATTERN.match((name or "").strip()))
+
+
+def fetch_usable_stock() -> dict[str, dict]:
+    """Returns {product_id: {"usable_stock": float, "description": str}},
+    quantity summed only across sublocations that pass
+    is_usable_sublocation() — excludes Quality Hold, Inventory Hold, Do
+    Not Inventory, Amazon FBA stock, and staging/processing areas that
+    aren't real, currently-pickable inventory. This is what makes "38.8
+    units on hand" correctly read as "36.3 usable" when ~2.5 of those
+    units are actually sitting in Quality Hold — the exact real example
+    that started this feature."""
+    rows = fetch_finale_report(STOCK_BY_SUBLOCATION_REPORT_URL)
+    stock: dict[str, dict] = {}
+    for row in rows:
+        sublocation = row.get("Sublocation")
+        pid = row.get("Product ID")
+        if not sublocation or not pid:
+            continue
+        pid = pid.strip()
+        if pid not in stock:
+            stock[pid] = {"usable_stock": 0.0, "description": row.get("Description") or ""}
+        elif not stock[pid]["description"] and row.get("Description"):
+            stock[pid]["description"] = row.get("Description")
+        if not is_usable_sublocation(sublocation):
+            continue
+        qoh = row.get("Units\nQoH")
+        if isinstance(qoh, (int, float)):
+            stock[pid]["usable_stock"] += qoh
+    return stock
+
+
+def fetch_backorder_demand() -> dict[str, dict]:
+    """Returns {product_id: {reorder_point_max, units_backorder,
+    units_on_hand_reserved}}, aggregated across every order line for
+    that product from the 'Backordered sales by order (SkD)' report.
+
+    This report has the same hierarchical/grouped structure as the main
+    Orders report (an order-header row, then product-detail rows
+    beneath it, then a "TOTAL:" footer row) — we only need the
+    product-detail rows here, so header/footer rows are simply skipped
+    rather than needing the full stateful order-context parsing.
+
+    No Origin-based filtering needed: drop-ship vendor orders (Biologix,
+    GT, etc.) never enter Finale at all, confirmed directly — so every
+    row in this report already represents real Lab Alley demand."""
+    rows = fetch_finale_report(BACKORDER_DEMAND_REPORT_URL)
+    demand: dict[str, dict] = {}
+    for row in rows:
+        pid = row.get("Product ID")
+        if not pid or pid.strip() == "TOTAL:":
+            continue
+        pid = pid.strip()
+        if pid not in demand:
+            demand[pid] = {
+                "reorder_point_max": None,
+                "units_backorder": 0,
+                "units_on_hand_reserved": 0,
+            }
+        entry = demand[pid]
+
+        reorder = row.get("DrippingSprings\nreorder point max")
+        if entry["reorder_point_max"] is None and isinstance(reorder, (int, float)):
+            entry["reorder_point_max"] = reorder
+
+        back = row.get("Units rsvd\nback order")
+        if isinstance(back, (int, float)):
+            entry["units_backorder"] += back
+
+        onhand = row.get("Units rsvd\non hand")
+        if isinstance(onhand, (int, float)):
+            entry["units_on_hand_reserved"] += onhand
+    return demand
+
+
 CORE_QUEUE_USERS = {"Warehouse": "Warehouse", "Jerry": "Freight"}
 WAREHOUSE_LOCATION_NAME = "Dripping Springs Warehouse"
 FREIGHT_LOCATION_NAME = "Dripping Springs Freight"
@@ -318,3 +439,50 @@ def replace_live_queue(rows: list[dict], pulled_at: str) -> None:
     db_rows = to_db_rows(rows, pulled_at)
     insert_in_batches(client, "live_queue", db_rows)
     print(f"Wrote {len(db_rows)} rows to Supabase 'live_queue' (pulled_at: {pulled_at})")
+
+
+def build_stock_levels() -> list[dict]:
+    """Combines usable stock (Stock Quantity by Sublocation report) with
+    backorder demand and reorder point max (Backordered sales by order
+    report) into one row per product. A product only needs to appear in
+    ONE of the two sources to show up here — e.g. a product with zero
+    usable stock anywhere still needs its backorder demand visible, and
+    a product with plenty of stock but no current backorders still
+    needs its usable-stock number visible."""
+    print("Pulling usable stock from Finale (Stock Quantity by Sublocation)...")
+    stock = fetch_usable_stock()
+    print(f"  {len(stock)} products with stock recorded somewhere")
+
+    print("Pulling backorder demand from Finale (Backordered sales by order)...")
+    demand = fetch_backorder_demand()
+    print(f"  {len(demand)} products with backorder demand")
+
+    all_pids = set(stock.keys()) | set(demand.keys())
+    rows = []
+    for pid in all_pids:
+        s = stock.get(pid, {})
+        d = demand.get(pid, {})
+        rows.append({
+            "product_id": pid,
+            "description": s.get("description", ""),
+            "usable_stock": s.get("usable_stock", 0.0),
+            "reorder_point_max": d.get("reorder_point_max"),
+            "units_backorder": d.get("units_backorder", 0),
+            "units_on_hand_reserved": d.get("units_on_hand_reserved", 0),
+        })
+    return rows
+
+
+def replace_stock_levels(rows: list[dict], pulled_at: str) -> None:
+    """Product-level stock/demand snapshot — like live_queue, this
+    represents "right now" only, so each run replaces the entire table
+    rather than appending."""
+    client = get_supabase_client()
+    client.table("stock_levels").delete().gt("id", 0).execute()
+    print("Cleared existing stock_levels rows.")
+    if not rows:
+        print("No new rows to write to stock_levels.")
+        return
+    db_rows = [{**row, "pulled_at": pulled_at} for row in rows]
+    insert_in_batches(client, "stock_levels", db_rows)
+    print(f"Wrote {len(db_rows)} rows to Supabase 'stock_levels' (pulled_at: {pulled_at})")

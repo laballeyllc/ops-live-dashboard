@@ -1,0 +1,35 @@
+name: Stock Levels Pull
+
+# Triggered externally the same way as live_queue.yml and historical.yml
+# (cron-job.org -> GitHub API -> workflow_dispatch) rather than GitHub's
+# own native schedule:, which we've already confirmed is unreliable for
+# this account. This pull is Finale-only (no ShipStation calls at all),
+# so it's fully independent of the other two workflows and safe to run
+# on its own schedule.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: stock-levels-pull
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pull_stock_levels.py
+        env:
+          FINALE_API_KEY: ${{ secrets.FINALE_API_KEY }}
+          FINALE_API_SECRET: ${{ secrets.FINALE_API_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python pull_stock_levels.py
