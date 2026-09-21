@@ -282,6 +282,107 @@
   .health-status.concerning { color: var(--alert); }
   .health-status.pending { color: var(--text-muted); font-weight: 400; font-size: 12px; }
 
+  .history-header {
+    display: flex;
+    gap: 16px;
+    align-items: stretch;
+    margin-bottom: 12px;
+  }
+
+  .history-rolling-card {
+    flex: 0 0 380px;
+  }
+
+  .history-rolling-value {
+    font-size: 40px;
+    font-weight: 700;
+    color: var(--warehouse);
+    line-height: 1.2;
+    margin: 4px 0;
+  }
+
+  .history-daypicker {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .history-picker-label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  #history-day-select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    min-width: 220px;
+  }
+
+  .history-note {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+    max-width: 900px;
+    line-height: 1.5;
+  }
+
+  #history-chart-container {
+    margin-bottom: 16px;
+  }
+
+  .history-chart-empty {
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: 40px 0;
+    text-align: center;
+  }
+
+  .prod-hours-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .prod-hours-pill.yes { background: var(--warehouse-dim); color: var(--warehouse); }
+  .prod-hours-pill.no { background: var(--panel-raised); color: var(--text-muted); }
+
+  .history-offhours-controls {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+
+  .toggle-group {
+    display: flex;
+    gap: 4px;
+  }
+
+  .toggle-btn {
+    background: var(--panel-raised);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .toggle-btn:hover { color: var(--text); }
+
+  .toggle-btn.active {
+    color: var(--warehouse);
+    border-color: var(--warehouse);
+    background: var(--warehouse-dim);
+  }
+
   .summary-card {
     background: var(--panel);
     padding: 18px 20px;
@@ -774,6 +875,7 @@
 <div class="tab-nav">
   <button class="tab-btn active" id="tab-btn-breakdown" onclick="switchTab('breakdown')">Queue Breakdown</button>
   <button class="tab-btn" id="tab-btn-strategy" onclick="switchTab('strategy')">Queue Strategy Tools</button>
+  <button class="tab-btn" id="tab-btn-history" onclick="switchTab('history')">Historical Analysis</button>
 </div>
 
 <main>
@@ -926,6 +1028,58 @@
         <tbody id="stock-builds-tbody"></tbody>
       </table>
 </div>
+    </div>
+  </div>
+
+  <div id="tab-history" class="tab-panel" style="display:none;">
+    <div class="history-header">
+      <div class="health-card history-rolling-card">
+        <div class="health-label">Today's Build % — production hours average</div>
+        <div id="history-rolling-value" class="history-rolling-value">—</div>
+        <div id="history-rolling-sub" class="health-label"></div>
+      </div>
+      <div class="history-daypicker">
+        <label for="history-day-select" class="history-picker-label">Drill into a day:</label>
+        <select id="history-day-select" onchange="renderHistoryDay(this.value)"></select>
+      </div>
+    </div>
+
+    <div class="attack-subsection">
+      <h3>Off-hours order pile-up <span class="h2-note">orders that arrived since production last clocked out — resets each shift; freezes at shift-start so it reads as "this many piled up while we were out" for the whole shift that follows</span></h3>
+      <div class="history-offhours-controls">
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="offhours-mode-raw" onclick="setOffHoursMode('raw')">Raw count</button>
+          <button class="toggle-btn" id="offhours-mode-adjusted" onclick="setOffHoursMode('adjusted')">Adjusted %</button>
+        </div>
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="offhours-gap-combined" onclick="setOffHoursGapFilter('combined')">Combined</button>
+          <button class="toggle-btn" id="offhours-gap-overnight" onclick="setOffHoursGapFilter('overnight')">Nights only</button>
+          <button class="toggle-btn" id="offhours-gap-weekend" onclick="setOffHoursGapFilter('weekend')">Weekends only</button>
+        </div>
+      </div>
+      <div id="offhours-card-body"></div>
+    </div>
+
+    <div class="history-note">Production hours: Mon–Fri, 8am–4pm Central — snapshots outside that window are shown on the chart below for context, but excluded from the average above, since Build % naturally drifts while no one's working to act on shortages.</div>
+
+    <div class="attack-subsection">
+      <h3>Selected day <span id="history-day-label" class="h2-note"></span></h3>
+      <div id="history-chart-container"></div>
+      <div class="table-scroll-wrap">
+        <table class="attack-table sticky-table">
+          <thead>
+            <tr>
+              <th>Time (Central)</th>
+              <th>Build %</th>
+              <th>Production hours?</th>
+              <th>In queue</th>
+              <th>24h+ old</th>
+              <th>48h+ overdue</th>
+            </tr>
+          </thead>
+          <tbody id="history-day-tbody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 </main>
@@ -1440,6 +1594,92 @@ function chicagoMidnightMs(dateMs, dayOffset) {
     g += err;
   }
   return g;
+}
+
+// --- Production shift window: Mon-Fri 8am-4pm Central, confirmed
+// directly. Used both for the Build Health "production hours" average
+// (site tab: Queue Breakdown) and the off-hours order pile-up tracking
+// below (site tab: Historical Analysis).
+const SHIFT_START_HOUR = 8;
+const SHIFT_END_HOUR = 16;
+
+function chicagoTimeOnDate(dayMs, hour) {
+  // Same iterative-correction technique as chicagoMidnightMs, just for
+  // an arbitrary hour on the same Chicago calendar day as dayMs rather
+  // than always midnight.
+  const parts = chicagoPartsForInstant(dayMs);
+  const guessMs = Date.UTC(+parts.year, +parts.month - 1, +parts.day, hour, 0, 0);
+  let g = guessMs;
+  for (let i = 0; i < 3; i++) {
+    const got = chicagoPartsForInstant(g);
+    const gotMs = Date.UTC(+got.year, +got.month - 1, +got.day, +got.hour, +got.minute, +got.second);
+    const err = guessMs - gotMs;
+    if (err === 0) break;
+    g += err;
+  }
+  return g;
+}
+
+function isProductionWeekday(weekday) {
+  return weekday !== "Sat" && weekday !== "Sun";
+}
+
+function isProductionHours(ms) {
+  const parts = chicagoPartsForInstant(ms);
+  if (!isProductionWeekday(parts.weekday)) return false;
+  const hour = +parts.hour;
+  return hour >= SHIFT_START_HOUR && hour < SHIFT_END_HOUR;
+}
+
+function mostRecentShiftEnd(nowMs) {
+  // Walks backward day by day (Chicago calendar) to find the most
+  // recent Mon-Fri 4pm at or before now.
+  let cursor = chicagoMidnightMs(nowMs, 0);
+  for (let i = 0; i < 14; i++) {
+    const parts = chicagoPartsForInstant(cursor);
+    if (isProductionWeekday(parts.weekday)) {
+      const shiftEnd = chicagoTimeOnDate(cursor, SHIFT_END_HOUR);
+      if (shiftEnd <= nowMs) return shiftEnd;
+    }
+    cursor = chicagoMidnightMs(cursor, -1);
+  }
+  return null;
+}
+
+function nextShiftStartAfter(afterMs) {
+  // Walks forward day by day to find the next Mon-Fri 8am strictly
+  // after afterMs.
+  let cursor = chicagoMidnightMs(afterMs, 0);
+  for (let i = 0; i < 14; i++) {
+    const parts = chicagoPartsForInstant(cursor);
+    if (isProductionWeekday(parts.weekday)) {
+      const shiftStart = chicagoTimeOnDate(cursor, SHIFT_START_HOUR);
+      if (shiftStart > afterMs) return shiftStart;
+    }
+    cursor = chicagoMidnightMs(cursor, 1);
+  }
+  return null;
+}
+
+function currentOffHoursWindow() {
+  // The off-hours order pile-up window: starts growing the moment a
+  // shift ends, freezes the instant the next shift starts (so it reads
+  // as "this many piled up while we were out" for the whole following
+  // shift), then resets to zero the next time a shift ends — confirmed
+  // directly as the intended "reset each shift" behavior.
+  const nowMs = Date.now();
+  const start = mostRecentShiftEnd(nowMs);
+  const nextStart = nextShiftStartAfter(start);
+  const end = Math.min(nowMs, nextStart);
+  return { start, end, isFrozen: nowMs >= nextStart, gapType: offHoursGapType(start, nextStart) };
+}
+
+function offHoursGapType(start, nextStart) {
+  // Tags a gap as "weekend" if it spans more than ~24h (i.e. crossed a
+  // weekend), otherwise "overnight" — used by the Nights/Weekends/
+  // Combined historical filter.
+  const hours = (nextStart - start) / 3600000;
+  return hours > 24 ? "weekend" : "overnight";
 }
 
 function businessHoursElapsed(startMs, endMs) {
@@ -2144,22 +2384,25 @@ let hasData = false;
 let activeTab = "breakdown";
 
 function updateTabVisibility() {
-  const breakdownEl = document.getElementById("tab-breakdown");
-  const strategyEl = document.getElementById("tab-strategy");
-  if (!hasData) {
-    breakdownEl.style.display = "none";
-    strategyEl.style.display = "none";
-    return;
+  const tabs = ["breakdown", "strategy", "history"];
+  for (const t of tabs) {
+    const el = document.getElementById(`tab-${t}`);
+    if (!hasData) {
+      el.style.display = "none";
+    } else {
+      el.style.display = activeTab === t ? "block" : "none";
+    }
   }
-  breakdownEl.style.display = activeTab === "breakdown" ? "block" : "none";
-  strategyEl.style.display = activeTab === "strategy" ? "block" : "none";
 }
 
 function switchTab(tab) {
   activeTab = tab;
-  document.getElementById("tab-btn-breakdown").classList.toggle("active", tab === "breakdown");
-  document.getElementById("tab-btn-strategy").classList.toggle("active", tab === "strategy");
+  const tabs = ["breakdown", "strategy", "history"];
+  for (const t of tabs) {
+    document.getElementById(`tab-btn-${t}`).classList.toggle("active", t === tab);
+  }
   updateTabVisibility();
+  if (tab === "history") renderHistoryTab();
 }
 
 function toggleSubsection(bodyId, chevronId) {
@@ -2168,6 +2411,228 @@ function toggleSubsection(bodyId, chevronId) {
   const isOpen = body.style.display !== "none";
   body.style.display = isOpen ? "none" : "block";
   chevron.classList.toggle("open", !isOpen);
+}
+
+// ---------------------------------------------------------------------
+// Historical Analysis tab
+
+function countOffHoursOrders(rows, window) {
+  // Orders currently in the actionable queue whose order_datetime falls
+  // within the given off-hours window — the "piled up while nobody was
+  // working" count.
+  const scopedRows = rows.filter(r =>
+    ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
+  );
+  const linesByOrder = new Map();
+  for (const row of scopedRows) {
+    if (!linesByOrder.has(row.order_id)) linesByOrder.set(row.order_id, []);
+    linesByOrder.get(row.order_id).push(row);
+  }
+  let count = 0;
+  for (const [oid, lines] of linesByOrder) {
+    const dt = parseChicagoNaive(lines[0].order_datetime);
+    if (dt && dt.getTime() >= window.start && dt.getTime() <= window.end) count++;
+  }
+  return count;
+}
+
+let offHoursMode = "raw"; // "raw" | "adjusted"
+let offHoursGapFilter = "combined"; // "combined" | "overnight" | "weekend"
+
+function setOffHoursMode(mode) {
+  offHoursMode = mode;
+  document.getElementById("offhours-mode-raw").classList.toggle("active", mode === "raw");
+  document.getElementById("offhours-mode-adjusted").classList.toggle("active", mode === "adjusted");
+  renderOffHoursCard();
+}
+
+function setOffHoursGapFilter(filter) {
+  offHoursGapFilter = filter;
+  document.getElementById("offhours-gap-combined").classList.toggle("active", filter === "combined");
+  document.getElementById("offhours-gap-overnight").classList.toggle("active", filter === "overnight");
+  document.getElementById("offhours-gap-weekend").classList.toggle("active", filter === "weekend");
+  renderOffHoursCard();
+}
+
+function renderOffHoursCard() {
+  const window = currentOffHoursWindow();
+  const el = document.getElementById("offhours-card-body");
+
+  // The gap filter (Nights only / Weekends only) applies to the single
+  // CURRENT live gap, which is always exactly one type — if it doesn't
+  // match the selected filter, there's nothing to show right now rather
+  // than a misleading zero.
+  if (offHoursGapFilter !== "combined" && offHoursGapFilter !== window.gapType) {
+    const actualLabel = window.gapType === "weekend" ? "a weekend" : "an overnight";
+    const filterLabel = offHoursGapFilter === "weekend" ? "a weekend" : "an overnight";
+    el.innerHTML = `<div class="bar-empty">The current gap is ${actualLabel} gap, not ${filterLabel} one — nothing to show for this filter right now.</div>`;
+    return;
+  }
+
+  const offHoursCount = countOffHoursOrders(currentRows, window);
+  const gapLabel = window.gapType === "weekend" ? "weekend" : "overnight";
+  const stateLabel = window.isFrozen ? "since production last clocked out" : "so far, and still growing";
+
+  if (offHoursMode === "raw") {
+    el.innerHTML = `
+      <div class="stat-big">${offHoursCount}</div>
+      <div class="stat-sub">order${offHoursCount === 1 ? '' : 's'} arrived during the most recent ${gapLabel} gap, ${stateLabel}</div>
+    `;
+  } else {
+    // Adjusted %: recompute the same shortage-overdue hit rate, but
+    // excluding orders that arrived in this off-hours window from both
+    // the numerator and denominator — "what would today's Build % look
+    // like if we hadn't yet counted the pile-up." Reuses
+    // buildShippingList's own blocked-order determination for
+    // consistency with the live Build Health card.
+    const shippingList = buildShippingList(currentRows);
+    let adjustedTotal = 0, adjustedShortageOverdue = 0;
+    for (const o of shippingList) {
+      const dt = parseChicagoNaive(o.orderDatetime);
+      const isOffHoursArrival = dt && dt.getTime() >= window.start && dt.getTime() <= window.end;
+      if (isOffHoursArrival) continue;
+      adjustedTotal++;
+      if (!o.isPickable && o.hours >= OVERDUE_HOURS) adjustedShortageOverdue++;
+    }
+    const adjustedHitRate = adjustedTotal > 0 ? (100 - (adjustedShortageOverdue / adjustedTotal * 100)) : 100;
+    el.innerHTML = `
+      <div class="stat-big">${adjustedHitRate.toFixed(0)}%</div>
+      <div class="stat-sub">Build % if the ${offHoursCount} order${offHoursCount === 1 ? '' : 's'} that arrived during the most recent ${gapLabel} gap weren't counted yet (${adjustedTotal} orders counted instead of ${adjustedTotal + offHoursCount})</div>
+    `;
+  }
+}
+
+function renderHistoryTab() {
+  if (!currentHealthSnapshots.length) {
+    document.getElementById("history-rolling-value").textContent = "—";
+    document.getElementById("history-rolling-sub").textContent = "Still gathering data — check back after a few production-hours pulls have logged.";
+    document.getElementById("history-day-select").innerHTML = "";
+    document.getElementById("history-chart-container").innerHTML = `<div class="history-chart-empty">No history logged yet.</div>`;
+    document.getElementById("history-day-tbody").innerHTML = "";
+    renderOffHoursCard();
+    return;
+  }
+
+  // Today's rolling average — production hours only, per Casey's
+  // confirmation this is the fair "did production perform" number,
+  // unaffected by nights/weekends nobody was working.
+  const nowMs = Date.now();
+  const todayStartMs = chicagoMidnightMs(nowMs, 0);
+  const todayProdSnapshots = currentHealthSnapshots.filter(s => {
+    const ms = new Date(s.pulled_at).getTime();
+    return ms >= todayStartMs && ms <= nowMs && isProductionHours(ms);
+  });
+  if (todayProdSnapshots.length > 0) {
+    const avg = todayProdSnapshots.reduce((sum, s) => sum + (parseFloat(s.build_hit_rate_pct) || 0), 0) / todayProdSnapshots.length;
+    document.getElementById("history-rolling-value").textContent = `${avg.toFixed(0)}%`;
+    document.getElementById("history-rolling-sub").textContent = `Averaged across ${todayProdSnapshots.length} production-hours pull${todayProdSnapshots.length === 1 ? '' : 's'} today`;
+  } else {
+    document.getElementById("history-rolling-value").textContent = "—";
+    document.getElementById("history-rolling-sub").textContent = "No production-hours snapshots logged yet today.";
+  }
+
+  // Day picker: distinct Chicago calendar dates with any logged data,
+  // most recent first.
+  const dateSet = new Set();
+  for (const s of currentHealthSnapshots) {
+    const ms = new Date(s.pulled_at).getTime();
+    const parts = chicagoPartsForInstant(ms);
+    dateSet.add(`${parts.year}-${parts.month}-${parts.day}`);
+  }
+  const dates = Array.from(dateSet).sort().reverse();
+  const select = document.getElementById("history-day-select");
+  const previousValue = select.value;
+  select.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join("");
+  const toSelect = dates.includes(previousValue) ? previousValue : dates[0];
+  select.value = toSelect;
+
+  renderOffHoursCard();
+  if (toSelect) renderHistoryDay(toSelect);
+}
+
+function renderHistoryDay(dateStr) {
+  if (!dateStr) return;
+  document.getElementById("history-day-label").textContent = `— ${dateStr}`;
+
+  const daySnapshots = currentHealthSnapshots.filter(s => {
+    const ms = new Date(s.pulled_at).getTime();
+    const parts = chicagoPartsForInstant(ms);
+    return `${parts.year}-${parts.month}-${parts.day}` === dateStr;
+  }).sort((a, b) => new Date(a.pulled_at) - new Date(b.pulled_at));
+
+  // Table
+  document.getElementById("history-day-tbody").innerHTML = daySnapshots.length ? daySnapshots.map(s => {
+    const ms = new Date(s.pulled_at).getTime();
+    const parts = chicagoPartsForInstant(ms);
+    const timeLabel = `${parts.hour}:${parts.minute}`;
+    const isProd = isProductionHours(ms);
+    return `
+      <tr>
+        <td>${timeLabel}</td>
+        <td>${s.build_hit_rate_pct != null ? s.build_hit_rate_pct + '%' : '—'}</td>
+        <td><span class="prod-hours-pill ${isProd ? 'yes' : 'no'}">${isProd ? 'Yes' : 'No'}</span></td>
+        <td>${s.queue_count ?? '—'}</td>
+        <td>${s.aged_24h_count ?? '—'}</td>
+        <td>${s.aged_48h_count ?? '—'}</td>
+      </tr>`;
+  }).join("") : `<tr><td colspan="6" class="bar-empty">No data for this day</td></tr>`;
+
+  renderHistoryChart(daySnapshots);
+}
+
+function renderHistoryChart(daySnapshots) {
+  const container = document.getElementById("history-chart-container");
+  const withPct = daySnapshots.filter(s => s.build_hit_rate_pct != null);
+  if (withPct.length < 2) {
+    container.innerHTML = `<div class="history-chart-empty">Not enough data points yet to draw a chart for this day.</div>`;
+    return;
+  }
+
+  const width = 900, height = 220, padding = 36;
+  const times = withPct.map(s => new Date(s.pulled_at).getTime());
+  const minT = Math.min(...times), maxT = Math.max(...times);
+  const tRange = Math.max(1, maxT - minT);
+
+  const xFor = t => padding + ((t - minT) / tRange) * (width - 2 * padding);
+  const yFor = pct => height - padding - (pct / 100) * (height - 2 * padding);
+
+  const points = withPct.map(s => {
+    const ms = new Date(s.pulled_at).getTime();
+    return { x: xFor(ms), y: yFor(parseFloat(s.build_hit_rate_pct)), isProd: isProductionHours(ms) };
+  });
+
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+  const dots = points.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="${p.isProd ? '#4FB0A5' : '#5A6169'}" />`).join("");
+
+  // Shade the production-hours window(s) that fall within this day, for
+  // visual context against the full day's data.
+  let shading = "";
+  const dayStart = chicagoMidnightMs(minT, 0);
+  const parts = chicagoPartsForInstant(dayStart);
+  if (isProductionWeekday(parts.weekday)) {
+    const shiftStart = chicagoTimeOnDate(dayStart, SHIFT_START_HOUR);
+    const shiftEnd = chicagoTimeOnDate(dayStart, SHIFT_END_HOUR);
+    if (shiftEnd > minT - tRange && shiftStart < maxT + tRange) {
+      const x1 = Math.max(padding, xFor(Math.max(shiftStart, minT)));
+      const x2 = Math.min(width - padding, xFor(Math.min(shiftEnd, maxT)));
+      if (x2 > x1) {
+        shading = `<rect x="${x1.toFixed(1)}" y="${padding}" width="${(x2 - x1).toFixed(1)}" height="${height - 2 * padding}" fill="#4FB0A5" opacity="0.08" />`;
+      }
+    }
+  }
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:${width}px; height:auto;">
+      ${shading}
+      <line x1="${padding}" y1="${yFor(100)}" x2="${width - padding}" y2="${yFor(100)}" stroke="#2A2E35" stroke-width="1" />
+      <line x1="${padding}" y1="${yFor(0)}" x2="${width - padding}" y2="${yFor(0)}" stroke="#2A2E35" stroke-width="1" />
+      <text x="${padding - 8}" y="${yFor(100) + 4}" fill="#8B92A0" font-size="11" text-anchor="end">100%</text>
+      <text x="${padding - 8}" y="${yFor(0) + 4}" fill="#8B92A0" font-size="11" text-anchor="end">0%</text>
+      <path d="${linePath}" fill="none" stroke="#4FB0A5" stroke-width="2" />
+      ${dots}
+    </svg>
+    <div class="h2-note" style="margin-top:6px;">Teal dots = production hours · grey dots = outside production hours · shaded band = today's 8am–4pm window</div>
+  `;
 }
 
 function formatLastUpdated(pulledAtIso) {
@@ -2183,6 +2648,7 @@ function formatLastUpdated(pulledAtIso) {
 }
 
 let currentStockLevels = [];
+let currentHealthSnapshots = [];
 
 async function refresh() {
   try {
@@ -2202,6 +2668,17 @@ async function refresh() {
     } catch (stockErr) {
       console.error("stock_levels fetch failed (non-fatal):", stockErr);
       currentStockLevels = [];
+    }
+
+    // Health snapshot history — same non-fatal pattern. Powers the
+    // Historical Analysis tab; the rest of the dashboard works fine
+    // without it.
+    try {
+      const healthResult = await client.from("health_snapshots").select("*").order("pulled_at", { ascending: true });
+      currentHealthSnapshots = healthResult.data || [];
+    } catch (healthErr) {
+      console.error("health_snapshots fetch failed (non-fatal):", healthErr);
+      currentHealthSnapshots = [];
     }
 
     const dot = document.getElementById("last-updated-dot");
@@ -2240,6 +2717,7 @@ async function refresh() {
     renderHeldBreakdown(held.reason_breakdown);
 
     renderAttackSection(currentRows);
+    if (activeTab === "history") renderHistoryTab();
   } catch (err) {
     console.error(err);
     document.getElementById("last-updated-text").textContent = "Connection error — check console";
