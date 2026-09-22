@@ -1,28 +1,41 @@
 // netlify/functions/order-flow.js
 //
 // On-demand "Orders In / Orders Out" for a given Central-time date
-// range. Calls ShipStation directly (never touches Supabase) — this is
-// the ONE place in the whole project that talks to ShipStation from
+// range — a direct measure of demand vs. performance, week over week.
+// Calls ShipStation directly (never touches Supabase) — this is the
+// ONE place in the whole project that talks to ShipStation from
 // outside the GitHub Actions pipeline, which is why it needs its own
-// credentials set directly in Netlify (Site configuration -> Environment
-// variables), separate from the GitHub Actions secrets used everywhere
-// else.
+// credentials set directly in Netlify (Project configuration ->
+// Environment variables), separate from the GitHub Actions secrets
+// used everywhere else.
 //
 // Scoping, confirmed directly with Casey:
 //   - Orders In:  orders whose orderDate falls in the range, Warehouse/
 //     Freight Ship-From-Location only (same classification used
 //     everywhere else on the dashboard), EXCLUDING orders whose current
 //     status is "cancelled".
-//   - Orders Out: shipments whose shipDate falls in the range, same
-//     Warehouse/Freight scoping, EXCLUDING voided shipments. De-duped
-//     by order number, since a split order can generate more than one
-//     shipment record.
+//   - Orders Out: orders whose own shipDate falls in the range, same
+//     Warehouse/Freight scoping — regardless of when the order was
+//     originally placed, and regardless of fulfillment method.
 //
-// IMPORTANT: this file has NOT been tested against a real ShipStation
-// account or a real Netlify deployment — I have no live credentials or
-// deployment access to verify it myself. Please treat the first real
-// run as a genuine test, the same way we've tested everything else in
-// this project against real data before trusting it.
+// CONFIRMED BUG, FIXED (2026-09-22): the first version of this function
+// counted Orders Out via the /shipments endpoint, which only covers
+// orders shipped through ShipStation's own label system. Checked
+// directly against a real 2-week window: 644 of 1415 "shipped" orders
+// (46%) had NO matching /shipments record at all — every single one
+// checked was externallyFulfilled: true, with its OWN shipDate field
+// set directly on the order, never touching /shipments. This wasn't a
+// timing artifact (a wider date range never closed the gap) — it was a
+// structural blind spot. Fixed by reading shipDate directly off each
+// order instead. Since ShipStation's /orders endpoint has no shipDate
+// filter, this fetches shipped orders by a wide modifyDate window (an
+// order's last modification is essentially always the moment it ships)
+// and then filters precisely by each order's own shipDate client-side.
+//
+// IMPORTANT: this file has been logically verified against real
+// ShipStation data pulled via a local diagnostic script, but the
+// function ITSELF has not yet been re-tested end-to-end after this
+// rewrite — please treat the next real run as a genuine test.
 
 const SHIPSTATION_BASE = "https://ssapi.shipstation.com";
 const WAREHOUSE_LOCATION_NAME = "Dripping Springs Warehouse";
@@ -69,11 +82,11 @@ async function getWarehouseIds() {
   return { warehouseId, freightId };
 }
 
-async function listAllOrders(orderDateStart, orderDateEnd) {
+async function listAllOrders(params) {
   let page = 1;
   const all = [];
   while (true) {
-    const data = await ssGet("/orders", { orderDateStart, orderDateEnd, page, pageSize: 500 });
+    const data = await ssGet("/orders", { ...params, page, pageSize: 500 });
     all.push(...(data.orders || []));
     if (page >= (data.pages || 1)) break;
     page++;
@@ -81,18 +94,10 @@ async function listAllOrders(orderDateStart, orderDateEnd) {
   return all;
 }
 
-async function listAllShipments(shipDateStart, shipDateEnd) {
-  let page = 1;
-  const all = [];
-  while (true) {
-    const data = await ssGet("/shipments", {
-      shipDateStart, shipDateEnd, page, pageSize: 500, includeShipmentItems: "false",
-    });
-    all.push(...(data.shipments || []));
-    if (page >= (data.pages || 1)) break;
-    page++;
-  }
-  return all;
+function shiftDate(dateStr, days) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 exports.handler = async (event) => {
@@ -111,21 +116,38 @@ exports.handler = async (event) => {
     // are documented as plain, un-suffixed strings interpreted in the
     // account's own configured timezone — confirmed directly earlier in
     // this project that this account's timezone is Central.
-    const orderDateStart = `${startDate} 00:00:00`;
-    const orderDateEnd = `${endDate} 23:59:59`;
+    const dayStart = `${startDate} 00:00:00`;
+    const dayEnd = `${endDate} 23:59:59`;
 
     const { warehouseId, freightId } = await getWarehouseIds();
     const validWarehouseIds = new Set([warehouseId, freightId]);
 
-    const orders = await listAllOrders(orderDateStart, orderDateEnd);
-    const ordersIn = orders.filter(o => {
+    // Orders In: orders PLACED in the window.
+    const placedOrders = await listAllOrders({ orderDateStart: dayStart, orderDateEnd: dayEnd });
+    const ordersIn = placedOrders.filter(o => {
       const whId = (o.advancedOptions || {}).warehouseId;
       return validWarehouseIds.has(whId) && o.orderStatus !== "cancelled";
     });
 
-    const shipments = await listAllShipments(orderDateStart, orderDateEnd);
-    const scopedShipments = shipments.filter(s => validWarehouseIds.has(s.warehouseId) && !s.voided);
-    const distinctOrdersOut = new Set(scopedShipments.map(s => s.orderNumber));
+    // Orders Out: orders whose own shipDate falls in the window,
+    // regardless of when they were placed or how they were fulfilled.
+    // /orders has no shipDate filter, so this fetches shipped orders
+    // via a wide modifyDate net (a day of buffer on each side, since an
+    // order's last modification is essentially always the moment it
+    // ships) and then filters precisely by shipDate client-side.
+    const modifyDateStart = `${shiftDate(startDate, -3)} 00:00:00`;
+    const modifyDateEnd = `${shiftDate(endDate, 3)} 23:59:59`;
+    const recentlyModifiedShipped = await listAllOrders({
+      orderStatus: "shipped",
+      modifyDateStart,
+      modifyDateEnd,
+    });
+    const ordersOut = recentlyModifiedShipped.filter(o => {
+      const whId = (o.advancedOptions || {}).warehouseId;
+      if (!validWarehouseIds.has(whId)) return false;
+      const shipDate = (o.shipDate || "").slice(0, 10); // "YYYY-MM-DD"
+      return shipDate >= startDate && shipDate <= endDate;
+    });
 
     return {
       statusCode: 200,
@@ -134,7 +156,7 @@ exports.handler = async (event) => {
         startDate,
         endDate,
         ordersIn: ordersIn.length,
-        ordersOut: distinctOrdersOut.size,
+        ordersOut: ordersOut.length,
       }),
     };
   } catch (err) {
