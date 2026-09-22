@@ -346,6 +346,22 @@
     margin: 32px 0 24px;
   }
 
+  .history-range-controls {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 14px;
+  }
+
+  .history-range-controls input[type="date"] {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-left: 6px;
+  }
+
   #history-chart-container {
     margin-bottom: 16px;
   }
@@ -1111,6 +1127,32 @@
           </thead>
           <tbody id="history-day-tbody"></tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="history-divider"></div>
+
+    <h3 class="history-section-title">Orders In / Orders Out</h3>
+    <div class="history-note">Live lookup direct from ShipStation, for any date range — not logged history, so this always reflects current reality (e.g. an order cancelled after the fact is excluded even if it was placed days ago). Warehouse/Freight only, same scoping as the rest of this dashboard.</div>
+    <div class="history-range-controls">
+      <label class="history-picker-label">From <input type="date" id="orderflow-start"></label>
+      <label class="history-picker-label">To <input type="date" id="orderflow-end"></label>
+      <button class="toggle-btn" id="orderflow-fetch-btn" onclick="fetchOrderFlow()">Fetch</button>
+    </div>
+    <div id="orderflow-result" class="history-header"></div>
+
+    <div class="history-divider"></div>
+
+    <h3 class="history-section-title">Date Range Average</h3>
+    <div class="history-range-controls">
+      <label class="history-picker-label">From <input type="date" id="history-range-start" onchange="renderHistoryRange()"></label>
+      <label class="history-picker-label">To <input type="date" id="history-range-end" onchange="renderHistoryRange()"></label>
+    </div>
+    <div class="history-header">
+      <div class="health-card history-rolling-card">
+        <div class="health-label">Average Build % — production hours, selected range</div>
+        <div id="history-range-value" class="history-rolling-value">—</div>
+        <div id="history-range-sub" class="health-label"></div>
       </div>
     </div>
   </div>
@@ -2542,6 +2584,8 @@ function renderHistoryTab() {
     document.getElementById("history-day-select").innerHTML = "";
     document.getElementById("history-chart-container").innerHTML = `<div class="history-chart-empty">No history logged yet.</div>`;
     document.getElementById("history-day-tbody").innerHTML = "";
+    document.getElementById("history-range-value").textContent = "—";
+    document.getElementById("history-range-sub").textContent = "";
     renderOffHoursCard();
     return;
   }
@@ -2579,8 +2623,96 @@ function renderHistoryTab() {
   const toSelect = dates.includes(previousValue) ? previousValue : dates[0];
   select.value = toSelect;
 
+  // Date range picker: default to the full span of available history,
+  // only on first load (don't clobber a range the user already picked).
+  const startInput = document.getElementById("history-range-start");
+  const endInput = document.getElementById("history-range-end");
+  if (!startInput.value && !endInput.value && dates.length) {
+    startInput.value = dates[dates.length - 1];
+    endInput.value = dates[0];
+  }
+
   renderOffHoursCard();
   if (toSelect) renderHistoryDay(toSelect);
+  renderHistoryRange();
+}
+
+async function fetchOrderFlow() {
+  const startDate = document.getElementById("orderflow-start").value;
+  const endDate = document.getElementById("orderflow-end").value;
+  const resultEl = document.getElementById("orderflow-result");
+  const btn = document.getElementById("orderflow-fetch-btn");
+
+  if (!startDate || !endDate) {
+    resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Pick a start and end date first.</div></div>`;
+    return;
+  }
+  if (startDate > endDate) {
+    resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Start date must be before end date.</div></div>`;
+    return;
+  }
+
+  btn.disabled = true;
+  resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Fetching live from ShipStation — this can take a few seconds for wider date ranges...</div></div>`;
+
+  try {
+    const res = await fetch(`/.netlify/functions/order-flow?startDate=${startDate}&endDate=${endDate}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+    resultEl.innerHTML = `
+      <div class="health-card">
+        <div class="health-label">Orders In</div>
+        <div class="history-rolling-value">${data.ordersIn}</div>
+        <div class="health-label">Placed ${startDate} to ${endDate}, Warehouse/Freight, not cancelled</div>
+      </div>
+      <div class="health-card">
+        <div class="health-label">Orders Out</div>
+        <div class="history-rolling-value">${data.ordersOut}</div>
+        <div class="health-label">Shipped ${startDate} to ${endDate}, Warehouse/Freight, not voided</div>
+      </div>
+    `;
+  } catch (err) {
+    resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Error: ${err.message}</div></div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderHistoryRange() {
+  const startStr = document.getElementById("history-range-start").value;
+  const endStr = document.getElementById("history-range-end").value;
+  const valueEl = document.getElementById("history-range-value");
+  const subEl = document.getElementById("history-range-sub");
+
+  if (!startStr || !endStr) {
+    valueEl.textContent = "—";
+    subEl.textContent = "Pick a start and end date.";
+    return;
+  }
+  if (startStr > endStr) {
+    valueEl.textContent = "—";
+    subEl.textContent = "Start date must be before end date.";
+    return;
+  }
+
+  const inRange = currentHealthSnapshots.filter(s => {
+    const ms = new Date(s.pulled_at).getTime();
+    if (!isProductionHours(ms) || s.build_hit_rate_pct == null) return false;
+    const parts = chicagoPartsForInstant(ms);
+    const dateStr = `${parts.year}-${parts.month}-${parts.day}`;
+    return dateStr >= startStr && dateStr <= endStr;
+  });
+
+  if (inRange.length === 0) {
+    valueEl.textContent = "—";
+    subEl.textContent = `No production-hours snapshots logged between ${startStr} and ${endStr}.`;
+    return;
+  }
+
+  const avg = inRange.reduce((sum, s) => sum + parseFloat(s.build_hit_rate_pct), 0) / inRange.length;
+  valueEl.textContent = `${avg.toFixed(0)}%`;
+  subEl.textContent = `Averaged across ${inRange.length} production-hours pull${inRange.length === 1 ? '' : 's'}, ${startStr} to ${endStr}`;
 }
 
 function renderHistoryDay(dateStr) {
