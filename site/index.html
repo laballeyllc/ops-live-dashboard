@@ -331,6 +331,57 @@
     line-height: 1.5;
   }
 
+  .briefing-section h3 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .briefing-content {
+    max-width: 900px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+
+  .briefing-content h4 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--warehouse);
+    margin: 18px 0 8px;
+  }
+
+  .briefing-content h4:first-child {
+    margin-top: 0;
+  }
+
+  .briefing-content p {
+    margin: 0 0 10px;
+  }
+
+  .briefing-content strong {
+    color: var(--text);
+  }
+
+  .briefing-content .briefing-urgent {
+    color: var(--alert);
+    font-weight: 600;
+  }
+
+  .briefing-content .briefing-good {
+    color: var(--warehouse);
+    font-weight: 600;
+  }
+
+  .briefing-content ul {
+    margin: 0 0 10px;
+    padding-left: 20px;
+  }
+
+  .briefing-content li {
+    margin-bottom: 4px;
+  }
+
   .history-section-title {
     font-size: 15px;
     font-weight: 600;
@@ -965,6 +1016,13 @@
   </div>
 
   <div id="tab-strategy" class="tab-panel" style="display:none;">
+    <div class="attack-subsection briefing-section">
+      <h3>Daily Briefing <button class="toggle-btn" onclick="renderDailyBriefing()">Regenerate</button></h3>
+      <div class="h2-note" style="margin-bottom:14px;">Generated automatically from the current queue — rule-based, not AI-written, so the same data always produces the same read. Click Regenerate to refresh without reloading the page.</div>
+      <div id="briefing-shipping-content" class="briefing-content"></div>
+      <div id="briefing-production-content" class="briefing-content"></div>
+    </div>
+
     <div class="strategy-sticky-header">
       <div class="subtab-nav">
         <button class="subtab-btn active" id="subtab-btn-shipping" onclick="switchSubtab('shipping')">Shipping List</button>
@@ -2244,6 +2302,9 @@ function buildStockBuilds(shippingList) {
 }
 
 let currentShippingList = [];
+let currentShippingListForBriefing = [];
+let currentProductionListForBriefing = [];
+let currentStockBuildsListForBriefing = [];
 let shippingShowBlocked = false;
 
 function renderShippingList(list) {
@@ -2348,6 +2409,153 @@ function renderStockBuilds(list) {
   `).join("") : `<tr><td colspan="7" class="bar-empty">Nothing needs proactive restocking right now</td></tr>`;
 }
 
+// ---------------------------------------------------------------------
+// Daily Briefing — rule-based (not AI-generated): deterministic, so the
+// same underlying queue data always produces the same read. Built
+// entirely from the same buildShippingList/buildProductionList/
+// buildStockBuilds output already powering the rest of Attack the
+// Queue, so it can't drift from what those lists actually show.
+
+function pluralize(n, singular, plural) {
+  return n === 1 ? singular : (plural || singular + "s");
+}
+
+function nameList(items, max, formatter) {
+  const named = items.slice(0, max).map(formatter);
+  const remainder = items.length - named.length;
+  return named.join(", ") + (remainder > 0 ? `, and ${remainder} more` : "");
+}
+
+function buildShippingBriefing(shippingList) {
+  const pickable = shippingList.filter(o => o.isPickable);
+  const blocked = shippingList.filter(o => !o.isPickable);
+  const overdue = shippingList.filter(o => o.hours >= OVERDUE_HOURS);
+  const atRisk = shippingList.filter(o => o.hours >= AT_RISK_HOURS && o.hours < OVERDUE_HOURS);
+  const channelBlocked = blocked.filter(o => o.isChannelPriority);
+  const channelPickable = pickable.filter(o => o.isChannelPriority);
+
+  let html = "<h4>Shipping</h4>";
+
+  if (shippingList.length === 0) {
+    html += "<p><span class=\"briefing-good\">The queue is empty — nothing to ship right now.</span></p>";
+    return html;
+  }
+
+  html += `<p>${pickable.length} of ${shippingList.length} orders in the queue can be picked and shipped right now. ${blocked.length} ${pluralize(blocked.length, "is", "are")} blocked, waiting on production.</p>`;
+
+  if (overdue.length > 0) {
+    const sorted = [...overdue].sort((a, b) => b.hours - a.hours);
+    html += `<p><span class="briefing-urgent">${overdue.length} ${pluralize(overdue.length, "order is", "orders are")} already past the 48-hour goal</span>: ${nameList(sorted, 5, o => `${o.orderId} (${formatAge(o.hours)}${o.isPickable ? "" : ", blocked"})`)}.</p>`;
+  } else {
+    html += "<p><span class=\"briefing-good\">No orders are currently past the 48-hour goal.</span></p>";
+  }
+  if (atRisk.length > 0) {
+    html += `<p>${atRisk.length} more ${pluralize(atRisk.length, "order is", "orders are")} between 24 and 48 hours old and will miss the goal if not addressed today.</p>`;
+  }
+
+  if (channelBlocked.length > 0) {
+    html += `<p><span class="briefing-urgent">${channelBlocked.length} Amazon/Walmart ${pluralize(channelBlocked.length, "order is", "orders are")} currently blocked</span>: ${nameList(channelBlocked, 5, o => o.orderId)}. These carry marketplace SLA risk regardless of age — prioritize clearing their blockers first.</p>`;
+  }
+
+  const pickableWithItems = pickable.filter(o => o.items.length > 0);
+  const notSameLot = pickableWithItems.filter(o => !o.items.every(it => it.sameLot));
+  if (notSameLot.length > 0 && pickableWithItems.length > 0) {
+    const pct = Math.round((notSameLot.length / pickableWithItems.length) * 100);
+    html += `<p>${notSameLot.length} pickable ${pluralize(notSameLot.length, "order", "orders")} (${pct}%) will need stock pulled from more than one lot to complete — a packing-efficiency note, not a blocker.</p>`;
+  }
+
+  html += "<h4>Recommended pick order</h4><ul>";
+  if (channelBlocked.length > 0) {
+    html += `<li>Clear blockers for the ${channelBlocked.length} blocked Amazon/Walmart ${pluralize(channelBlocked.length, "order", "orders")} first — see Production below.</li>`;
+  }
+  if (channelPickable.length > 0) {
+    html += `<li>Pick the ${channelPickable.length} Amazon/Walmart ${pluralize(channelPickable.length, "order", "orders")} that ${pluralize(channelPickable.length, "is", "are")} already ready.</li>`;
+  }
+  const remainingPickable = pickable.length - channelPickable.length;
+  if (remainingPickable > 0) {
+    html += `<li>Then work the remaining ${remainingPickable} pickable ${pluralize(remainingPickable, "order", "orders")} oldest-first (already sorted this way on the Shipping List).</li>`;
+  }
+  if (pickable.length === 0) {
+    html += "<li>Nothing is pickable right now — see Production below for what's blocking the queue.</li>";
+  }
+  html += "</ul>";
+
+  return html;
+}
+
+function buildProductionBriefing(productionList, stockBuildsList) {
+  let html = "<h4>Production</h4>";
+
+  const criticalStockBuilds = stockBuildsList.filter(p => p.pctOfMax < 25);
+  const totalOrdersBlocked = productionList.reduce((sum, p) => sum + p.ordersBlocked, 0);
+
+  if (productionList.length === 0 && stockBuildsList.length === 0) {
+    html += "<p><span class=\"briefing-good\">Nothing needs building right now — no order-blocking shortages, and every chemical is above its reorder point.</span></p>";
+    return html;
+  }
+
+  html += `<p>${productionList.length} ${pluralize(productionList.length, "chemical is", "chemicals are")} actively blocking ${totalOrdersBlocked} ${pluralize(totalOrdersBlocked, "order", "orders")} in the queue. ${stockBuildsList.length} more ${pluralize(stockBuildsList.length, "chemical is", "chemicals are")} below its reorder point with no current order demand, ${criticalStockBuilds.length} of which ${pluralize(criticalStockBuilds.length, "is", "are")} critically low.</p>`;
+
+  if (productionList.length > 0) {
+    const top = productionList.slice(0, 5);
+    html += "<p><strong>Highest-impact builds right now:</strong></p><ul>";
+    for (const p of top) {
+      const priorityNote = p.isChannelPriority ? " <span class=\"briefing-urgent\">(blocking Amazon/Walmart)</span>" : "";
+      html += `<li>${p.sku} — build ${p.buildQty.toFixed(0)}, blocking ${p.ordersBlocked} ${pluralize(p.ordersBlocked, "order", "orders")}, oldest waiting ${formatAge(p.maxHours)}${priorityNote}</li>`;
+    }
+    html += "</ul>";
+  } else {
+    html += "<p><span class=\"briefing-good\">Nothing is currently blocking a live order.</span></p>";
+  }
+
+  // Family batching: same clustering logic already used to order the
+  // Production List and Stock Builds tables (see skuFamily/
+  // clusterByFamily) — surfaced explicitly here since it's a pattern
+  // that isn't obvious just from scanning the tables row by row.
+  const combined = [
+    ...productionList.map(p => ({ sku: p.sku })),
+    ...stockBuildsList.map(p => ({ sku: p.sku })),
+  ];
+  const familyGroups = new Map();
+  for (const item of combined) {
+    const fam = skuFamily(item.sku);
+    if (!familyGroups.has(fam)) familyGroups.set(fam, []);
+    familyGroups.get(fam).push(item.sku);
+  }
+  const multiMemberFamilies = [...familyGroups.entries()].filter(([fam, skus]) => skus.length > 1);
+  if (multiMemberFamilies.length > 0) {
+    html += "<p><strong>Batching opportunities</strong> — these share a parent chemical, so handle together from the same bulk container:</p><ul>";
+    for (const [fam, skus] of multiMemberFamilies.slice(0, 5)) {
+      html += `<li>${fam}: ${skus.join(", ")}</li>`;
+    }
+    html += "</ul>";
+  }
+
+  if (criticalStockBuilds.length > 0) {
+    html += `<p><span class="briefing-urgent">${criticalStockBuilds.length} ${pluralize(criticalStockBuilds.length, "chemical is", "chemicals are")} critically low</span> (under 25% of reorder point, no current order demand yet — but will start blocking new orders soon if not addressed): ${nameList(criticalStockBuilds, 8, p => `${p.sku} (${p.pctOfMax.toFixed(0)}% of max)`)}.</p>`;
+  }
+
+  html += "<h4>Recommended build order</h4><ul>";
+  if (productionList.length > 0) {
+    html += `<li>Order-blocking builds first — these directly unblock ${totalOrdersBlocked} waiting ${pluralize(totalOrdersBlocked, "order", "orders")}. Start with the ones blocking Amazon/Walmart or the oldest orders, listed above.</li>`;
+  }
+  if (criticalStockBuilds.length > 0) {
+    html += `<li>Treat the ${criticalStockBuilds.length} critical Stock ${pluralize(criticalStockBuilds.length, "Build", "Builds")} (under 25%) with near-equal urgency — they'll become order-blockers themselves soon otherwise.</li>`;
+  }
+  const remainingStockBuilds = stockBuildsList.length - criticalStockBuilds.length;
+  if (remainingStockBuilds > 0) {
+    html += `<li>Work the remaining ${remainingStockBuilds} proactive Stock ${pluralize(remainingStockBuilds, "Build", "Builds")} as time allows, lowest-%-of-max first (already sorted this way).</li>`;
+  }
+  html += "</ul>";
+
+  return html;
+}
+
+function renderDailyBriefing() {
+  document.getElementById("briefing-shipping-content").innerHTML = buildShippingBriefing(currentShippingListForBriefing);
+  document.getElementById("briefing-production-content").innerHTML = buildProductionBriefing(currentProductionListForBriefing, currentStockBuildsListForBriefing);
+}
+
 function renderAttackSection(rows) {
   const scopedRows = rows.filter(r =>
     ["Warehouse", "Freight", "Both"].includes(r.core_queue) && r.shipment_status !== "on_hold"
@@ -2369,9 +2577,17 @@ function renderAttackSection(rows) {
 
   const shippingList = buildShippingList(rows);
   const productionList = buildProductionList(shippingList);
+  const stockBuildsList = buildStockBuilds(shippingList);
   renderShippingList(shippingList);
   renderProductionList(productionList);
-  renderStockBuilds(buildStockBuilds(shippingList));
+  renderStockBuilds(stockBuildsList);
+
+  // Stored so the Daily Briefing can regenerate on demand (button
+  // click) without recomputing everything from scratch.
+  currentShippingListForBriefing = shippingList;
+  currentProductionListForBriefing = productionList;
+  currentStockBuildsListForBriefing = stockBuildsList;
+  renderDailyBriefing();
 
   const pickableCount = shippingList.filter(o => o.isPickable).length;
   const buildsNeededCount = productionList.length; // Production List is already per unique SKU
