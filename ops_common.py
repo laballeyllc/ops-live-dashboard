@@ -564,6 +564,83 @@ def business_hours_since(naive_str: str) -> float:
     return business_hours_elapsed(start, datetime.now(timezone.utc))
 
 
+# --- Off-hours order pile-up tracking (mirrors currentOffHoursWindow() /
+# countOffHoursOrders() in site/index.html). Production shift: Mon-Fri,
+# 8am-4pm Central, confirmed directly. ---
+
+SHIFT_START_HOUR = 8
+SHIFT_END_HOUR = 16
+
+
+def _chicago_time_on_date(day_dt: datetime, hour: int) -> datetime:
+    """Given any UTC instant, returns hour:00 Chicago time on that SAME
+    Chicago calendar day, as a true UTC instant. Python's zoneinfo
+    resolves this correctly natively (no iterative correction needed,
+    unlike the JS version)."""
+    chicago_day = day_dt.astimezone(CHICAGO_TZ)
+    naive = chicago_day.replace(hour=hour, minute=0, second=0, microsecond=0, tzinfo=None)
+    return naive.replace(tzinfo=CHICAGO_TZ).astimezone(timezone.utc)
+
+
+def _is_production_weekday(dt: datetime) -> bool:
+    return dt.astimezone(CHICAGO_TZ).weekday() < 5  # Mon=0 ... Fri=4
+
+
+def _most_recent_shift_end(now: datetime) -> datetime:
+    cursor = now
+    for _ in range(14):
+        if _is_production_weekday(cursor):
+            shift_end = _chicago_time_on_date(cursor, SHIFT_END_HOUR)
+            if shift_end <= now:
+                return shift_end
+        cursor = cursor - timedelta(days=1)
+    return None
+
+
+def _next_shift_start_after(after: datetime) -> datetime:
+    cursor = after
+    for _ in range(14):
+        if _is_production_weekday(cursor):
+            shift_start = _chicago_time_on_date(cursor, SHIFT_START_HOUR)
+            if shift_start > after:
+                return shift_start
+        cursor = cursor + timedelta(days=1)
+    return None
+
+
+def current_off_hours_window(now: datetime = None) -> dict:
+    """The off-hours order pile-up window: starts growing the moment a
+    shift ends, freezes the instant the next shift starts, resets at
+    the next shift-end. Mirrors currentOffHoursWindow() exactly —
+    tested against the same scenarios as that JS version."""
+    now = now or datetime.now(timezone.utc)
+    start = _most_recent_shift_end(now)
+    next_start = _next_shift_start_after(start)
+    end = min(now, next_start)
+    gap_hours = (next_start - start).total_seconds() / 3600.0
+    gap_type = "weekend" if gap_hours > 24 else "overnight"
+    return {"start": start, "end": end, "gap_type": gap_type}
+
+
+def count_off_hours_orders(rows: list[dict], window: dict) -> int:
+    """Orders currently in the actionable queue whose Order datetime
+    falls within the given off-hours window."""
+    scoped = [
+        r for r in rows
+        if r.get("Core Queue") in ("Warehouse", "Freight", "Both")
+        and r.get("Shipment status") != "on_hold"
+    ]
+    by_order: dict[str, list[dict]] = {}
+    for r in scoped:
+        by_order.setdefault(r["Order ID"], []).append(r)
+    count = 0
+    for oid, lines in by_order.items():
+        dt = parse_chicago_naive(lines[0].get("Order datetime"))
+        if dt and window["start"] <= dt <= window["end"]:
+            count += 1
+    return count
+
+
 def _is_case_sku(sku: str) -> bool:
     """All Lab Alley case SKUs end in 'CS', nothing ever follows it —
     confirmed directly. Mirrors isCaseSku() in site/index.html."""
@@ -705,9 +782,16 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
     working = _build_working_stock(stock)
 
     queue_count = len(by_order)
+    warehouse_count = 0
+    freight_count = 0
+    both_count = 0
     total_units = 0
     aged_24h = 0
     aged_48h = 0
+    bucket_0_24h = 0
+    bucket_24_48h = 0
+    bucket_48_72h = 0
+    bucket_72h_plus = 0
     shortage_overdue_count = 0
     blocked_by_sku: dict[str, dict] = {}
 
@@ -715,12 +799,29 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
         first = lines[0]
         total_units += int(first.get("Item Quantity") or 0)
 
+        core_queue = first.get("Core Queue")
+        if core_queue == "Warehouse":
+            warehouse_count += 1
+        elif core_queue == "Freight":
+            freight_count += 1
+        elif core_queue == "Both":
+            both_count += 1
+
         hours = business_hours_since(first.get("Order datetime"))
         is_overdue = hours >= 48
         if is_overdue:
             aged_48h += 1
         elif hours >= 24:
             aged_24h += 1
+
+        if hours < 24:
+            bucket_0_24h += 1
+        elif hours < 48:
+            bucket_24_48h += 1
+        elif hours < 72:
+            bucket_48_72h += 1
+        else:
+            bucket_72h_plus += 1
 
         try:
             ss_items = json.loads(first.get("SS Items") or "[]")
@@ -751,6 +852,23 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
         if is_overdue and order_is_blocked:
             shortage_overdue_count += 1
 
+    # Held/Compliance count — on_hold orders, distinct by Order ID,
+    # from the FULL (unscoped) row set, same definition as the
+    # dashboard's own Held/Compliance panel.
+    held_order_ids = {
+        r["Order ID"] for r in rows if r.get("Shipment status") == "on_hold"
+    }
+    held_count = len(held_order_ids)
+
+    # Off-hours order pile-up, logged at snapshot time so this builds
+    # real history going forward (can't be reconstructed retroactively
+    # for days before this was added, since live_queue is fully replaced
+    # every pull and doesn't keep an order-by-order history of its own).
+    now = datetime.now(timezone.utc)
+    off_hours_window = current_off_hours_window(now)
+    off_hours_count = count_off_hours_orders(rows, off_hours_window)
+    off_hours_gap_type = off_hours_window["gap_type"]
+
     # Kept as a secondary, still-useful figure (total build burden in
     # units) — no longer what drives the Build Health card's status,
     # which uses shortage_overdue_count/queue_count instead.
@@ -771,6 +889,16 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
 
     return {
         "queue_count": queue_count,
+        "warehouse_count": warehouse_count,
+        "freight_count": freight_count,
+        "both_count": both_count,
+        "held_count": held_count,
+        "off_hours_count": off_hours_count,
+        "off_hours_gap_type": off_hours_gap_type,
+        "bucket_0_24h": bucket_0_24h,
+        "bucket_24_48h": bucket_24_48h,
+        "bucket_48_72h": bucket_48_72h,
+        "bucket_72h_plus": bucket_72h_plus,
         "total_units": total_units,
         "build_units": round(build_units),
         "build_pct": round(build_units_pct, 1),

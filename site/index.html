@@ -331,6 +331,21 @@
     line-height: 1.5;
   }
 
+  .history-section-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .history-divider {
+    border-top: 1px solid var(--border);
+    margin: 32px 0 24px;
+  }
+
   #history-chart-container {
     margin-bottom: 16px;
   }
@@ -1032,20 +1047,17 @@
   </div>
 
   <div id="tab-history" class="tab-panel" style="display:none;">
+    <h3 class="history-section-title">Right Now</h3>
     <div class="history-header">
       <div class="health-card history-rolling-card">
         <div class="health-label">Today's Build % — production hours average</div>
         <div id="history-rolling-value" class="history-rolling-value">—</div>
         <div id="history-rolling-sub" class="health-label"></div>
       </div>
-      <div class="history-daypicker">
-        <label for="history-day-select" class="history-picker-label">Drill into a day:</label>
-        <select id="history-day-select" onchange="renderHistoryDay(this.value)"></select>
-      </div>
     </div>
 
     <div class="attack-subsection">
-      <h3>Off-hours order pile-up <span class="h2-note">orders that arrived since production last clocked out — resets each shift; freezes at shift-start so it reads as "this many piled up while we were out" for the whole shift that follows</span></h3>
+      <h3>Off-hours order pile-up <span class="h2-note">orders that arrived since production last clocked out — resets each shift; freezes at shift-start so it reads as "this many piled up while we were out" for the whole shift that follows; always reflects the CURRENT live gap, not the day selected below</span></h3>
       <div class="history-offhours-controls">
         <div class="toggle-group">
           <button class="toggle-btn active" id="offhours-mode-raw" onclick="setOffHoursMode('raw')">Raw count</button>
@@ -1060,10 +1072,25 @@
       <div id="offhours-card-body"></div>
     </div>
 
+    <div class="history-divider"></div>
+
+    <h3 class="history-section-title">
+      Selected Day
+      <select id="history-day-select" onchange="renderHistoryDay(this.value)"></select>
+    </h3>
+
+    <div class="history-header">
+      <div class="health-card history-rolling-card">
+        <div class="health-label">Selected day's Build % — production hours average</div>
+        <div id="history-day-avg-value" class="history-rolling-value">—</div>
+        <div id="history-day-avg-sub" class="health-label"></div>
+      </div>
+    </div>
+
     <div class="history-note">Production hours: Mon–Fri, 8am–4pm Central — snapshots outside that window are shown on the chart below for context, but excluded from the average above, since Build % naturally drifts while no one's working to act on shortages.</div>
 
     <div class="attack-subsection">
-      <h3>Selected day <span id="history-day-label" class="h2-note"></span></h3>
+      <h3>Chart <span id="history-day-label" class="h2-note"></span></h3>
       <div id="history-chart-container"></div>
       <div class="table-scroll-wrap">
         <table class="attack-table sticky-table">
@@ -1072,9 +1099,14 @@
               <th>Time (Central)</th>
               <th>Build %</th>
               <th>Production hours?</th>
-              <th>In queue</th>
-              <th>24h+ old</th>
-              <th>48h+ overdue</th>
+              <th>Warehouse</th>
+              <th>Freight</th>
+              <th>Held</th>
+              <th>0-24h</th>
+              <th>24-48h</th>
+              <th>48-72h</th>
+              <th>72h+</th>
+              <th>Off-hours pile-up</th>
             </tr>
           </thead>
           <tbody id="history-day-tbody"></tbody>
@@ -1083,6 +1115,7 @@
     </div>
   </div>
 </main>
+
 
 <script>
 // --- Fill these in from Supabase: Project Settings -> API -----------
@@ -2560,22 +2593,42 @@ function renderHistoryDay(dateStr) {
     return `${parts.year}-${parts.month}-${parts.day}` === dateStr;
   }).sort((a, b) => new Date(a.pulled_at) - new Date(b.pulled_at));
 
-  // Table
+  // Selected day's own production-hours average — same definition as
+  // "Right Now"'s rolling average, just scoped to whichever day is
+  // picked instead of always today.
+  const dayProdSnapshots = daySnapshots.filter(s => isProductionHours(new Date(s.pulled_at).getTime()) && s.build_hit_rate_pct != null);
+  if (dayProdSnapshots.length > 0) {
+    const avg = dayProdSnapshots.reduce((sum, s) => sum + parseFloat(s.build_hit_rate_pct), 0) / dayProdSnapshots.length;
+    document.getElementById("history-day-avg-value").textContent = `${avg.toFixed(0)}%`;
+    document.getElementById("history-day-avg-sub").textContent = `Averaged across ${dayProdSnapshots.length} production-hours pull${dayProdSnapshots.length === 1 ? '' : 's'} on ${dateStr}`;
+  } else {
+    document.getElementById("history-day-avg-value").textContent = "—";
+    document.getElementById("history-day-avg-sub").textContent = `No production-hours snapshots logged for ${dateStr}.`;
+  }
+
+  // Table — new volume/aging/held/off-hours columns fall back to "—"
+  // gracefully for snapshots logged before these fields existed.
   document.getElementById("history-day-tbody").innerHTML = daySnapshots.length ? daySnapshots.map(s => {
     const ms = new Date(s.pulled_at).getTime();
     const parts = chicagoPartsForInstant(ms);
     const timeLabel = `${parts.hour}:${parts.minute}`;
     const isProd = isProductionHours(ms);
+    const dash = v => (v === null || v === undefined) ? '—' : v;
     return `
       <tr>
         <td>${timeLabel}</td>
         <td>${s.build_hit_rate_pct != null ? s.build_hit_rate_pct + '%' : '—'}</td>
         <td><span class="prod-hours-pill ${isProd ? 'yes' : 'no'}">${isProd ? 'Yes' : 'No'}</span></td>
-        <td>${s.queue_count ?? '—'}</td>
-        <td>${s.aged_24h_count ?? '—'}</td>
-        <td>${s.aged_48h_count ?? '—'}</td>
+        <td>${dash(s.warehouse_count)}</td>
+        <td>${dash(s.freight_count)}</td>
+        <td>${dash(s.held_count)}</td>
+        <td>${dash(s.bucket_0_24h)}</td>
+        <td>${dash(s.bucket_24_48h)}</td>
+        <td>${dash(s.bucket_48_72h)}</td>
+        <td>${dash(s.bucket_72h_plus)}</td>
+        <td>${dash(s.off_hours_count)}${s.off_hours_gap_type ? ` (${s.off_hours_gap_type})` : ''}</td>
       </tr>`;
-  }).join("") : `<tr><td colspan="6" class="bar-empty">No data for this day</td></tr>`;
+  }).join("") : `<tr><td colspan="11" class="bar-empty">No data for this day</td></tr>`;
 
   renderHistoryChart(daySnapshots);
 }
@@ -2593,8 +2646,20 @@ function renderHistoryChart(daySnapshots) {
   const minT = Math.min(...times), maxT = Math.max(...times);
   const tRange = Math.max(1, maxT - minT);
 
+  // Auto-scale the Y axis to the day's actual range (with padding),
+  // rather than always forcing the full 0-100% span — Build % rarely
+  // dips low, so a fixed 0-100 axis flattened real variation into what
+  // looked like a straight line.
+  const pctValues = withPct.map(s => parseFloat(s.build_hit_rate_pct));
+  const rawMin = Math.min(...pctValues), rawMax = Math.max(...pctValues);
+  const span = Math.max(1, rawMax - rawMin);
+  const pad = Math.max(2, span * 0.15);
+  const yMin = Math.max(0, Math.floor(rawMin - pad));
+  const yMax = Math.min(100, Math.ceil(rawMax + pad));
+  const yRange = Math.max(1, yMax - yMin);
+
   const xFor = t => padding + ((t - minT) / tRange) * (width - 2 * padding);
-  const yFor = pct => height - padding - (pct / 100) * (height - 2 * padding);
+  const yFor = pct => height - padding - ((pct - yMin) / yRange) * (height - 2 * padding);
 
   const points = withPct.map(s => {
     const ms = new Date(s.pulled_at).getTime();
@@ -2624,10 +2689,10 @@ function renderHistoryChart(daySnapshots) {
   container.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:${width}px; height:auto;">
       ${shading}
-      <line x1="${padding}" y1="${yFor(100)}" x2="${width - padding}" y2="${yFor(100)}" stroke="#2A2E35" stroke-width="1" />
-      <line x1="${padding}" y1="${yFor(0)}" x2="${width - padding}" y2="${yFor(0)}" stroke="#2A2E35" stroke-width="1" />
-      <text x="${padding - 8}" y="${yFor(100) + 4}" fill="#8B92A0" font-size="11" text-anchor="end">100%</text>
-      <text x="${padding - 8}" y="${yFor(0) + 4}" fill="#8B92A0" font-size="11" text-anchor="end">0%</text>
+      <line x1="${padding}" y1="${yFor(yMax)}" x2="${width - padding}" y2="${yFor(yMax)}" stroke="#2A2E35" stroke-width="1" />
+      <line x1="${padding}" y1="${yFor(yMin)}" x2="${width - padding}" y2="${yFor(yMin)}" stroke="#2A2E35" stroke-width="1" />
+      <text x="${padding - 8}" y="${yFor(yMax) + 4}" fill="#8B92A0" font-size="11" text-anchor="end">${yMax}%</text>
+      <text x="${padding - 8}" y="${yFor(yMin) + 4}" fill="#8B92A0" font-size="11" text-anchor="end">${yMin}%</text>
       <path d="${linePath}" fill="none" stroke="#4FB0A5" stroke-width="2" />
       ${dots}
     </svg>
