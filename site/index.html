@@ -796,6 +796,22 @@
     flex-shrink: 0;
   }
 
+  .chart-tooltip {
+    position: fixed;
+    display: none;
+    background: var(--panel-raised);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 10px;
+    border-radius: 6px;
+    pointer-events: none;
+    z-index: 1000;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+
   .stat-big {
     font-size: 44px;
     font-weight: 600;
@@ -1017,10 +1033,16 @@
 
   <div id="tab-strategy" class="tab-panel" style="display:none;">
     <div class="attack-subsection briefing-section">
-      <h3>Daily Briefing <button class="toggle-btn" onclick="renderDailyBriefing()">Regenerate</button></h3>
-      <div class="h2-note" style="margin-bottom:14px;">Generated automatically from the current queue — rule-based, not AI-written, so the same data always produces the same read. Click Regenerate to refresh without reloading the page.</div>
-      <div id="briefing-shipping-content" class="briefing-content"></div>
-      <div id="briefing-production-content" class="briefing-content"></div>
+      <h3 class="subsection-toggle" onclick="toggleSubsection('briefing-body', 'briefing-chevron')">
+        <span class="chevron open" id="briefing-chevron">&#9656;</span>
+        Daily Briefing
+        <button class="toggle-btn" onclick="event.stopPropagation(); renderDailyBriefing();">Regenerate</button>
+      </h3>
+      <div id="briefing-body">
+        <div class="h2-note" style="margin-bottom:14px;">Generated automatically from the current queue — rule-based, not AI-written, so the same data always produces the same read. Click Regenerate to refresh without reloading the page.</div>
+        <div id="briefing-shipping-content" class="briefing-content"></div>
+        <div id="briefing-production-content" class="briefing-content"></div>
+      </div>
     </div>
 
     <div class="strategy-sticky-header">
@@ -1498,7 +1520,8 @@ function renderPieChart(elId, pcts) {
     const pct = count / total * 100;
     const sweep = pct / 100 * 360;
     const color = colors[i];
-    paths += `<path d="${pieSlicePath(cx, cy, r, angle, angle + sweep)}" fill="${color}" />`;
+    const safeLabel = String(label).replace(/'/g, "\\'");
+    paths += `<path d="${pieSlicePath(cx, cy, r, angle, angle + sweep)}" fill="${color}" onmousemove="showChartTooltip(event, '${safeLabel}', ${pct.toFixed(1)})" onmouseleave="hideChartTooltip()" />`;
     legend += `
       <div class="pie-legend-row">
         <span class="pie-swatch" style="background:${color}"></span>
@@ -1514,6 +1537,25 @@ function renderPieChart(elId, pcts) {
       <div class="pie-legend">${legend}</div>
     </div>
   ` : `<div class="bar-empty">No data</div>`;
+}
+
+function showChartTooltip(evt, label, pct) {
+  let tip = document.getElementById("chart-tooltip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "chart-tooltip";
+    tip.className = "chart-tooltip";
+    document.body.appendChild(tip);
+  }
+  tip.textContent = `${label} — ${pct}%`;
+  tip.style.left = `${evt.clientX + 14}px`;
+  tip.style.top = `${evt.clientY + 14}px`;
+  tip.style.display = "block";
+}
+
+function hideChartTooltip() {
+  const tip = document.getElementById("chart-tooltip");
+  if (tip) tip.style.display = "none";
 }
 
 function notSetLinesFor(field) {
