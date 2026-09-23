@@ -3180,6 +3180,17 @@ async function refresh() {
   }
 }
 
+// Optional deep-link: ?tab=strategy or ?tab=history opens directly to
+// that tab instead of the Queue Breakdown default. Added so the ops
+// dashboard's "Ops Outlook" tab can embed this page pointed straight
+// at Queue Strategy Tools without the extra click. Anyone loading this
+// page normally (no query param) is completely unaffected.
+const deepLinkParams = new URLSearchParams(window.location.search);
+const deepLinkTab = deepLinkParams.get('tab');
+if (deepLinkTab === 'strategy' || deepLinkTab === 'history') {
+  switchTab(deepLinkTab);
+}
+
 refresh();
 setInterval(refresh, 30000);
 </script>
