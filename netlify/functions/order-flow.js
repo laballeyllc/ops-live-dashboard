@@ -171,7 +171,12 @@ exports.handler = async (event) => {
       if (!validWarehouseIds.has(whId)) return false;
       const shipDate = (o.shipDate || "").slice(0, 10); // "YYYY-MM-DD"
       if (shipDate < startDate || shipDate > endDate) return false;
-      if (workingHoursOnly && !isWithinWorkingHours(o.shipDate)) return false;
+      // shipDate is a date-only field per ShipStation's own docs ("regarded
+      // strictly as a date") — it has no reliable time-of-day component, so
+      // an hour-of-day check against it always fails. modifyDate is what
+      // actually carries a real timestamp, and per the note above, an
+      // order's last modification is essentially always the moment it ships.
+      if (workingHoursOnly && !isWithinWorkingHours(o.modifyDate)) return false;
       return true;
     });
 
@@ -196,6 +201,7 @@ exports.handler = async (event) => {
           debug: {
             sampleOrderDates: placedOrders.slice(0, 5).map(o => o.orderDate),
             sampleShipDates: recentlyModifiedShipped.slice(0, 5).map(o => o.shipDate),
+            sampleModifyDates: recentlyModifiedShipped.slice(0, 5).map(o => o.modifyDate),
             ordersInWithoutHourFilter: placedOrders.filter(o => {
               const whId = (o.advancedOptions || {}).warehouseId;
               return validWarehouseIds.has(whId) && o.orderStatus !== "cancelled";
