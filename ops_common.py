@@ -317,12 +317,20 @@ def fetch_finale_report(url: str) -> list[dict]:
     Finale's server sometimes drops the connection mid-response while
     generating this large a report — "Remote end closed connection
     without response" — which has nothing to do with our request being
-    wrong, just Finale occasionally timing out on a slow, heavy report).
-    Does NOT retry on actual HTTP error responses (4xx/5xx with a real
-    response) — those indicate a genuine problem worth seeing immediately
-    rather than masking with a retry.
+    wrong, just Finale occasionally timing out on a slow, heavy report)
+    AND on 429 (rate limited) / 5xx (Finale's own server error) HTTP
+    responses — confirmed in production (2026-09-22): Live Queue Pull and
+    Stock Levels Pull running at the same scheduled time both hit
+    Finale's reports API in close succession and got 429'd. The bug: a
+    429 raises HTTPError, which wasn't in the retried exception list at
+    all — so it fell straight through as an immediate crash regardless
+    of how many attempts were configured, even after two earlier
+    ConnectionErrors on the SAME run had already been retried correctly.
+    Does NOT retry on other 4xx responses (401, 400, etc.) — those
+    indicate a genuine problem (bad credentials, bad request) worth
+    surfacing immediately rather than masking with a retry.
     """
-    max_attempts = 3
+    max_attempts = 4
     for attempt in range(1, max_attempts + 1):
         try:
             resp = requests.get(url, auth=(FINALE_API_KEY, FINALE_API_SECRET), timeout=180)
@@ -331,8 +339,21 @@ def fetch_finale_report(url: str) -> list[dict]:
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             if attempt == max_attempts:
                 raise
-            wait = 10 * attempt  # 10s, then 20s
+            wait = 10 * attempt  # 10s, 20s, 30s
             print(f"  Finale request failed ({e.__class__.__name__}), "
+                  f"retrying in {wait}s (attempt {attempt}/{max_attempts})...")
+            time.sleep(wait)
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status != 429 and not (status is not None and 500 <= status < 600):
+                raise  # a real problem (bad credentials, bad request, etc.) — surface it immediately
+            if attempt == max_attempts:
+                raise
+            retry_after = None
+            if e.response is not None:
+                retry_after = e.response.headers.get("Retry-After")
+            wait = int(retry_after) if retry_after and retry_after.isdigit() else 30 * attempt  # 30s, 60s, 90s
+            print(f"  Finale request failed (HTTP {status}), "
                   f"retrying in {wait}s (attempt {attempt}/{max_attempts})...")
             time.sleep(wait)
 
