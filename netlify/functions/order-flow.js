@@ -137,11 +137,22 @@ exports.handler = async (event) => {
     const dayStart = `${startDate} 00:00:00`;
     const dayEnd = `${endDate} 23:59:59`;
 
-    const { warehouseId, freightId } = await getWarehouseIds();
+    // These three ShipStation calls don't depend on each other's results
+    // (only the filtering below needs all three) — running them
+    // concurrently instead of one after another cuts this invocation's
+    // total latency roughly to whichever single call is slowest, instead
+    // of the sum of all three. That matters directly for staying under
+    // Netlify's function execution time limit.
+    const modifyDateStart = `${shiftDate(startDate, -3)} 00:00:00`;
+    const modifyDateEnd = `${shiftDate(endDate, 3)} 23:59:59`;
+    const [{ warehouseId, freightId }, placedOrders, recentlyModifiedShipped] = await Promise.all([
+      getWarehouseIds(),
+      listAllOrders({ orderDateStart: dayStart, orderDateEnd: dayEnd }),
+      listAllOrders({ orderStatus: "shipped", modifyDateStart, modifyDateEnd }),
+    ]);
     const validWarehouseIds = new Set([warehouseId, freightId]);
 
     // Orders In: orders PLACED in the window.
-    const placedOrders = await listAllOrders({ orderDateStart: dayStart, orderDateEnd: dayEnd });
     const ordersIn = placedOrders.filter(o => {
       const whId = (o.advancedOptions || {}).warehouseId;
       if (!validWarehouseIds.has(whId) || o.orderStatus === "cancelled") return false;
@@ -155,13 +166,6 @@ exports.handler = async (event) => {
     // via a wide modifyDate net (a day of buffer on each side, since an
     // order's last modification is essentially always the moment it
     // ships) and then filters precisely by shipDate client-side.
-    const modifyDateStart = `${shiftDate(startDate, -3)} 00:00:00`;
-    const modifyDateEnd = `${shiftDate(endDate, 3)} 23:59:59`;
-    const recentlyModifiedShipped = await listAllOrders({
-      orderStatus: "shipped",
-      modifyDateStart,
-      modifyDateEnd,
-    });
     const ordersOut = recentlyModifiedShipped.filter(o => {
       const whId = (o.advancedOptions || {}).warehouseId;
       if (!validWarehouseIds.has(whId)) return false;
