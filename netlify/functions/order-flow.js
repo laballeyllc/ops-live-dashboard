@@ -184,6 +184,30 @@ exports.handler = async (event) => {
         workingHoursOnly,
         ordersIn: ordersIn.length,
         ordersOut: ordersOut.length,
+        // Diagnostic only, included whenever ?debug=true is passed: a few raw
+        // timestamps straight from ShipStation's response, before any of this
+        // function's own timezone assumptions are applied, plus what the
+        // in/out counts would be with the working-hours filter turned off for
+        // comparison. This exists specifically to verify (rather than assume)
+        // what timezone ShipStation's orderDate/shipDate fields are actually
+        // in, since that assumption is unconfirmed and this function's
+        // working-hours filtering depends entirely on it being correct.
+        ...(event.queryStringParameters && event.queryStringParameters.debug === 'true' ? {
+          debug: {
+            sampleOrderDates: placedOrders.slice(0, 5).map(o => o.orderDate),
+            sampleShipDates: recentlyModifiedShipped.slice(0, 5).map(o => o.shipDate),
+            ordersInWithoutHourFilter: placedOrders.filter(o => {
+              const whId = (o.advancedOptions || {}).warehouseId;
+              return validWarehouseIds.has(whId) && o.orderStatus !== "cancelled";
+            }).length,
+            ordersOutWithoutHourFilter: recentlyModifiedShipped.filter(o => {
+              const whId = (o.advancedOptions || {}).warehouseId;
+              if (!validWarehouseIds.has(whId)) return false;
+              const shipDate = (o.shipDate || "").slice(0, 10);
+              return shipDate >= startDate && shipDate <= endDate;
+            }).length,
+          }
+        } : {}),
       }),
     };
   } catch (err) {
