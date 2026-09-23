@@ -100,21 +100,60 @@ function shiftDate(dateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
-// Treats the timestamp as a plain Central-time string, consistent with
-// how the rest of this function already treats ShipStation's date
-// fields (see the Central-time note above) — no UTC conversion, just
-// reading the date/time components as given. Matches the same
-// Mon-Fri 8am-4pm Central production window used elsewhere on the
-// Live Queue dashboard for "off-hours order pile-up".
-function isWithinWorkingHours(timestampStr) {
-  if (!timestampStr) return false;
-  const [datePart, timePart] = String(timestampStr).split(/[T ]/);
-  if (!datePart || !timePart) return false;
-  const d = new Date(datePart + "T00:00:00Z");
-  const dayOfWeek = d.getUTCDay(); // 0=Sun, 6=Sat
-  if (dayOfWeek === 0 || dayOfWeek === 6) return false;
-  const hour = parseInt(timePart.slice(0, 2), 10);
-  return hour >= 8 && hour < 16;
+function partsForInstant(dateMs, timeZone) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+  const parts = {};
+  for (const p of fmt.formatToParts(new Date(dateMs))) parts[p.type] = p.value;
+  return parts;
+}
+
+function parseShipStationNaive(naiveStr) {
+  // Parses a raw timestamp string exactly as ShipStation's API returns
+  // it — these are ALWAYS Pacific time, regardless of account settings.
+  // CONFIRMED BUG, FIXED (2026-09-23): verified directly against a real
+  // order (raw createDate 15:12:58 matched ShipStation's own UI showing
+  // 17:12 Central, an exact 2-hour offset, confirmed to the second).
+  // This function was originally missing entirely here — hourOf() used
+  // to read the raw hour digits directly, assuming (wrongly) that the
+  // string was already Central time. Mirrors parseShipStationNaive in
+  // site/index.html and parse_shipstation_naive in ops_common.py.
+  const m = (naiveStr || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const wantY = +m[1], wantMo = +m[2], wantD = +m[3], wantH = +m[4], wantMi = +m[5], wantS = +m[6];
+  const wantMs = Date.UTC(wantY, wantMo - 1, wantD, wantH, wantMi, wantS);
+
+  let guessMs = wantMs;
+  for (let i = 0; i < 3; i++) {
+    const got = partsForInstant(guessMs, "America/Los_Angeles");
+    const gotMs = Date.UTC(+got.year, +got.month - 1, +got.day, +got.hour, +got.minute, +got.second);
+    const errorMs = wantMs - gotMs;
+    if (errorMs === 0) break;
+    guessMs += errorMs;
+  }
+  return guessMs;
+}
+
+function hourOf(dateTimeStr) {
+  // The hour to bucket by is the real CENTRAL hour (where the warehouse
+  // actually is, same as everywhere else on the dashboard) — parse the
+  // raw Pacific string to the correct instant, then read its Central
+  // hour, rather than reading the raw (Pacific) hour digits directly.
+  const instantMs = parseShipStationNaive(dateTimeStr);
+  if (instantMs === null) return null;
+  const centralParts = partsForInstant(instantMs, "America/Chicago");
+  const hour = parseInt(centralParts.hour, 10);
+  return Number.isNaN(hour) ? null : hour;
+}
+
+function countDaysInRange(startDate, endDate) {
+  const start = new Date(startDate + "T00:00:00Z");
+  const end = new Date(endDate + "T00:00:00Z");
+  return Math.round((end - start) / (24 * 3600 * 1000)) + 1;
 }
 
 exports.handler = async (event) => {
@@ -124,11 +163,10 @@ exports.handler = async (event) => {
   };
 
   try {
-    const { startDate, endDate, workingHoursOnly: workingHoursOnlyRaw } = event.queryStringParameters || {};
+    const { startDate, endDate } = event.queryStringParameters || {};
     if (!startDate || !endDate) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: "startDate and endDate are required, as YYYY-MM-DD (Central time calendar dates)." }) };
     }
-    const workingHoursOnly = workingHoursOnlyRaw === "true";
 
     // Central-time calendar day boundaries. ShipStation's date filters
     // are documented as plain, un-suffixed strings interpreted in the
@@ -137,27 +175,14 @@ exports.handler = async (event) => {
     const dayStart = `${startDate} 00:00:00`;
     const dayEnd = `${endDate} 23:59:59`;
 
-    // These three ShipStation calls don't depend on each other's results
-    // (only the filtering below needs all three) — running them
-    // concurrently instead of one after another cuts this invocation's
-    // total latency roughly to whichever single call is slowest, instead
-    // of the sum of all three. That matters directly for staying under
-    // Netlify's function execution time limit.
-    const modifyDateStart = `${shiftDate(startDate, -3)} 00:00:00`;
-    const modifyDateEnd = `${shiftDate(endDate, 3)} 23:59:59`;
-    const [{ warehouseId, freightId }, placedOrders, recentlyModifiedShipped] = await Promise.all([
-      getWarehouseIds(),
-      listAllOrders({ orderDateStart: dayStart, orderDateEnd: dayEnd }),
-      listAllOrders({ orderStatus: "shipped", modifyDateStart, modifyDateEnd }),
-    ]);
+    const { warehouseId, freightId } = await getWarehouseIds();
     const validWarehouseIds = new Set([warehouseId, freightId]);
 
     // Orders In: orders PLACED in the window.
+    const placedOrders = await listAllOrders({ orderDateStart: dayStart, orderDateEnd: dayEnd });
     const ordersIn = placedOrders.filter(o => {
       const whId = (o.advancedOptions || {}).warehouseId;
-      if (!validWarehouseIds.has(whId) || o.orderStatus === "cancelled") return false;
-      if (workingHoursOnly && !isWithinWorkingHours(o.orderDate)) return false;
-      return true;
+      return validWarehouseIds.has(whId) && o.orderStatus !== "cancelled";
     });
 
     // Orders Out: orders whose own shipDate falls in the window,
@@ -166,19 +191,43 @@ exports.handler = async (event) => {
     // via a wide modifyDate net (a day of buffer on each side, since an
     // order's last modification is essentially always the moment it
     // ships) and then filters precisely by shipDate client-side.
+    const modifyDateStart = `${shiftDate(startDate, -3)} 00:00:00`;
+    const modifyDateEnd = `${shiftDate(endDate, 3)} 23:59:59`;
+    const recentlyModifiedShipped = await listAllOrders({
+      orderStatus: "shipped",
+      modifyDateStart,
+      modifyDateEnd,
+    });
     const ordersOut = recentlyModifiedShipped.filter(o => {
       const whId = (o.advancedOptions || {}).warehouseId;
       if (!validWarehouseIds.has(whId)) return false;
       const shipDate = (o.shipDate || "").slice(0, 10); // "YYYY-MM-DD"
-      if (shipDate < startDate || shipDate > endDate) return false;
-      // shipDate is a date-only field per ShipStation's own docs ("regarded
-      // strictly as a date") — it has no reliable time-of-day component, so
-      // an hour-of-day check against it always fails. modifyDate is what
-      // actually carries a real timestamp, and per the note above, an
-      // order's last modification is essentially always the moment it ships.
-      if (workingHoursOnly && !isWithinWorkingHours(o.modifyDate)) return false;
-      return true;
+      return shipDate >= startDate && shipDate <= endDate;
     });
+
+    // Hourly breakdown, for the dashboard's hourly chart (single-day
+    // mode shows these totals as-is; range mode divides by the number
+    // of days to get an average — the frontend's job, not this
+    // function's, so this always returns the same shape either way).
+    // Orders In uses orderDate directly (a real timestamp). Orders Out
+    // has no real ship TIME anywhere in ShipStation's data model
+    // (shipDate is date-only, confirmed directly against every real
+    // example pulled this project, including externally-fulfilled
+    // orders) — modifyDate is the closest available proxy, per Casey's
+    // own understanding that an order's last modification is
+    // essentially the moment it ships. This is an approximation, and
+    // the frontend must label it as such.
+    const hourlyIn = new Array(24).fill(0);
+    for (const o of ordersIn) {
+      const h = hourOf(o.orderDate);
+      if (h !== null) hourlyIn[h]++;
+    }
+    const hourlyOut = new Array(24).fill(0);
+    for (const o of ordersOut) {
+      const h = hourOf(o.modifyDate);
+      if (h !== null) hourlyOut[h]++;
+    }
+    const dayCount = countDaysInRange(startDate, endDate);
 
     return {
       statusCode: 200,
@@ -186,34 +235,11 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         startDate,
         endDate,
-        workingHoursOnly,
+        dayCount,
         ordersIn: ordersIn.length,
         ordersOut: ordersOut.length,
-        // Diagnostic only, included whenever ?debug=true is passed: a few raw
-        // timestamps straight from ShipStation's response, before any of this
-        // function's own timezone assumptions are applied, plus what the
-        // in/out counts would be with the working-hours filter turned off for
-        // comparison. This exists specifically to verify (rather than assume)
-        // what timezone ShipStation's orderDate/shipDate fields are actually
-        // in, since that assumption is unconfirmed and this function's
-        // working-hours filtering depends entirely on it being correct.
-        ...(event.queryStringParameters && event.queryStringParameters.debug === 'true' ? {
-          debug: {
-            sampleOrderDates: placedOrders.slice(0, 5).map(o => o.orderDate),
-            sampleShipDates: recentlyModifiedShipped.slice(0, 5).map(o => o.shipDate),
-            sampleModifyDates: recentlyModifiedShipped.slice(0, 5).map(o => o.modifyDate),
-            ordersInWithoutHourFilter: placedOrders.filter(o => {
-              const whId = (o.advancedOptions || {}).warehouseId;
-              return validWarehouseIds.has(whId) && o.orderStatus !== "cancelled";
-            }).length,
-            ordersOutWithoutHourFilter: recentlyModifiedShipped.filter(o => {
-              const whId = (o.advancedOptions || {}).warehouseId;
-              if (!validWarehouseIds.has(whId)) return false;
-              const shipDate = (o.shipDate || "").slice(0, 10);
-              return shipDate >= startDate && shipDate <= endDate;
-            }).length,
-          }
-        } : {}),
+        hourlyIn,
+        hourlyOut,
       }),
     };
   } catch (err) {

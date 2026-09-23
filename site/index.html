@@ -459,6 +459,12 @@
 
   .toggle-btn:hover { color: var(--text); }
 
+  .toggle-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .toggle-btn:disabled:hover { color: var(--text-muted); }
+
   .toggle-btn.active {
     color: var(--warehouse);
     border-color: var(--warehouse);
@@ -1221,6 +1227,18 @@
     </div>
     <div id="orderflow-result" class="history-header"></div>
 
+    <div id="orderflow-hourly-section" style="display:none;">
+      <div class="history-offhours-controls">
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="orderflow-hourly-single" onclick="setOrderFlowHourlyMode('single')">Single day</button>
+          <button class="toggle-btn" id="orderflow-hourly-range" onclick="setOrderFlowHourlyMode('range')">Over time (avg by hour)</button>
+        </div>
+      </div>
+      <div id="orderflow-hourly-title" class="h2-note" style="margin-bottom:8px;"></div>
+      <div id="orderflow-hourly-chart"></div>
+      <div class="history-note" style="margin-top:8px;">Orders In uses each order's real timestamp. Orders Out has no true ship-time anywhere in ShipStation's data (confirmed directly — shipDate is date-only, even for externally-fulfilled orders) — hours shown are approximate, based on each order's last update, which is usually very close to when it actually shipped.</div>
+    </div>
+
     <div class="history-divider"></div>
 
     <h3 class="history-section-title">Date Range Average</h3>
@@ -1246,7 +1264,7 @@
 // only grants it SELECT, nothing else). Never put the service_role key
 // here; that one belongs only in GitHub Actions Secrets.
 const SUPABASE_URL = "https://pdflsmequzgpeuodnxyg.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_PUzGqmBUePaYAEunZxbBmg_1MlLrl1k";
+const SUPABASE_ANON_KEY = "sb_publishable_tjW6I_5dKqtWBR5WdbmZYA_ZEosJN88";
 // ----------------------------------------------------------------------
 
 const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1738,7 +1756,38 @@ function chicagoPartsForInstant(dateMs) {
   return parts;
 }
 
-function parseChicagoNaive(naiveStr) {
+function pacificPartsForInstant(dateMs) {
+  // Used ONLY for parsing ShipStation's own raw timestamp strings (see
+  // parseShipStationNaive below) — NOT for any display or business-hours
+  // logic, which correctly stays Central (the warehouse's real
+  // location). CONFIRMED BUG, FIXED (2026-09-23): ShipStation's v1 API
+  // returns every timestamp in fixed US Pacific time regardless of the
+  // account's configured timezone — verified directly against a real
+  // order (raw createDate 15:12:58 matched ShipStation's own UI showing
+  // 17:12 Central, an exact 2-hour offset, confirmed to the second).
+  // Before this fix, every order's raw timestamp was incorrectly parsed
+  // AS IF it were already Central time, which silently overstated every
+  // order's age by up to 2 hours — pushing orders past the 24h/48h SLA
+  // thresholds earlier than they truly should have, project-wide.
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false, weekday: 'short'
+  });
+  const parts = {};
+  for (const p of fmt.formatToParts(new Date(dateMs))) parts[p.type] = p.value;
+  return parts;
+}
+
+function parseShipStationNaive(naiveStr) {
+  // Parses a raw timestamp string exactly as ShipStation's API returns
+  // it (e.g. order_datetime) — these are ALWAYS Pacific time, regardless
+  // of account settings (see pacificPartsForInstant for how this was
+  // confirmed). Returns the correct real-world instant; everything
+  // downstream (business-hours math, the production shift window, etc.)
+  // correctly converts that instant to Central time from there, since
+  // that's where the warehouse actually is.
   const m = (naiveStr || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
   if (!m) return null;
   const wantY = +m[1], wantMo = +m[2], wantD = +m[3], wantH = +m[4], wantMi = +m[5], wantS = +m[6];
@@ -1748,7 +1797,7 @@ function parseChicagoNaive(naiveStr) {
   // 3 iterations always converges, even right at a DST transition edge
   // (each iteration's error is at most one offset-change, i.e. 1 hour).
   for (let i = 0; i < 3; i++) {
-    const got = chicagoPartsForInstant(guessMs);
+    const got = pacificPartsForInstant(guessMs);
     const gotMs = Date.UTC(+got.year, +got.month - 1, +got.day, +got.hour, +got.minute, +got.second);
     const errorMs = wantMs - gotMs;
     if (errorMs === 0) break;
@@ -1875,7 +1924,7 @@ function businessHoursElapsed(startMs, endMs) {
 }
 
 function businessHoursSinceOrder(orderDatetimeStr) {
-  const orderMs = parseChicagoNaive(orderDatetimeStr);
+  const orderMs = parseShipStationNaive(orderDatetimeStr);
   if (!orderMs) return 0;
   return businessHoursElapsed(orderMs.getTime(), Date.now());
 }
@@ -2763,7 +2812,7 @@ function countOffHoursOrders(rows, window) {
   }
   let count = 0;
   for (const [oid, lines] of linesByOrder) {
-    const dt = parseChicagoNaive(lines[0].order_datetime);
+    const dt = parseShipStationNaive(lines[0].order_datetime);
     if (dt && dt.getTime() >= window.start && dt.getTime() <= window.end) count++;
   }
   return count;
@@ -2821,7 +2870,7 @@ function renderOffHoursCard() {
     const shippingList = buildShippingList(currentRows);
     let adjustedTotal = 0, adjustedShortageOverdue = 0;
     for (const o of shippingList) {
-      const dt = parseChicagoNaive(o.orderDatetime);
+      const dt = parseShipStationNaive(o.orderDatetime);
       const isOffHoursArrival = dt && dt.getTime() >= window.start && dt.getTime() <= window.end;
       if (isOffHoursArrival) continue;
       adjustedTotal++;
@@ -2895,28 +2944,37 @@ function renderHistoryTab() {
   renderHistoryRange();
 }
 
+let currentOrderFlowData = null;
+let orderFlowHourlyMode = "single";
+
 async function fetchOrderFlow() {
   const startDate = document.getElementById("orderflow-start").value;
   const endDate = document.getElementById("orderflow-end").value;
   const resultEl = document.getElementById("orderflow-result");
   const btn = document.getElementById("orderflow-fetch-btn");
+  const hourlySection = document.getElementById("orderflow-hourly-section");
 
   if (!startDate || !endDate) {
     resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Pick a start and end date first.</div></div>`;
+    hourlySection.style.display = "none";
     return;
   }
   if (startDate > endDate) {
     resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Start date must be before end date.</div></div>`;
+    hourlySection.style.display = "none";
     return;
   }
 
   btn.disabled = true;
   resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Fetching live from ShipStation — this can take a few seconds for wider date ranges...</div></div>`;
+  hourlySection.style.display = "none";
 
   try {
     const res = await fetch(`/.netlify/functions/order-flow?startDate=${startDate}&endDate=${endDate}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+    currentOrderFlowData = data;
 
     resultEl.innerHTML = `
       <div class="health-card">
@@ -2930,11 +2988,68 @@ async function fetchOrderFlow() {
         <div class="health-label">Shipped ${startDate} to ${endDate}, Warehouse/Freight, not voided</div>
       </div>
     `;
+
+    hourlySection.style.display = "block";
+    const isSingleDay = startDate === endDate;
+    const singleBtn = document.getElementById("orderflow-hourly-single");
+    singleBtn.disabled = !isSingleDay;
+    singleBtn.title = isSingleDay ? "" : "Fetch a single day (From = To) to see its exact hourly trace.";
+    setOrderFlowHourlyMode(isSingleDay ? "single" : "range");
   } catch (err) {
     resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Error: ${err.message}</div></div>`;
   } finally {
     btn.disabled = false;
   }
+}
+
+function setOrderFlowHourlyMode(mode) {
+  orderFlowHourlyMode = mode;
+  document.getElementById("orderflow-hourly-single").classList.toggle("active", mode === "single");
+  document.getElementById("orderflow-hourly-range").classList.toggle("active", mode === "range");
+  renderOrderFlowHourlyChart();
+}
+
+function renderOrderFlowHourlyChart() {
+  if (!currentOrderFlowData) return;
+  const { startDate, endDate, dayCount, hourlyIn, hourlyOut } = currentOrderFlowData;
+  const divisor = orderFlowHourlyMode === "range" ? Math.max(1, dayCount) : 1;
+  const valuesIn = hourlyIn.map(v => v / divisor);
+  const valuesOut = hourlyOut.map(v => v / divisor);
+
+  const titleEl = document.getElementById("orderflow-hourly-title");
+  titleEl.textContent = orderFlowHourlyMode === "single"
+    ? `${startDate} — hourly Orders In / Out`
+    : `${startDate} to ${endDate} — average by hour of day (${dayCount} day${dayCount === 1 ? '' : 's'})`;
+
+  const width = 900, height = 240, padding = 40;
+  const maxVal = Math.max(1, ...valuesIn, ...valuesOut);
+  const xFor = h => padding + (h / 23) * (width - 2 * padding);
+  const yFor = v => height - padding - (v / maxVal) * (height - 2 * padding);
+
+  const lineFor = values => values.map((v, h) => `${h === 0 ? 'M' : 'L'} ${xFor(h).toFixed(1)} ${yFor(v).toFixed(1)}`).join(" ");
+
+  // Production-hours shading: Mon-Fri 8am-4pm — same visual language as
+  // the Build % chart elsewhere on this tab.
+  const shadeX1 = xFor(8), shadeX2 = xFor(16);
+
+  const hourLabel = h => h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`;
+  const xLabels = [0, 4, 8, 12, 16, 20, 23].map(h =>
+    `<text x="${xFor(h).toFixed(1)}" y="${height - padding + 16}" fill="#8B92A0" font-size="11" text-anchor="middle">${hourLabel(h)}</text>`
+  ).join("");
+
+  document.getElementById("orderflow-hourly-chart").innerHTML = `
+    <div style="display:flex; gap:16px; font-size:12px; color:var(--text-muted); margin-bottom:6px;">
+      <span><span style="display:inline-block; width:14px; height:2px; background:#4FB0A5; vertical-align:middle;"></span> Orders In</span>
+      <span><span style="display:inline-block; width:14px; border-top:2px dashed #D9A441; vertical-align:middle;"></span> Orders Out (approximate hour)</span>
+    </div>
+    <svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:${width}px; height:auto;">
+      <rect x="${shadeX1.toFixed(1)}" y="${padding}" width="${(shadeX2 - shadeX1).toFixed(1)}" height="${height - 2 * padding}" fill="#4FB0A5" opacity="0.08" />
+      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="#2A2E35" stroke-width="1" />
+      ${xLabels}
+      <path d="${lineFor(valuesIn)}" fill="none" stroke="#4FB0A5" stroke-width="2" />
+      <path d="${lineFor(valuesOut)}" fill="none" stroke="#D9A441" stroke-width="2" stroke-dasharray="6,4" />
+    </svg>
+  `;
 }
 
 function renderHistoryRange() {
@@ -3178,17 +3293,6 @@ async function refresh() {
     document.getElementById("last-updated-text").textContent = "Connection error — check console";
     document.getElementById("last-updated-dot").classList.add("stale");
   }
-}
-
-// Optional deep-link: ?tab=strategy or ?tab=history opens directly to
-// that tab instead of the Queue Breakdown default. Added so the ops
-// dashboard's "Ops Outlook" tab can embed this page pointed straight
-// at Queue Strategy Tools without the extra click. Anyone loading this
-// page normally (no query param) is completely unaffected.
-const deepLinkParams = new URLSearchParams(window.location.search);
-const deepLinkTab = deepLinkParams.get('tab');
-if (deepLinkTab === 'strategy' || deepLinkTab === 'history') {
-  switchTab(deepLinkTab);
 }
 
 refresh();

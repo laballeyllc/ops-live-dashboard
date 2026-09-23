@@ -531,17 +531,29 @@ def replace_stock_levels(rows: list[dict], pulled_at: str) -> None:
 # building that history, one snapshot per pull run). ---
 
 CHICAGO_TZ = ZoneInfo("America/Chicago")
+PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 
 
-def parse_chicago_naive(naive_str: str):
-    """Parses a naive datetime string (no timezone marker) as wall-clock
-    time in America/Chicago, returning a timezone-aware UTC datetime.
-    Python's zoneinfo resolves CST/CDT correctly natively here — unlike
-    the frontend's JS equivalent (parseChicagoNaive in site/index.html),
-    which needs an iterative correction trick to get the same result,
-    since JS has no first-class named-timezone parsing. Verified against
-    the exact same test cases (including both DST transition edges) as
-    that JS version to confirm they agree."""
+def parse_shipstation_naive(naive_str: str):
+    """Parses a raw timestamp string exactly as ShipStation's API
+    returns it — these are ALWAYS Pacific time, regardless of account
+    settings. CONFIRMED BUG, FIXED (2026-09-23): verified directly
+    against a real order (raw createDate 15:12:58 matched ShipStation's
+    own UI showing 17:12 Central, an exact 2-hour offset, confirmed to
+    the second). Before this fix, every order's raw timestamp was
+    incorrectly parsed AS IF it were already Central time, which
+    silently overstated every order's age by up to 2 hours —  pushing
+    orders past the 24h/48h SLA thresholds earlier than they truly
+    should have, project-wide. Mirrors the frontend's
+    parseShipStationNaive (site/index.html); verified against the same
+    real reference point and DST edge cases as that JS version.
+
+    Returns the correct real-world instant as a timezone-aware UTC
+    datetime — everything downstream (business-hours math, the
+    production shift window) correctly converts that instant to
+    Central time from there, since that's where the warehouse actually
+    is; those functions were already correct and did not need to
+    change."""
     if not naive_str:
         return None
     try:
@@ -549,8 +561,8 @@ def parse_chicago_naive(naive_str: str):
         naive_dt = datetime.strptime(base, "%Y-%m-%dT%H:%M:%S")
     except ValueError:
         return None
-    chicago_dt = naive_dt.replace(tzinfo=CHICAGO_TZ)
-    return chicago_dt.astimezone(timezone.utc)
+    pacific_dt = naive_dt.replace(tzinfo=PACIFIC_TZ)
+    return pacific_dt.astimezone(timezone.utc)
 
 
 def business_hours_elapsed(start: datetime, end: datetime) -> float:
@@ -579,7 +591,7 @@ def business_hours_elapsed(start: datetime, end: datetime) -> float:
 
 
 def business_hours_since(naive_str: str) -> float:
-    start = parse_chicago_naive(naive_str)
+    start = parse_shipstation_naive(naive_str)
     if not start:
         return 0.0
     return business_hours_elapsed(start, datetime.now(timezone.utc))
@@ -656,7 +668,7 @@ def count_off_hours_orders(rows: list[dict], window: dict) -> int:
         by_order.setdefault(r["Order ID"], []).append(r)
     count = 0
     for oid, lines in by_order.items():
-        dt = parse_chicago_naive(lines[0].get("Order datetime"))
+        dt = parse_shipstation_naive(lines[0].get("Order datetime"))
         if dt and window["start"] <= dt <= window["end"]:
             count += 1
     return count
