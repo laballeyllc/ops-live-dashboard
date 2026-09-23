@@ -100,6 +100,23 @@ function shiftDate(dateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
+// Treats the timestamp as a plain Central-time string, consistent with
+// how the rest of this function already treats ShipStation's date
+// fields (see the Central-time note above) — no UTC conversion, just
+// reading the date/time components as given. Matches the same
+// Mon-Fri 8am-4pm Central production window used elsewhere on the
+// Live Queue dashboard for "off-hours order pile-up".
+function isWithinWorkingHours(timestampStr) {
+  if (!timestampStr) return false;
+  const [datePart, timePart] = String(timestampStr).split(/[T ]/);
+  if (!datePart || !timePart) return false;
+  const d = new Date(datePart + "T00:00:00Z");
+  const dayOfWeek = d.getUTCDay(); // 0=Sun, 6=Sat
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false;
+  const hour = parseInt(timePart.slice(0, 2), 10);
+  return hour >= 8 && hour < 16;
+}
+
 exports.handler = async (event) => {
   const headers = {
     "Content-Type": "application/json",
@@ -107,10 +124,11 @@ exports.handler = async (event) => {
   };
 
   try {
-    const { startDate, endDate } = event.queryStringParameters || {};
+    const { startDate, endDate, workingHoursOnly: workingHoursOnlyRaw } = event.queryStringParameters || {};
     if (!startDate || !endDate) {
       return { statusCode: 400, headers, body: JSON.stringify({ error: "startDate and endDate are required, as YYYY-MM-DD (Central time calendar dates)." }) };
     }
+    const workingHoursOnly = workingHoursOnlyRaw === "true";
 
     // Central-time calendar day boundaries. ShipStation's date filters
     // are documented as plain, un-suffixed strings interpreted in the
@@ -126,7 +144,9 @@ exports.handler = async (event) => {
     const placedOrders = await listAllOrders({ orderDateStart: dayStart, orderDateEnd: dayEnd });
     const ordersIn = placedOrders.filter(o => {
       const whId = (o.advancedOptions || {}).warehouseId;
-      return validWarehouseIds.has(whId) && o.orderStatus !== "cancelled";
+      if (!validWarehouseIds.has(whId) || o.orderStatus === "cancelled") return false;
+      if (workingHoursOnly && !isWithinWorkingHours(o.orderDate)) return false;
+      return true;
     });
 
     // Orders Out: orders whose own shipDate falls in the window,
@@ -146,7 +166,9 @@ exports.handler = async (event) => {
       const whId = (o.advancedOptions || {}).warehouseId;
       if (!validWarehouseIds.has(whId)) return false;
       const shipDate = (o.shipDate || "").slice(0, 10); // "YYYY-MM-DD"
-      return shipDate >= startDate && shipDate <= endDate;
+      if (shipDate < startDate || shipDate > endDate) return false;
+      if (workingHoursOnly && !isWithinWorkingHours(o.shipDate)) return false;
+      return true;
     });
 
     return {
@@ -155,6 +177,7 @@ exports.handler = async (event) => {
       body: JSON.stringify({
         startDate,
         endDate,
+        workingHoursOnly,
         ordersIn: ordersIn.length,
         ordersOut: ordersOut.length,
       }),
