@@ -1228,8 +1228,10 @@
     <h3 class="history-section-title">Orders In / Orders Out</h3>
     <div class="history-note">Live lookup direct from ShipStation, for any date range — not logged history, so this always reflects current reality (e.g. an order cancelled after the fact is excluded even if it was placed days ago). Warehouse/Freight only, same scoping as the rest of this dashboard.</div>
     <div class="history-range-controls">
+      <button class="toggle-btn" id="orderflow-prev-day" onclick="shiftOrderFlowDay(-1)" style="display:none;">&#9664;</button>
       <label class="history-picker-label">From <input type="date" id="orderflow-start"></label>
       <label class="history-picker-label">To <input type="date" id="orderflow-end"></label>
+      <button class="toggle-btn" id="orderflow-next-day" onclick="shiftOrderFlowDay(1)" style="display:none;">&#9654;</button>
       <button class="toggle-btn" id="orderflow-fetch-btn" onclick="fetchOrderFlow()">Fetch</button>
     </div>
     <div id="orderflow-result" class="history-header"></div>
@@ -1237,13 +1239,13 @@
     <div id="orderflow-hourly-section" style="display:none;">
       <div class="history-offhours-controls">
         <div class="toggle-group">
-          <button class="toggle-btn active" id="orderflow-hourly-single" onclick="setOrderFlowHourlyMode('single')">Single day</button>
-          <button class="toggle-btn" id="orderflow-hourly-range" onclick="setOrderFlowHourlyMode('range')">Over time (avg by hour)</button>
+          <button class="toggle-btn active" id="orderflow-mode-byday" onclick="setOrderFlowMode('byday')">By Day</button>
+          <button class="toggle-btn" id="orderflow-mode-avghour" onclick="setOrderFlowMode('avghour')">Average by Hour</button>
         </div>
       </div>
       <div id="orderflow-hourly-title" class="h2-note" style="margin-bottom:8px;"></div>
       <div id="orderflow-hourly-chart"></div>
-      <div class="history-note" style="margin-top:8px;">Orders In uses each order's real timestamp. Orders Out has no true ship-time anywhere in ShipStation's data (confirmed directly — shipDate is date-only, even for externally-fulfilled orders) — hours shown are approximate, based on each order's last update, which is usually very close to when it actually shipped.</div>
+      <div id="orderflow-hourly-caveat" class="history-note" style="margin-top:8px;"></div>
     </div>
 
     <div class="history-divider"></div>
@@ -3021,7 +3023,24 @@ function renderHistoryTab() {
 }
 
 let currentOrderFlowData = null;
-let orderFlowHourlyMode = "single";
+let orderFlowMode = "byday";
+
+function shiftDateStr(dateStr, days) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function shiftOrderFlowDay(delta) {
+  const startInput = document.getElementById("orderflow-start");
+  const endInput = document.getElementById("orderflow-end");
+  const current = startInput.value || endInput.value;
+  if (!current) return;
+  const shifted = shiftDateStr(current, delta);
+  startInput.value = shifted;
+  endInput.value = shifted;
+  fetchOrderFlow();
+}
 
 async function fetchOrderFlow() {
   const startDate = document.getElementById("orderflow-start").value;
@@ -3029,15 +3048,21 @@ async function fetchOrderFlow() {
   const resultEl = document.getElementById("orderflow-result");
   const btn = document.getElementById("orderflow-fetch-btn");
   const hourlySection = document.getElementById("orderflow-hourly-section");
+  const prevBtn = document.getElementById("orderflow-prev-day");
+  const nextBtn = document.getElementById("orderflow-next-day");
 
   if (!startDate || !endDate) {
     resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Pick a start and end date first.</div></div>`;
     hourlySection.style.display = "none";
+    prevBtn.style.display = "none";
+    nextBtn.style.display = "none";
     return;
   }
   if (startDate > endDate) {
     resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Start date must be before end date.</div></div>`;
     hourlySection.style.display = "none";
+    prevBtn.style.display = "none";
+    nextBtn.style.display = "none";
     return;
   }
 
@@ -3067,10 +3092,16 @@ async function fetchOrderFlow() {
 
     hourlySection.style.display = "block";
     const isSingleDay = startDate === endDate;
-    const singleBtn = document.getElementById("orderflow-hourly-single");
-    singleBtn.disabled = !isSingleDay;
-    singleBtn.title = isSingleDay ? "" : "Fetch a single day (From = To) to see its exact hourly trace.";
-    setOrderFlowHourlyMode(isSingleDay ? "single" : "range");
+    prevBtn.style.display = isSingleDay ? "inline-block" : "none";
+    nextBtn.style.display = isSingleDay ? "inline-block" : "none";
+
+    const avgBtn = document.getElementById("orderflow-mode-avghour");
+    avgBtn.disabled = isSingleDay;
+    avgBtn.title = isSingleDay ? "Averaging a single day is the same as its own hourly trace — pick a range to compare hour-of-day patterns." : "";
+    // Default: single day always shows its own hourly trace; a range
+    // keeps defaulting to the average-by-hour view (existing behavior,
+    // confirmed fine as-is) unless the user already picked "By Day".
+    setOrderFlowMode(isSingleDay ? "byday" : (orderFlowMode === "byday" ? "avghour" : orderFlowMode));
   } catch (err) {
     resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Error: ${err.message}</div></div>`;
   } finally {
@@ -3078,52 +3109,96 @@ async function fetchOrderFlow() {
   }
 }
 
-function setOrderFlowHourlyMode(mode) {
-  orderFlowHourlyMode = mode;
-  document.getElementById("orderflow-hourly-single").classList.toggle("active", mode === "single");
-  document.getElementById("orderflow-hourly-range").classList.toggle("active", mode === "range");
-  renderOrderFlowHourlyChart();
+function setOrderFlowMode(mode) {
+  orderFlowMode = mode;
+  document.getElementById("orderflow-mode-byday").classList.toggle("active", mode === "byday");
+  document.getElementById("orderflow-mode-avghour").classList.toggle("active", mode === "avghour");
+  renderOrderFlowChart();
 }
 
-function renderOrderFlowHourlyChart() {
+function renderOrderFlowChart() {
   if (!currentOrderFlowData) return;
-  const { startDate, endDate, dayCount, hourlyIn, hourlyOut } = currentOrderFlowData;
-  const divisor = orderFlowHourlyMode === "range" ? Math.max(1, dayCount) : 1;
-  const valuesIn = hourlyIn.map(v => v / divisor);
-  const valuesOut = hourlyOut.map(v => v / divisor);
-
+  const { startDate, endDate, dayCount, hourlyIn, dailyLabels, dailyIn, dailyOut } = currentOrderFlowData;
+  const isSingleDay = startDate === endDate;
   const titleEl = document.getElementById("orderflow-hourly-title");
-  titleEl.textContent = orderFlowHourlyMode === "single"
-    ? `${startDate} — hourly Orders In / Out`
-    : `${startDate} to ${endDate} — average by hour of day (${dayCount} day${dayCount === 1 ? '' : 's'})`;
+  const caveatEl = document.getElementById("orderflow-hourly-caveat");
 
+  if (orderFlowMode === "byday" && isSingleDay) {
+    // Hourly trace for one specific day — Orders In only. Orders Out
+    // has no reliable hourly signal anywhere in ShipStation's data
+    // (confirmed directly: an automated process touches modifyDate on
+    // a ~5-minute cadence all day, indistinguishable from real
+    // shipping activity even during business hours — 71% of a full
+    // day's orders showed this, not just outside-hours ones).
+    titleEl.textContent = `${startDate} — hourly Orders In`;
+    caveatEl.textContent = "Orders Out isn't shown hourly — ShipStation has no reliable ship-time signal at that precision (confirmed directly: an automated process touches order records on a continuous ~5-minute cadence all day, indistinguishable from real shipping activity). Orders Out IS reliable at the day level — see \"By Day\" on a date range, or the totals above.";
+    renderLineChart(hourlyIn.map((v, h) => ({ x: h, y: v })), null, h => {
+      return h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`;
+    }, 24, true);
+  } else if (orderFlowMode === "byday") {
+    // One point per calendar day across the range — both In and Out,
+    // since day-level Out is fully reliable (shipDate alone, no
+    // modifyDate involved).
+    titleEl.textContent = `${startDate} to ${endDate} — daily Orders In / Out`;
+    caveatEl.textContent = "";
+    const pointsIn = dailyIn.map((v, i) => ({ x: i, y: v }));
+    const pointsOut = dailyOut.map((v, i) => ({ x: i, y: v }));
+    renderLineChart(pointsIn, pointsOut, i => {
+      const d = dailyLabels[i] || "";
+      return d.slice(5); // "MM-DD"
+    }, dailyLabels.length, false);
+  } else {
+    // Average by hour across the range — Orders In only, same
+    // reliability reasoning as the single-day hourly case above.
+    titleEl.textContent = `${startDate} to ${endDate} — average by hour of day (${dayCount} day${dayCount === 1 ? '' : 's'})`;
+    caveatEl.textContent = "Orders Out isn't shown hourly — see the note under \"By Day\" for why.";
+    const divisor = Math.max(1, dayCount);
+    const values = hourlyIn.map(v => v / divisor);
+    renderLineChart(values.map((v, h) => ({ x: h, y: v })), null, h => {
+      return h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`;
+    }, 24, true);
+  }
+}
+
+function renderLineChart(pointsIn, pointsOut, xLabelFn, xCount, shadeBusinessHours) {
   const width = 900, height = 240, padding = 40;
-  const maxVal = Math.max(1, ...valuesIn, ...valuesOut);
-  const xFor = h => padding + (h / 23) * (width - 2 * padding);
+  const allVals = [...pointsIn.map(p => p.y), ...(pointsOut ? pointsOut.map(p => p.y) : [])];
+  const maxVal = Math.max(1, ...allVals);
+  const xFor = x => padding + (x / Math.max(1, xCount - 1)) * (width - 2 * padding);
   const yFor = v => height - padding - (v / maxVal) * (height - 2 * padding);
 
-  const lineFor = values => values.map((v, h) => `${h === 0 ? 'M' : 'L'} ${xFor(h).toFixed(1)} ${yFor(v).toFixed(1)}`).join(" ");
+  const lineFor = points => points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xFor(p.x).toFixed(1)} ${yFor(p.y).toFixed(1)}`).join(" ");
 
-  // Production-hours shading: Mon-Fri 8am-4pm — same visual language as
-  // the Build % chart elsewhere on this tab.
-  const shadeX1 = xFor(8), shadeX2 = xFor(16);
+  let shading = "";
+  if (shadeBusinessHours) {
+    const shadeX1 = xFor(8), shadeX2 = xFor(16);
+    shading = `<rect x="${shadeX1.toFixed(1)}" y="${padding}" width="${(shadeX2 - shadeX1).toFixed(1)}" height="${height - 2 * padding}" fill="#4FB0A5" opacity="0.08" />`;
+  }
 
-  const hourLabel = h => h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`;
-  const xLabels = [0, 4, 8, 12, 16, 20, 23].map(h =>
-    `<text x="${xFor(h).toFixed(1)}" y="${height - padding + 16}" fill="#8B92A0" font-size="11" text-anchor="middle">${hourLabel(h)}</text>`
+  const labelIndices = xCount <= 10
+    ? Array.from({ length: xCount }, (_, i) => i)
+    : [0, Math.round(xCount * 0.17), Math.round(xCount * 0.35), Math.round(xCount * 0.52), Math.round(xCount * 0.7), Math.round(xCount * 0.87), xCount - 1];
+  const xLabels = [...new Set(labelIndices)].map(i =>
+    `<text x="${xFor(i).toFixed(1)}" y="${height - padding + 16}" fill="#8B92A0" font-size="11" text-anchor="middle">${xLabelFn(i)}</text>`
   ).join("");
 
-  document.getElementById("orderflow-hourly-chart").innerHTML = `
+  const legend = pointsOut ? `
     <div style="display:flex; gap:16px; font-size:12px; color:var(--text-muted); margin-bottom:6px;">
       <span><span style="display:inline-block; width:14px; height:2px; background:#4FB0A5; vertical-align:middle;"></span> Orders In</span>
-      <span><span style="display:inline-block; width:14px; border-top:2px dashed #D9A441; vertical-align:middle;"></span> Orders Out (approximate hour)</span>
-    </div>
+      <span><span style="display:inline-block; width:14px; border-top:2px dashed #D9A441; vertical-align:middle;"></span> Orders Out</span>
+    </div>` : `
+    <div style="display:flex; gap:16px; font-size:12px; color:var(--text-muted); margin-bottom:6px;">
+      <span><span style="display:inline-block; width:14px; height:2px; background:#4FB0A5; vertical-align:middle;"></span> Orders In</span>
+    </div>`;
+
+  document.getElementById("orderflow-hourly-chart").innerHTML = `
+    ${legend}
     <svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:${width}px; height:auto;">
-      <rect x="${shadeX1.toFixed(1)}" y="${padding}" width="${(shadeX2 - shadeX1).toFixed(1)}" height="${height - 2 * padding}" fill="#4FB0A5" opacity="0.08" />
+      ${shading}
       <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="#2A2E35" stroke-width="1" />
       ${xLabels}
-      <path d="${lineFor(valuesIn)}" fill="none" stroke="#4FB0A5" stroke-width="2" />
-      <path d="${lineFor(valuesOut)}" fill="none" stroke="#D9A441" stroke-width="2" stroke-dasharray="6,4" />
+      <path d="${lineFor(pointsIn)}" fill="none" stroke="#4FB0A5" stroke-width="2" />
+      ${pointsOut ? `<path d="${lineFor(pointsOut)}" fill="none" stroke="#D9A441" stroke-width="2" stroke-dasharray="6,4" />` : ""}
     </svg>
   `;
 }

@@ -188,9 +188,10 @@ exports.handler = async (event) => {
     // Orders Out: orders whose own shipDate falls in the window,
     // regardless of when they were placed or how they were fulfilled.
     // /orders has no shipDate filter, so this fetches shipped orders
-    // via a wide modifyDate net (a day of buffer on each side, since an
-    // order's last modification is essentially always the moment it
-    // ships) and then filters precisely by shipDate client-side.
+    // via a wide modifyDate net (3 days of buffer on each side, since
+    // an order's last modification is USUALLY close to when it ships —
+    // see the hourly-bucketing note below for the real exception to
+    // that) and then filters precisely by shipDate client-side.
     const modifyDateStart = `${shiftDate(startDate, -3)} 00:00:00`;
     const modifyDateEnd = `${shiftDate(endDate, 3)} 23:59:59`;
     const recentlyModifiedShipped = await listAllOrders({
@@ -205,29 +206,50 @@ exports.handler = async (event) => {
       return shipDate >= startDate && shipDate <= endDate;
     });
 
-    // Hourly breakdown, for the dashboard's hourly chart (single-day
-    // mode shows these totals as-is; range mode divides by the number
-    // of days to get an average — the frontend's job, not this
-    // function's, so this always returns the same shape either way).
-    // Orders In uses orderDate directly (a real timestamp). Orders Out
-    // has no real ship TIME anywhere in ShipStation's data model
-    // (shipDate is date-only, confirmed directly against every real
-    // example pulled this project, including externally-fulfilled
-    // orders) — modifyDate is the closest available proxy, per Casey's
-    // own understanding that an order's last modification is
-    // essentially the moment it ships. This is an approximation, and
-    // the frontend must label it as such.
+    // Hourly breakdown (Orders In only — see below for why Out is
+    // excluded). Orders In uses orderDate directly, a real timestamp,
+    // reliable at any granularity.
     const hourlyIn = new Array(24).fill(0);
     for (const o of ordersIn) {
       const h = hourOf(o.orderDate);
       if (h !== null) hourlyIn[h]++;
     }
-    const hourlyOut = new Array(24).fill(0);
+
+    // CONFIRMED, FIXED, THEN CONFIRMED UNFIXABLE (2026-09-24): Orders
+    // Out has no real ship TIME anywhere in ShipStation's data model —
+    // shipDate is date-only, confirmed against every real example
+    // pulled this project. modifyDate looked like the closest
+    // available proxy, and an initial fix filtered out modifyDate
+    // values far from shipDate (a real batch-job artifact: 5 real
+    // orders shared the exact same modifyDate despite shipDates
+    // spread across 3+ months). That fix was insufficient — a second,
+    // full-day measurement showed 71.3% of ALL orders on a real day
+    // share a near-identical modifyDate with at least other order,
+    // CONSISTENTLY throughout the 8am-4pm shift itself (55-79% every
+    // hour), not just at the edges. This means some automated process
+    // (a sync, tracking poller, or similar) touches modifyDate on a
+    // continuous ~5-minute cadence all day, indistinguishable from real
+    // shipping activity — there is no reliable way to separate the two
+    // for any individual order. Hourly Orders Out is therefore not
+    // provided at all; the frontend shows an honest explanation instead
+    // of a misleading chart.
+    //
+    // Daily granularity is a completely different story: shipDate alone
+    // (already date-only, already reliable) is exactly the precision
+    // needed for a day-by-day breakdown, no modifyDate involved at all.
+    const dailyIn = {};
+    for (const o of ordersIn) {
+      const d = (o.orderDate || "").slice(0, 10);
+      if (d) dailyIn[d] = (dailyIn[d] || 0) + 1;
+    }
+    const dailyOut = {};
     for (const o of ordersOut) {
-      const h = hourOf(o.modifyDate);
-      if (h !== null) hourlyOut[h]++;
+      const d = (o.shipDate || "").slice(0, 10);
+      if (d) dailyOut[d] = (dailyOut[d] || 0) + 1;
     }
     const dayCount = countDaysInRange(startDate, endDate);
+    const dailyLabels = [];
+    for (let i = 0; i < dayCount; i++) dailyLabels.push(shiftDate(startDate, i));
 
     return {
       statusCode: 200,
@@ -239,7 +261,9 @@ exports.handler = async (event) => {
         ordersIn: ordersIn.length,
         ordersOut: ordersOut.length,
         hourlyIn,
-        hourlyOut,
+        dailyLabels,
+        dailyIn: dailyLabels.map(d => dailyIn[d] || 0),
+        dailyOut: dailyLabels.map(d => dailyOut[d] || 0),
       }),
     };
   } catch (err) {
