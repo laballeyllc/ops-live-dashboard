@@ -238,10 +238,16 @@
   }
 
   .health-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
+    display: block;
     margin-bottom: 20px;
+  }
+
+  .dial-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    max-width: 420px;
   }
 
   .health-card {
@@ -1040,11 +1046,11 @@
   <div id="tab-strategy" class="tab-panel" style="display:none;">
     <div class="attack-subsection briefing-section">
       <h3 class="subsection-toggle" onclick="toggleSubsection('briefing-body', 'briefing-chevron')">
-        <span class="chevron open" id="briefing-chevron">&#9656;</span>
+        <span class="chevron" id="briefing-chevron">&#9656;</span>
         Daily Briefing
         <button class="toggle-btn" onclick="event.stopPropagation(); renderDailyBriefing();">Regenerate</button>
       </h3>
-      <div id="briefing-body">
+      <div id="briefing-body" style="display:none;">
         <div class="h2-note" style="margin-bottom:14px;">Generated automatically from the current queue — rule-based, not AI-written, so the same data always produces the same read. Click Regenerate to refresh without reloading the page.</div>
         <div id="briefing-shipping-content" class="briefing-content"></div>
         <div id="briefing-production-content" class="briefing-content"></div>
@@ -1098,6 +1104,7 @@
             <th>SKU(s)</th>
             <th>Quantity</th>
             <th>Same Lot</th>
+            <th>Pick Location</th>
             <th>Blocked by</th>
           </tr>
         </thead>
@@ -1264,7 +1271,7 @@
 // only grants it SELECT, nothing else). Never put the service_role key
 // here; that one belongs only in GitHub Actions Secrets.
 const SUPABASE_URL = "https://pdflsmequzgpeuodnxyg.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_PUzGqmBUePaYAEunZxbBmg_1MlLrl1k";
+const SUPABASE_ANON_KEY = "YOUR_ANON_KEY_HERE";
 // ----------------------------------------------------------------------
 
 const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1991,14 +1998,41 @@ function stockByProduct() {
   for (const s of currentStockLevels) {
     let lots = {};
     try { lots = JSON.parse(s.lots || "{}"); } catch (e) { lots = {}; }
+    let lotSublocations = {};
+    try { lotSublocations = JSON.parse(s.lot_sublocations || "{}"); } catch (e) { lotSublocations = {}; }
     map.set(s.product_id, {
       usableStock: parseFloat(s.usable_stock) || 0,
       reorderPointMax: s.reorder_point_max != null ? parseFloat(s.reorder_point_max) : null,
       unitsBackorder: parseFloat(s.units_backorder) || 0,
       lots,
+      lotSublocations,
     });
   }
   return map;
+}
+
+function pickLocationsFor(sourceLots, stock) {
+  // Converts a claim's sourceLots (which lot(s) were actually consumed,
+  // possibly across the SKU and its case/singles pair) into real
+  // pick-location text: sublocation + quantity, for every sublocation
+  // that lot's stock actually sits in — not a synthetic "take exactly
+  // N from bin A" apportionment (we don't track consumption at that
+  // granularity), but the real physical breakdown, so the picker can
+  // see where to go and grab from whichever bin is convenient.
+  if (!sourceLots || sourceLots.length === 0) return [];
+  const locations = [];
+  for (const { sku, lotId } of sourceLots) {
+    const s = stock.get(sku);
+    const subMap = s && s.lotSublocations ? s.lotSublocations[lotId] : null;
+    if (subMap) {
+      for (const [sublocation, qty] of Object.entries(subMap)) {
+        locations.push({ sublocation, qty, lotId });
+      }
+    } else {
+      locations.push({ sublocation: "(sublocation unknown)", qty: null, lotId });
+    }
+  }
+  return locations;
 }
 
 function lotSortKey(lotId) {
@@ -2129,11 +2163,19 @@ function sortedLotIds(lots) {
 function depleteFrom(entry, qty) {
   // Removes qty units from an entry's lots (FIFO order) then untracked,
   // mutating it in place. Caller guarantees qty <= entryTotal(entry).
+  // Returns which lots were actually touched and how much was taken
+  // from each — used to show real pick locations (which sublocation(s)
+  // to physically go to), added alongside the original depletion
+  // behavior without changing it.
   let remaining = qty;
+  const touched = [];
   for (const lotId of sortedLotIds(entry.lots)) {
     if (remaining <= 0) break;
     const take = Math.min(remaining, entry.lots[lotId]);
-    entry.lots[lotId] -= take;
+    if (take > 0) {
+      entry.lots[lotId] -= take;
+      touched.push({ lotId, taken: take });
+    }
     remaining -= take;
   }
   if (remaining > 0) {
@@ -2141,6 +2183,7 @@ function depleteFrom(entry, qty) {
     entry.untracked -= take;
     remaining -= take;
   }
+  return touched;
 }
 
 function claimStock(sku, needed, working) {
@@ -2176,7 +2219,7 @@ function claimStock(sku, needed, working) {
     // Blocked — deplete NOTHING, so this unfulfillable need doesn't
     // wrongly reduce stock that a different, smaller order could
     // actually use.
-    return { usable: totalUsable, isBlocked: true, sameLot, preferredLot };
+    return { usable: totalUsable, isBlocked: true, sameLot, preferredLot, sourceLots: [] };
   }
 
   // Satisfiable. Consumption order confirmed directly: prefer the
@@ -2184,19 +2227,29 @@ function claimStock(sku, needed, working) {
   // once the direct form alone can't cover it (don't break open a case
   // if loose singles already suffice, and vice versa).
   const fromDirect = Math.min(needed, directTotal);
-  depleteFrom(direct, fromDirect);
+  const touchedDirect = depleteFrom(direct, fromDirect);
   const stillNeeded = needed - fromDirect;
 
+  let touchedPair = [];
   if (stillNeeded > 0) {
     const pairUnitsNeeded = isCaseSku(sku)
       ? stillNeeded * 4                // sku=case, pair=singles
       : Math.ceil(stillNeeded / 4);    // sku=single, pair=cases
-    depleteFrom(pair, Math.min(pairUnitsNeeded, pairTotal));
+    touchedPair = depleteFrom(pair, Math.min(pairUnitsNeeded, pairTotal));
   }
 
   working.set(sku, direct);
   working.set(pairSku, pair);
-  return { usable: totalUsable, isBlocked: false, sameLot, preferredLot };
+  // sourceLots: which lots were ACTUALLY consumed for this claim (not
+  // just which lot was preferred) — this is what powers the pick-
+  // location column, since it reflects reality even in the (rare,
+  // sameLot=false) case where a need had to be split across lots or
+  // across the case/singles pair.
+  const sourceLots = [
+    ...touchedDirect.map(t => ({ sku, ...t })),
+    ...touchedPair.map(t => ({ sku: pairSku, ...t })),
+  ];
+  return { usable: totalUsable, isBlocked: false, sameLot, preferredLot, sourceLots };
 }
 
 function buildShippingList(rows) {
@@ -2274,7 +2327,7 @@ function buildShippingList(rows) {
       for (const sku of distinctSkus) {
         const needed = qtyBySku.get(sku) || 1;
         const claim = claimStock(sku, needed, working);
-        items.push({ sku, needed, usable: claim.usable, isBlocked: claim.isBlocked, sameLot: claim.sameLot, preferredLot: claim.preferredLot });
+        items.push({ sku, needed, usable: claim.usable, isBlocked: claim.isBlocked, sameLot: claim.sameLot, preferredLot: claim.preferredLot, sourceLots: claim.sourceLots });
         if (claim.isBlocked) blockers.push({ sku, needed, usable: claim.usable });
       }
     }
@@ -2398,18 +2451,25 @@ let currentProductionListForBriefing = [];
 let currentStockBuildsListForBriefing = [];
 let shippingShowBlocked = false;
 
+function formatPickLocations(locations) {
+  if (!locations || locations.length === 0) return "—";
+  return locations.map(l => l.qty != null ? `${l.sublocation} (${l.qty})` : l.sublocation).join(", ");
+}
+
 function renderShippingList(list) {
   currentShippingList = list;
   const filtered = shippingShowBlocked ? list : list.filter(o => o.isPickable);
+  const stock = stockByProduct();
 
   document.getElementById("shipping-list-tbody").innerHTML = filtered.length ? filtered.map((o, i) => {
     const rowId = `ship-${i}`;
-    let skuCell, qtyCell, lotCell;
+    let skuCell, qtyCell, lotCell, pickLocationCell;
     const allSameLot = o.items.length > 0 && o.items.every(it => it.sameLot);
     if (o.items.length > 1) {
       skuCell = `<span class="expand-toggle" onclick="toggleShippingDetail('${rowId}')">Multiple SKUs <span class="expand-caret" id="${rowId}-caret">&#9656;</span></span>`;
       qtyCell = o.items.reduce((sum, it) => sum + (typeof it.needed === "number" ? it.needed : 0), 0);
       lotCell = allSameLot ? '<span class="lot-check yes">&#10003;</span>' : '<span class="lot-check no">&#10007;</span>';
+      pickLocationCell = '<span class="h2-note">see expand</span>';
     } else if (o.items.length === 1) {
       const it = o.items[0];
       skuCell = it.sku;
@@ -2417,17 +2477,19 @@ function renderShippingList(list) {
       lotCell = it.sameLot
         ? `<span class="lot-check yes">&#10003;</span> <span class="lot-detail">(Lot ${it.preferredLot})</span>`
         : '<span class="lot-check no">&#10007;</span>';
+      pickLocationCell = formatPickLocations(pickLocationsFor(it.sourceLots, stock));
     } else {
       skuCell = "(unknown)";
       qtyCell = "?";
       lotCell = "—";
+      pickLocationCell = "—";
     }
 
     const detailRow = o.items.length > 1 ? `
       <tr class="detail-row" id="${rowId}-detail" style="display:none;">
-        <td colspan="9">
+        <td colspan="10">
           <table class="detail-table">
-            <thead><tr><th>SKU</th><th>Needed</th><th>Usable</th><th>Status</th><th>Same Lot</th></tr></thead>
+            <thead><tr><th>SKU</th><th>Needed</th><th>Usable</th><th>Status</th><th>Same Lot</th><th>Pick Location</th></tr></thead>
             <tbody>
               ${o.items.map(it => `
                 <tr>
@@ -2436,6 +2498,7 @@ function renderShippingList(list) {
                   <td>${it.usable}</td>
                   <td>${it.isBlocked ? '<span class="status-pill blocked">Blocked</span>' : '<span class="status-pill pickable">OK</span>'}</td>
                   <td>${it.sameLot ? `<span class="lot-check yes">&#10003;</span> (Lot ${it.preferredLot})` : '<span class="lot-check no">&#10007;</span>'}</td>
+                  <td>${formatPickLocations(pickLocationsFor(it.sourceLots, stock))}</td>
                 </tr>`).join("")}
             </tbody>
           </table>
@@ -2452,9 +2515,10 @@ function renderShippingList(list) {
       <td>${skuCell}</td>
       <td>${qtyCell}</td>
       <td>${lotCell}</td>
+      <td>${pickLocationCell}</td>
       <td>${o.blockers.map(b => `${b.sku} (need ${b.needed}, have ${b.usable})`).join(', ')}</td>
     </tr>${detailRow}`;
-  }).join("") : `<tr><td colspan="9" class="bar-empty">${shippingShowBlocked ? 'No data' : 'Nothing pickable right now'}</td></tr>`;
+  }).join("") : `<tr><td colspan="10" class="bar-empty">${shippingShowBlocked ? 'No data' : 'Nothing pickable right now'}</td></tr>`;
 }
 
 function toggleShippingDetail(rowId) {
@@ -2686,73 +2750,85 @@ function renderAttackSection(rows) {
   document.getElementById("builds-needed-count").textContent = buildsNeededCount;
 
   // Orders that are 48h+ overdue SPECIFICALLY because they're currently
-  // blocked by a stock shortage — the exact set the redefined Build %
-  // needs (see renderHealthRow).
+  // blocked by a stock shortage — Production's fault. Orders that are
+  // 48h+ overdue but CAN currently be picked — nothing stopping them
+  // except that nobody's picked and shipped them yet — Shipping's
+  // fault. Together these drive the Shipping/Production dial.
   const shortageOverdueCount = shippingList.filter(o => !o.isPickable && o.hours >= OVERDUE_HOURS).length;
+  const shippingCausedCount = shippingList.filter(o => o.isPickable && o.hours >= OVERDUE_HOURS).length;
 
-  renderHealthRow(shortageOverdueCount, totalQueueOrders);
+  renderHealthRow(shortageOverdueCount, shippingCausedCount, totalQueueOrders);
 }
 
-// Build %, redefined (2026-09-18) after the original "total build units
-// vs total queue units" formula produced a misleading 94% — it was
-// answering "how much total restocking would fully replenish everything
-// touching the queue" (inflated by Reorder-Point-Max build-ahead
-// targets sized for future sales velocity, not today's backlog), not
-// "how much of our overdue problem is actually production's fault."
-//
-// New formula, confirmed against Casey's own worked example (100 orders,
-// 10 overdue, 5 of those shortage-blocked -> 95% "hit rate"):
-//   bad% = (orders 48h+ overdue AND currently shortage-blocked) / (total queue orders) * 100
-//   shown inverted (100 - bad%) since the positive framing reads
-//   unambiguously as good/bad to someone unfamiliar with the metric.
-const BUILD_HEALTH_THRESHOLDS = { good: 10, watch: 25 }; // bad% cutoffs; shown as the inverse (hit rate)
+// Shipping vs Production backlog dial, replacing the old Build/Aging/
+// Volume cards (2026-09-24) — Casey's own data showed only ~7% of
+// overdue orders were shortage-blocked while 157 were pickable right
+// now, directly contradicting the long-standing assumption that the
+// queue runs high because production can't keep up. This dial answers
+// "which department is actually causing today's backlog" directly:
+//   Production-caused = orders 48h+ overdue AND currently blocked by a
+//     shortage (shortageOverdueCount — same figure the old Build %
+//     card used).
+//   Shipping-caused = orders 48h+ overdue but CURRENTLY PICKABLE —
+//     nothing stopping them except that nobody's picked and shipped
+//     them yet.
+// Needle points hard left (Shipping) when the backlog is entirely
+// shipping-caused, hard right (Production) when entirely production-
+// caused, and gradually in between as that balance shifts — confirmed
+// directly as the intended behavior.
+function renderHealthRow(shortageOverdueCount, shippingCausedCount, totalQueueOrders) {
+  const total = shortageOverdueCount + shippingCausedCount;
+  const cx = 150, cy = 140, r = 110;
 
-function renderHealthRow(shortageOverdueCount, totalQueueOrders) {
-  const badPct = totalQueueOrders > 0 ? (shortageOverdueCount / totalQueueOrders * 100) : 0;
-  const hitRate = 100 - badPct;
+  let needleAngleDeg, statusText, subText;
 
-  let buildStatus, buildLabel;
-  if (totalQueueOrders === 0) {
-    buildStatus = "pending";
-    buildLabel = "No queue data";
-  } else if (badPct < BUILD_HEALTH_THRESHOLDS.good) {
-    buildStatus = "good";
-    buildLabel = "Good";
-  } else if (badPct < BUILD_HEALTH_THRESHOLDS.watch) {
-    buildStatus = "watch";
-    buildLabel = "Watch";
+  if (total === 0) {
+    needleAngleDeg = 90; // straight up — neutral, nothing to attribute
+    statusText = "No overdue orders";
+    subText = "Nothing is currently past the 48-hour goal.";
   } else {
-    buildStatus = "concerning";
-    buildLabel = "Concerning";
+    const productionShare = shortageOverdueCount / total;
+    needleAngleDeg = 180 - (productionShare * 180); // 180=hard left (Shipping), 0=hard right (Production)
+    const pct = Math.round(productionShare * 100);
+    if (productionShare < 0.35) {
+      statusText = "Mostly Shipping";
+    } else if (productionShare < 0.65) {
+      statusText = "Mixed";
+    } else {
+      statusText = "Mostly Production";
+    }
+    subText = `${shortageOverdueCount} of ${total} overdue orders (${pct}%) are blocked by a shortage; ${shippingCausedCount} are pickable right now and just need to be picked and shipped.`;
   }
 
-  const buildSub = totalQueueOrders > 0
-    ? `${hitRate.toFixed(0)}% of the queue isn't overdue due to production (${shortageOverdueCount} of ${totalQueueOrders} orders are)`
-    : "";
+  const angleRad = needleAngleDeg * Math.PI / 180;
+  const needleLen = r - 15;
+  const needleX = cx + needleLen * Math.cos(angleRad);
+  const needleY = cy - needleLen * Math.sin(angleRad);
 
   document.getElementById("health-row").innerHTML = `
-    <div class="health-card">
-      <div class="health-label">Build</div>
-      <div class="health-status ${buildStatus}"><span class="health-dot ${buildStatus}"></span>${buildLabel}</div>
-      <div class="health-label" style="margin-top:4px;">${buildSub}</div>
-    </div>
-    <div class="health-card">
-      <div class="health-label">Aging</div>
-      <div class="health-status pending"><span class="health-dot pending"></span>Gathering baseline data</div>
-      <div class="health-label" style="margin-top:4px;">Needs ~1 month of history to compare against</div>
-    </div>
-    <div class="health-card">
-      <div class="health-label">Volume</div>
-      <div class="health-status pending"><span class="health-dot pending"></span>Gathering baseline data</div>
-      <div class="health-label" style="margin-top:4px;">Needs ~1 month of history to compare against</div>
-    </div>
-    <div class="health-card">
-      <div class="health-label">Overall</div>
-      <div class="health-status pending"><span class="health-dot pending"></span>Gathering baseline data</div>
-      <div class="health-label" style="margin-top:4px;">Combines all three once history exists</div>
+    <div class="dial-card">
+      <svg viewBox="0 0 300 175" width="100%" style="max-width:380px; display:block; margin:0 auto;">
+        <defs>
+          <linearGradient id="dialGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#4FB0A5" />
+            <stop offset="50%" stop-color="#D9A441" />
+            <stop offset="100%" stop-color="#E05C5C" />
+          </linearGradient>
+        </defs>
+        <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="url(#dialGradient)" stroke-width="16" stroke-linecap="round" />
+        <line x1="${cx}" y1="${cy}" x2="${needleX.toFixed(1)}" y2="${needleY.toFixed(1)}" stroke="#E8E6DF" stroke-width="3" stroke-linecap="round" />
+        <circle cx="${cx}" cy="${cy}" r="6" fill="#E8E6DF" />
+        <text x="${cx - r}" y="${cy + 24}" fill="#8B92A0" font-size="13" font-weight="600" text-anchor="start">Shipping</text>
+        <text x="${cx + r}" y="${cy + 24}" fill="#8B92A0" font-size="13" font-weight="600" text-anchor="end">Production</text>
+      </svg>
+      <div style="text-align:center; margin-top:4px;">
+        <div style="font-size:16px; font-weight:700; color:var(--text);">${statusText}</div>
+        <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">${subText}</div>
+      </div>
     </div>
   `;
 }
+
 
 function switchSubtab(tab) {
   const tabs = ["shipping", "production", "stockbuilds"];

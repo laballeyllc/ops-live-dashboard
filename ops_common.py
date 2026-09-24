@@ -116,19 +116,29 @@ def is_usable_sublocation(name: str) -> bool:
 
 def fetch_usable_stock() -> dict[str, dict]:
     """Returns {product_id: {"usable_stock": float, "description": str,
-    "lots": {lot_id: qty}}}, quantity summed only across sublocations
-    that pass is_usable_sublocation() — excludes Quality Hold, Inventory
-    Hold, Do Not Inventory, Amazon FBA stock, and staging/processing
-    areas that aren't real, currently-pickable inventory. This is what
-    makes "38.8 units on hand" correctly read as "36.3 usable" when
-    ~2.5 of those units are actually sitting in Quality Hold — the exact
-    real example that started this feature.
+    "lots": {lot_id: qty}, "lot_sublocations": {lot_id: {sublocation:
+    qty}}}}, quantity summed only across sublocations that pass
+    is_usable_sublocation() — excludes Quality Hold, Inventory Hold, Do
+    Not Inventory, Amazon FBA stock, and staging/processing areas that
+    aren't real, currently-pickable inventory. This is what makes "38.8
+    units on hand" correctly read as "36.3 usable" when ~2.5 of those
+    units are actually sitting in Quality Hold — the exact real example
+    that started this feature.
 
     The per-lot breakdown (confirmed against real data, 2026-09-18) is
     what powers the same-lot fulfillment check: a single lot's stock is
     often split across several usable sublocations (e.g. one real lot,
     '5001997/21.1', appeared at 4 different bins for the same product),
-    so this sums by lot ID across all of them, not just one row each."""
+    so this sums by lot ID across all of them, not just one row each.
+
+    lot_sublocations preserves that same per-sublocation breakdown
+    (rather than collapsing straight to a lot total) — added for the
+    Shipping List's "where do I physically go to pick this" column.
+    Deliberately a SEPARATE field alongside the existing flat lots
+    dict, not a reshape of it — lots is already relied on, tested, and
+    correct throughout the frontend's depletion/same-lot logic exactly
+    as a flat {lot_id: qty} map; this only adds new information rather
+    than risk that working code by changing its shape."""
     rows = fetch_finale_report(STOCK_BY_SUBLOCATION_REPORT_URL)
     stock: dict[str, dict] = {}
     for row in rows:
@@ -138,7 +148,10 @@ def fetch_usable_stock() -> dict[str, dict]:
             continue
         pid = pid.strip()
         if pid not in stock:
-            stock[pid] = {"usable_stock": 0.0, "description": row.get("Description") or "", "lots": {}}
+            stock[pid] = {
+                "usable_stock": 0.0, "description": row.get("Description") or "",
+                "lots": {}, "lot_sublocations": {},
+            }
         elif not stock[pid]["description"] and row.get("Description"):
             stock[pid]["description"] = row.get("Description")
         if not is_usable_sublocation(sublocation):
@@ -149,6 +162,8 @@ def fetch_usable_stock() -> dict[str, dict]:
             lot_id = (row.get("Lot ID unprefixed") or "").strip()
             if lot_id:
                 stock[pid]["lots"][lot_id] = stock[pid]["lots"].get(lot_id, 0.0) + qoh
+                sub_map = stock[pid]["lot_sublocations"].setdefault(lot_id, {})
+                sub_map[sublocation] = sub_map.get(sublocation, 0.0) + qoh
     return stock
 
 
@@ -506,6 +521,7 @@ def build_stock_levels() -> list[dict]:
             "units_backorder": d.get("units_backorder", 0),
             "units_on_hand_reserved": d.get("units_on_hand_reserved", 0),
             "lots": json.dumps(s.get("lots", {})),
+            "lot_sublocations": json.dumps(s.get("lot_sublocations", {})),
         })
     return rows
 
