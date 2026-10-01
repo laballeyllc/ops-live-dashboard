@@ -2008,6 +2008,7 @@ function stockByProduct() {
       unitsBackorder: parseFloat(s.units_backorder) || 0,
       lots,
       lotSublocations,
+      isBuilt: s.is_built === true,
     });
   }
   return map;
@@ -2431,6 +2432,7 @@ function buildStockBuilds(shippingList) {
   const stock = stockByProduct();
   const results = [];
   for (const [sku, s] of stock) {
+    if (!s.isBuilt) continue; // purchased SKUs need buying, not building (confirmed bug, 2026-10-01)
     if (s.reorderPointMax == null) continue;
     if (s.unitsBackorder > 0) continue;
     if (blockedSkus.has(sku)) continue;

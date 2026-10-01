@@ -89,6 +89,23 @@ BACKORDER_DEMAND_REPORT_URL = (
     "&reportTitle=Backordered%20sales%20by%20order%20(SkD)"
 )
 
+# Finale's UI generated this as pivotTableStream (returns HTML, not JSON,
+# when fetched directly) — swapped to pivotTable here, same fix already
+# confirmed necessary and working for other reports saved from certain
+# UI contexts. Each row pairs a finished/parent Product ID with one
+# Component Product ID it's built from — used to classify every SKU as
+# "built" (appears as a parent here) vs "purchased" (never does),
+# confirmed 2026-10-01: purchased SKUs were incorrectly appearing in
+# Stock Builds, which should only ever suggest things to BUILD.
+PRODUCT_BOM_REPORT_URL = (
+    "https://app.finaleinventory.com/laballeyllc/doc/report/pivotTable/"
+    "1790865378562/Report.json?format=jsonObject&data=productBom"
+    "&attrName=%23%23other007"
+    "&rowDimensions=~m5rNAf7Ay0BzDMzMzMzNwMDAwMDAwJrNAdTAzQH8wMDAwMDAwJq9cHJvZHVjdFBvdGVudGlhbEJ1aWxkUXVhbnRpdHm1UG90ZW50aWFsXG5CdWlsZFxuUXR5zP7AwMDAAMDAms0BdsAAwADAwMDAwJrNAcrAy0BjDMzMzMzNwADAwMDAwJrNAZ-2Q29tcG9uZW50IFxuUHJvZHVjdCBJRMtAcwzMzMzMzcDAwMDAwMCazQGDwM0B_MDAwMDAwMCa2T9wcm9kdWN0Qm9tUHJvZHVjdFN0b2NrUmVtYWluaW5nQWZ0ZXJSZXNlcnZhdGlvbnNDYXNlRXF1aXZhbGVudHO-Q29tcG9uZW50IHByb2R1Y3QgXG4gUmVtYWluaW5nzP7AwMDAwMDAms0Bd8DM_sDAAMDAwMCatHByb2R1Y3RVc2VyVXNlcjEwMDAwwMz-wMDAwMDAwJrNAXnAzP7AwMDAwMDA"
+    "&filters=W1sicHJvZHVjdFByb2R1Y3RVcmwiLG51bGwsbnVsbF0sWyJwcm9kdWN0Qm9tUHJvZHVjdFVybCIsbnVsbCxudWxsXV0%3D"
+    "&reportTitle=Product%20bill%20of%20materials"
+)
+
 # CONFIRMED (2026-09-18) against the complete real list of 681 distinct
 # sublocation names in the account: this pattern separates all 13 known-
 # excluded locations (Quality Hold "*-QH", Inventory Hold "*-IH", Do Not
@@ -492,6 +509,31 @@ def replace_live_queue(rows: list[dict], pulled_at: str) -> None:
     print(f"Wrote {len(db_rows)} rows to Supabase 'live_queue' (pulled_at: {pulled_at})")
 
 
+def fetch_built_sku_set() -> set[str]:
+    """Returns the set of every Product ID that is BUILT in-house,
+    determined from the Product Bill of Materials report. Confirmed
+    structure (2026-10-01): a header row per built/parent product (only
+    "Product ID" and "Potential Build Qty" populated), immediately
+    followed by one detail row per component it's built from (header's
+    own "Product ID" is null on these; the real data is under
+    "Component Product ID"). A SKU is built if it EVER appears as a
+    non-null "Product ID" header row anywhere in this report; every
+    other SKU — including every component-only SKU, and any SKU that
+    never appears in this report at all — defaults to purchased, the
+    agreed behavior for SKUs with no BOM relationship.
+
+    This exists specifically to stop purchased raw materials from
+    showing up in Stock Builds, which should only ever suggest things
+    to BUILD, not things to buy (confirmed bug, 2026-10-01)."""
+    rows = fetch_finale_report(PRODUCT_BOM_REPORT_URL)
+    built = set()
+    for row in rows:
+        pid = row.get("Product ID")
+        if pid:
+            built.add(pid.strip())
+    return built
+
+
 def build_stock_levels() -> list[dict]:
     """Combines usable stock (Stock Quantity by Sublocation report) with
     backorder demand and reorder point max (Backordered sales by order
@@ -508,6 +550,10 @@ def build_stock_levels() -> list[dict]:
     demand = fetch_backorder_demand()
     print(f"  {len(demand)} products with backorder demand")
 
+    print("Pulling built-SKU classification from Finale (Product bill of materials)...")
+    built_skus = fetch_built_sku_set()
+    print(f"  {len(built_skus)} products confirmed built in-house (everything else treated as purchased)")
+
     all_pids = set(stock.keys()) | set(demand.keys())
     rows = []
     for pid in all_pids:
@@ -522,6 +568,7 @@ def build_stock_levels() -> list[dict]:
             "units_on_hand_reserved": d.get("units_on_hand_reserved", 0),
             "lots": json.dumps(s.get("lots", {})),
             "lot_sublocations": json.dumps(s.get("lot_sublocations", {})),
+            "is_built": pid in built_skus,
         })
     return rows
 
