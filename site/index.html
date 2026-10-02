@@ -121,6 +121,24 @@
 
   .list-controls {
     margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .sku-search-input {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    width: 240px;
+  }
+
+  .sku-search-input::placeholder {
+    color: var(--text-muted);
   }
 
   .toggle-label {
@@ -1091,6 +1109,7 @@
           <input type="checkbox" id="shipping-blocked-checkbox" onchange="toggleShippingBlockedVisibility()">
           Show blocked orders
         </label>
+        <input type="text" class="sku-search-input" id="shipping-sku-search" placeholder="Search SKU or Order ID..." oninput="renderShippingList(currentShippingList)">
       </div>
       <div class="table-scroll-wrap">
 <table class="attack-table sticky-table">
@@ -1115,6 +1134,9 @@
 
     <div id="subtab-production" class="subtab-panel" style="display:none;">
       <div class="scope-note">Chemicals actively blocking live orders, ranked by orders blocked and age — quantity builds up to Reorder Point Max, not just current demand.</div>
+      <div class="list-controls">
+        <input type="text" class="sku-search-input" id="production-sku-search" placeholder="Search SKU..." oninput="renderProductionList(currentProductionListForBriefing)">
+      </div>
       <div class="table-scroll-wrap">
 <table class="attack-table sticky-table">
         <thead>
@@ -1136,6 +1158,9 @@
 
     <div id="subtab-stockbuilds" class="subtab-panel" style="display:none;">
       <div class="scope-note">Chemicals below Reorder Point Max with NO current order demand or backorder — proactive builds to stay ahead of high-selling items before they run out.</div>
+      <div class="list-controls">
+        <input type="text" class="sku-search-input" id="stockbuilds-sku-search" placeholder="Search SKU..." oninput="renderStockBuilds(currentStockBuildsListForBriefing)">
+      </div>
       <div class="table-scroll-wrap">
 <table class="attack-table sticky-table">
         <thead>
@@ -2462,7 +2487,15 @@ function formatPickLocations(locations) {
 
 function renderShippingList(list) {
   currentShippingList = list;
-  const filtered = shippingShowBlocked ? list : list.filter(o => o.isPickable);
+  let filtered = shippingShowBlocked ? list : list.filter(o => o.isPickable);
+  const searchEl = document.getElementById("shipping-sku-search");
+  const query = searchEl ? searchEl.value.trim().toLowerCase() : "";
+  if (query) {
+    filtered = filtered.filter(o =>
+      o.orderId.toLowerCase().includes(query) ||
+      o.items.some(it => it.sku.toLowerCase().includes(query))
+    );
+  }
   const stock = stockByProduct();
 
   document.getElementById("shipping-list-tbody").innerHTML = filtered.length ? filtered.map((o, i) => {
@@ -2522,7 +2555,7 @@ function renderShippingList(list) {
       <td>${pickLocationCell}</td>
       <td>${o.blockers.map(b => `${b.sku} (need ${b.needed}, have ${b.usable})`).join(', ')}</td>
     </tr>${detailRow}`;
-  }).join("") : `<tr><td colspan="10" class="bar-empty">${shippingShowBlocked ? 'No data' : 'Nothing pickable right now'}</td></tr>`;
+  }).join("") : `<tr><td colspan="10" class="bar-empty">${query ? 'No matching SKUs or Order IDs' : (shippingShowBlocked ? 'No data' : 'Nothing pickable right now')}</td></tr>`;
 }
 
 function toggleShippingDetail(rowId) {
@@ -2540,7 +2573,10 @@ function toggleShippingBlockedVisibility() {
 }
 
 function renderProductionList(list) {
-  document.getElementById("production-list-tbody").innerHTML = list.length ? list.map((p, i) => `
+  const searchEl = document.getElementById("production-sku-search");
+  const query = searchEl ? searchEl.value.trim().toLowerCase() : "";
+  const filtered = query ? list.filter(p => p.sku.toLowerCase().includes(query)) : list;
+  document.getElementById("production-list-tbody").innerHTML = filtered.length ? filtered.map((p, i) => `
     <tr>
       <td>${i + 1}</td>
       <td>${p.sku}</td>
@@ -2551,11 +2587,14 @@ function renderProductionList(list) {
       <td>${p.ordersBlocked ? formatAge(p.maxHours) : '—'}</td>
       <td>${p.isChannelPriority ? '<span class="priority-pill channel">Amazon/Walmart</span>' : ''}</td>
     </tr>
-  `).join("") : `<tr><td colspan="8" class="bar-empty">Nothing currently blocking an order</td></tr>`;
+  `).join("") : `<tr><td colspan="8" class="bar-empty">${query ? 'No matching SKUs' : 'Nothing currently blocking an order'}</td></tr>`;
 }
 
 function renderStockBuilds(list) {
-  document.getElementById("stock-builds-tbody").innerHTML = list.length ? list.map((p, i) => `
+  const searchEl = document.getElementById("stockbuilds-sku-search");
+  const query = searchEl ? searchEl.value.trim().toLowerCase() : "";
+  const filtered = query ? list.filter(p => p.sku.toLowerCase().includes(query)) : list;
+  document.getElementById("stock-builds-tbody").innerHTML = filtered.length ? filtered.map((p, i) => `
     <tr>
       <td>${i + 1}</td>
       <td>${p.sku}</td>
@@ -2565,7 +2604,7 @@ function renderStockBuilds(list) {
       <td>${p.pctOfMax.toFixed(0)}%</td>
       <td>${p.pctOfMax < 25 ? '<span class="status-pill overdue">Action now</span>' : ''}</td>
     </tr>
-  `).join("") : `<tr><td colspan="7" class="bar-empty">Nothing needs proactive restocking right now</td></tr>`;
+  `).join("") : `<tr><td colspan="7" class="bar-empty">${query ? 'No matching SKUs' : 'Nothing needs proactive restocking right now'}</td></tr>`;
 }
 
 // ---------------------------------------------------------------------
