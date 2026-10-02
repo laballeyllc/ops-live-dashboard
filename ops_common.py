@@ -97,6 +97,17 @@ BACKORDER_DEMAND_REPORT_URL = (
 # "built" (appears as a parent here) vs "purchased" (never does),
 # confirmed 2026-10-01: purchased SKUs were incorrectly appearing in
 # Stock Builds, which should only ever suggest things to BUILD.
+INVENTORY_VALUATION_REPORT_URL = (
+    "https://app.finaleinventory.com/laballeyllc/doc/report/pivotTable/"
+    "1790908079191/Report.json?format=jsonObject&data=stock"
+    "&attrName=%23%23stock022"
+    "&rowDimensions=~lJrNA0XAy0BjDMzMzMzNwMDAwAHAwJrNAf7Ay0Bz2AAAAAAAwMDAwMDAwJrNAdTAy0CF1AAAAAAAwMAAwMDAwJrNAgupU3RkXG5Qa25ny0BjDMzMzMzNwMDAwMDAwA"
+    "&metrics=~l5rNBkPAzP7AwMDAwMDAms0EuKpVbml0c1xuUW9Iy0BjDMzMzMzNwMDAwMDAwJrNBLutVW5pdHNcblBhY2tlZMtAYwzMzMzMzcDAwMDAwMCazQS_rlVuaXRzXG5UcmFuc2l0y0BjDMzMzMzNwMDAwMDAwJrNBMCqVW5pdHNcbldJUMtAYwzMzMzMzcDAwMDAwMCazQTlr1RvdGFsXG5BdmcgY29zdMtAaWZmZmZmZsDAwMDAwMCazQTasVRvdGFsXG5JdGVtIHByaWNly0BpZmZmZmZmwMDAwMDAwA"
+    "&styles=~gqtncm91cEhlYWRlcpYIwMDAwMCkYm9keZYIwMDAwMA"
+    "&filters=W1sic3RvY2tUeXBlIixbIlNUT0NLX0lURU1fT05fSEFORCIsIlNUT0NLX0lURU1fSU5fVFJBTlNJVCIsIlNUT0NLX0lURU1fV0lQIiwiU1RPQ0tfSVRFTV9QQUNLRUQiXSxudWxsXSxbInByb2R1Y3RTdGF0dXMiLFsiUFJPRFVDVF9BQ1RJVkUiXSxudWxsXSxbInByb2R1Y3RQcm9kdWN0VXJsIixudWxsLG51bGxdLFsicHJvZHVjdENhdGVnb3J5IixudWxsLG51bGxdLFsicHJvZHVjdE1hbnVmYWN0dXJlciIsbnVsbCxudWxsXSxbInN0b2NrTG9jYXRpb24iLG51bGwsbnVsbF0sWyJzdG9ja0VmZmVjdGl2ZURhdGUiLG51bGwsbnVsbF1d"
+    "&reportTitle=Inventory%20valuation%20by%20location%2C%20in%20units"
+)
+
 PRODUCT_BOM_REPORT_URL = (
     "https://app.finaleinventory.com/laballeyllc/doc/report/pivotTable/"
     "1790865378562/Report.json?format=jsonObject&data=productBom"
@@ -532,6 +543,59 @@ def fetch_built_sku_set() -> set[str]:
         if pid:
             built.add(pid.strip())
     return built
+
+
+def fetch_inventory_valuation() -> dict[str, dict]:
+    """Returns {product_id: {"units_on_hand": float, "total_value": float,
+    "fba_units_on_hand": float, "fba_total_value": float}}, from the
+    "Inventory valuation by location, in units" report. Confirmed
+    structure (2026-10-01): a header row per location (only "Location"
+    populated), followed by one detail row per product at that
+    location (that row's own "Location" is null). The same product can
+    appear multiple times, once per location it has stock in — summed
+    here across every non-Amazon location into the main figures, and
+    separately across every Amazon location into the fba_ figures, per
+    Casey's call to track Amazon FBA stock but report it separately
+    rather than merge it in or drop it (it isn't held at Lab Alley's
+    own physical location). "Total Avg cost" is Finale's own weighted-
+    average-cost valuation for that row — used directly rather than
+    recomputed from Average cost x QoH, since this project confirmed
+    some products have no Average cost configured at all (null), yet
+    Finale still reports a correct Total Avg cost of 0 for them rather
+    than a wrong one — recomputing ourselves from a null cost would
+    just rediscover the same gap less reliably.
+
+    "Total Item price" (a separate, apparently sales-price-based field,
+    confirmed populated even when cost is null) is deliberately NOT
+    used here — mixing a sales-price fallback into a cost-based
+    valuation would misrepresent what the number means."""
+    rows = fetch_finale_report(INVENTORY_VALUATION_REPORT_URL)
+    result: dict[str, dict] = {}
+    current_location = None
+    for row in rows:
+        loc = row.get("Location")
+        if loc:
+            current_location = loc
+            continue
+        pid = row.get("Product ID")
+        if not pid:
+            continue
+        pid = pid.strip()
+        qoh = row.get("Units\nQoH") or 0.0
+        value = row.get("Total\nAvg cost") or 0.0
+        if pid not in result:
+            result[pid] = {
+                "units_on_hand": 0.0, "total_value": 0.0,
+                "fba_units_on_hand": 0.0, "fba_total_value": 0.0,
+            }
+        is_fba = current_location is not None and "amazon" in current_location.lower()
+        if is_fba:
+            result[pid]["fba_units_on_hand"] += qoh
+            result[pid]["fba_total_value"] += value
+        else:
+            result[pid]["units_on_hand"] += qoh
+            result[pid]["total_value"] += value
+    return result
 
 
 def build_stock_levels() -> list[dict]:
@@ -1013,6 +1077,37 @@ def log_health_snapshot(rows: list[dict], stock: dict[str, dict], pulled_at: str
     client = get_supabase_client()
     client.table("health_snapshots").insert(snapshot).execute()
     print(f"Logged health snapshot: {snapshot}")
+
+
+def log_turnover_snapshot(pulled_at: str) -> None:
+    """Appends one row per product to turnover_snapshots — an
+    append-only daily history log (same spirit as health_snapshots),
+    not a "right now" replace like stock_levels. This is what inventory
+    turnover is computed from: (units or dollars sold over a period) /
+    (average of units_on_hand / total_value across that period's daily
+    snapshots). Daily cadence confirmed sufficient — inventory levels
+    don't move fast enough to need the 30-min cadence health_snapshots
+    uses. fba_* columns tracked separately per Casey's call to report
+    Amazon FBA stock separately rather than merge it into or drop it
+    from the main figures, since it isn't held at Lab Alley's own
+    physical location."""
+    valuation = fetch_inventory_valuation()
+    client = get_supabase_client()
+    snapshot_rows = [
+        {
+            "pulled_at": pulled_at,
+            "product_id": pid,
+            "units_on_hand": v["units_on_hand"],
+            "total_value": v["total_value"],
+            "fba_units_on_hand": v["fba_units_on_hand"],
+            "fba_total_value": v["fba_total_value"],
+        }
+        for pid, v in valuation.items()
+    ]
+    # Reuses the same batching helper already proven for stock_levels'
+    # bulk writes, rather than a new one-off chunking loop.
+    insert_in_batches(client, "turnover_snapshots", snapshot_rows)
+    print(f"Logged turnover snapshot for {len(snapshot_rows)} products at {pulled_at}")
 
 
 def read_stock_levels() -> dict[str, dict]:

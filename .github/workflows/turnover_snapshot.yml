@@ -1,0 +1,35 @@
+name: Turnover Snapshot Pull
+
+# Triggered externally the same way as the other three pulls
+# (cron-job.org -> GitHub API -> workflow_dispatch) rather than GitHub's
+# own native schedule:, already confirmed unreliable for this account.
+# Set the external trigger to once per day (not the 30-min cadence the
+# other pulls use) -- inventory levels don't move fast enough to need
+# finer granularity, and a daily cadence keeps turnover_snapshots lean.
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: turnover-snapshot-pull
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pull_turnover_snapshot.py
+        env:
+          FINALE_API_KEY: ${{ secrets.FINALE_API_KEY }}
+          FINALE_API_SECRET: ${{ secrets.FINALE_API_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python pull_turnover_snapshot.py
