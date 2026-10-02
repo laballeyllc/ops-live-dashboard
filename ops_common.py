@@ -653,8 +653,20 @@ def fetch_product_sales_totals(start_date: str, end_date: str) -> dict[str, dict
         order_id = row.get("Order ID")
         if not order_id or order_id == "TOTAL:" or not current_product:
             continue
-        qty = row.get("Quantity") or 0
-        subtotal = row.get("Subtotal") or 0
+        # CONFIRMED BUG, FIXED (2026-10-03): `or 0` only replaces falsy
+        # values (None, 0, "") — it does NOT catch other non-numeric
+        # junk, and Finale's real data turned out to include rows with
+        # a real (non-"TOTAL:") Order ID but a blank-space string
+        # Quantity/Subtotal (" ", which is truthy in Python, so `or 0`
+        # silently let it through as a string, crashing the += below).
+        # Explicit isinstance checks are robust against ANY non-numeric
+        # value, not just the ones this project happened to already
+        # see — safer than chasing every individual blank-marker variant
+        # Finale might use.
+        raw_qty = row.get("Quantity")
+        raw_subtotal = row.get("Subtotal")
+        qty = raw_qty if isinstance(raw_qty, (int, float)) else 0
+        subtotal = raw_subtotal if isinstance(raw_subtotal, (int, float)) else 0
         if current_product not in totals:
             totals[current_product] = {"units_sold": 0.0, "dollars_sold": 0.0}
         totals[current_product]["units_sold"] += qty
