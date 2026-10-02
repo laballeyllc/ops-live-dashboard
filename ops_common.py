@@ -14,6 +14,8 @@ import os
 import re
 import time
 import json
+import base64
+import urllib.parse
 import requests
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
@@ -606,6 +608,140 @@ def fetch_inventory_valuation() -> dict[str, dict]:
             result[pid]["units_on_hand"] += qoh
             result[pid]["total_value"] += value
     return result
+
+
+def fetch_product_sales_totals(start_date: str, end_date: str) -> dict[str, dict]:
+    """Returns {product_id: {"units_sold": float, "dollars_sold": float}}
+    for real orders in [start_date, end_date] (YYYY-MM-DD, inclusive),
+    from Finale's "Product sales history" report. Confirmed structure
+    (2026-10-03): a header row per Product ID (only "Product ID"
+    populated), then a header row per Order date, then one detail row
+    per Order ID with that line's Quantity/Subtotal — same nested
+    header/detail tracking pattern as BOM and valuation, just one level
+    deeper. "TOTAL:" rows are Finale's own subtotal rows for each date
+    group, deliberately skipped (not real line items).
+
+    FBA-bound products are tracked under their own distinct SKU
+    (confirmed directly, e.g. "EAP190-1L- FBA" is a completely separate
+    Product ID from "EAP190-1L", consistently between this report and
+    inventory valuation) — so no separate location/channel join is
+    needed here at all; summing by Product ID already keeps FBA and
+    Dripping Springs sales naturally apart, the same way
+    turnover_snapshots already does for inventory position."""
+    date_range_json = json.dumps([start_date, end_date])
+    filters = [
+        ["productProductUrl", None, None],
+        ["productCategory", None, None],
+        ["orderCustomer", None, None],
+        ["orderOrderDate", date_range_json, None],
+        ["orderOrigin", None, None],
+        ["orderType", ["SALES_ORDER"], None],
+        ["orderStatus", ["ORDER_COMPLETED", "ORDER_CREATED", "ORDER_LOCKED"], None],
+    ]
+    filters_b64 = base64.b64encode(json.dumps(filters).encode("utf-8")).decode("ascii")
+    filters_param = urllib.parse.quote(filters_b64, safe="")
+    url = re.sub(r"&filters=[^&]+", f"&filters={filters_param}", PRODUCT_SALES_HISTORY_REPORT_URL)
+
+    rows = fetch_finale_report(url)
+    totals: dict[str, dict] = {}
+    current_product = None
+    for row in rows:
+        pid = row.get("Product ID")
+        if pid and pid != "--":
+            current_product = pid.strip()
+            continue
+        order_id = row.get("Order ID")
+        if not order_id or order_id == "TOTAL:" or not current_product:
+            continue
+        qty = row.get("Quantity") or 0
+        subtotal = row.get("Subtotal") or 0
+        if current_product not in totals:
+            totals[current_product] = {"units_sold": 0.0, "dollars_sold": 0.0}
+        totals[current_product]["units_sold"] += qty
+        totals[current_product]["dollars_sold"] += subtotal
+    return totals
+
+
+def compute_turnover(pulled_at: str) -> list[dict]:
+    """Computes the real turnover ratio per product:
+    (units/dollars sold over the elapsed period) / (average units/value
+    held over that same period). Uses whatever period has ACTUALLY
+    elapsed since snapshot logging started (confirmed: not a fixed
+    90-day assumption, which would misrepresent a ratio we don't have
+    enough real history to support yet) — grows day by day toward 90 as
+    real history accumulates, matching the same honesty principle as
+    the dashboard's "gathering baseline data" messaging."""
+    client = get_supabase_client()
+    snapshot_result = client.table("turnover_snapshots").select("*").execute()
+    snapshots = snapshot_result.data or []
+    if not snapshots:
+        print("No turnover_snapshots history yet — nothing to compute.")
+        return []
+
+    dates = sorted(set(r["pulled_at"] for r in snapshots))
+    start_date, end_date = dates[0], dates[-1]
+    days_elapsed = len(dates)
+    print(f"Computing turnover over the actual elapsed period: {start_date} to {end_date} ({days_elapsed} days)")
+
+    by_product: dict[str, list[dict]] = {}
+    for row in snapshots:
+        by_product.setdefault(row["product_id"], []).append(row)
+
+    print("Pulling Product sales history from Finale for this same period...")
+    sales = fetch_product_sales_totals(start_date, end_date)
+    print(f"  {len(sales)} products with sales in this period")
+
+    results = []
+    for pid, product_snapshots in by_product.items():
+        avg_units = sum(r["units_on_hand"] for r in product_snapshots) / len(product_snapshots)
+        avg_value = sum(r["total_value"] for r in product_snapshots) / len(product_snapshots)
+        avg_fba_units = sum(r["fba_units_on_hand"] for r in product_snapshots) / len(product_snapshots)
+        avg_fba_value = sum(r["fba_total_value"] for r in product_snapshots) / len(product_snapshots)
+
+        sold = sales.get(pid, {"units_sold": 0.0, "dollars_sold": 0.0})
+
+        # Annualized (turns per year), matching the industry-standard
+        # convention and the approved mockup's "X.Xx/yr" framing —
+        # otherwise the raw ratio's scale would shift as days_elapsed
+        # grows (e.g. "0.3" at 3 days vs a much larger number once
+        # actual history exists), making it impossible to compare day
+        # to day. Early on, with few real days behind it, this estimate
+        # is inherently noisy — that's exactly what the "gathering
+        # baseline data" banner already warns about, not a new concern
+        # introduced by annualizing.
+        annualize = 365.0 / days_elapsed
+        results.append({
+            "computed_at": pulled_at,
+            "product_id": pid,
+            "days_elapsed": days_elapsed,
+            "avg_units_on_hand": avg_units,
+            "avg_value_on_hand": avg_value,
+            "avg_fba_units_on_hand": avg_fba_units,
+            "avg_fba_value_on_hand": avg_fba_value,
+            "units_sold": sold["units_sold"],
+            "dollars_sold": sold["dollars_sold"],
+            # None (not 0) when the average is zero -- a turnover ratio
+            # is undefined without any inventory to divide by, not
+            # correctly zero. Surfaced honestly in the frontend rather
+            # than showing a misleading 0.0x.
+            "turnover_units": (sold["units_sold"] / avg_units * annualize) if avg_units > 0 else None,
+            "turnover_dollars": (sold["dollars_sold"] / avg_value * annualize) if avg_value > 0 else None,
+        })
+    return results
+
+
+def write_turnover_computed(results: list[dict]) -> None:
+    """Replaces the entire turnover_computed table every run — this is
+    the CURRENT best computation, not a historical log itself (the real
+    history already lives in turnover_snapshots, which this is derived
+    from); same "right now" relationship stock_levels has to live_queue."""
+    client = get_supabase_client()
+    client.table("turnover_computed").delete().gt("id", 0).execute()
+    if not results:
+        print("No turnover results to write.")
+        return
+    insert_in_batches(client, "turnover_computed", results)
+    print(f"Wrote {len(results)} turnover computations to Supabase.")
 
 
 def build_stock_levels() -> list[dict]:
