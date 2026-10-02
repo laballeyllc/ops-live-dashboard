@@ -97,6 +97,16 @@ BACKORDER_DEMAND_REPORT_URL = (
 # "built" (appears as a parent here) vs "purchased" (never does),
 # confirmed 2026-10-01: purchased SKUs were incorrectly appearing in
 # Stock Builds, which should only ever suggest things to BUILD.
+PRODUCT_SALES_HISTORY_REPORT_URL = (
+    "https://app.finaleinventory.com/laballeyllc/doc/report/pivotTable/"
+    "1790374113747/Report.json?format=jsonObject&data=orderItem"
+    "&attrName=%23%23sale011"
+    "&rowDimensions=~n5rNAf7Ay0BzDMzMzMzNwMDAwMDAwJrNAdTAy0CBdmZmZmZmwMDAwAHAwJrM1cDLQGlmZmZmZmbAwMDAAcDAmszWwMtAcwzMzMzMzcDAwMDAwMCazQEFwMtAZ9AAAAAAAMDAwMDAwMCazLnAy0BzDMzMzMzNwMDAwMDAwJrMxMAAwMDAwMDAwJrMyMDLQGT0euFHrhTAwMDAwMDAmszKwMtAZPR64UeuFMDAwMDAwMCazNHAy0Bk9HrhR64UwMDAwMDAwJq0cHJvZHVjdFVzZXJVc2VyMTAwMjLAzP7AwMDAwMDAmrRwcm9kdWN0VXNlclVzZXIxMDAyM8DM_sDAwMDAwMCatHByb2R1Y3RVc2VyVXNlcjEwMDI0wMz-wMDAwMDAwJq0cHJvZHVjdFVzZXJVc2VyMTAwMjXAzP7AwMDAwMDAmrRwcm9kdWN0VXNlclVzZXIxMDAyNsDM_sDAwMDAwMA"
+    "&metrics=~kZrNBaWoU3VidG90YWzLQGT0euFHrhTAwMDAwMDA"
+    "&filters=W1sicHJvZHVjdFByb2R1Y3RVcmwiLCBudWxsLCBudWxsXSwgWyJwcm9kdWN0Q2F0ZWdvcnkiLCBudWxsLCBudWxsXSwgWyJvcmRlckN1c3RvbWVyIiwgbnVsbCwgbnVsbF0sIFsib3JkZXJPcmRlckRhdGUiLCAiW251bGwsbnVsbF0iLCBudWxsXSwgWyJvcmRlck9yaWdpbiIsIG51bGwsIG51bGxdLCBbIm9yZGVyVHlwZSIsIFsiU0FMRVNfT1JERVIiXSwgbnVsbF0sIFsib3JkZXJTdGF0dXMiLCBbIk9SREVSX0NPTVBMRVRFRCIsICJPUkRFUl9DUkVBVEVEIiwgIk9SREVSX0xPQ0tFRCJdLCBudWxsXV0%3D"
+    "&reportTitle=Product%20sales%20history"
+)
+
 INVENTORY_VALUATION_REPORT_URL = (
     "https://app.finaleinventory.com/laballeyllc/doc/report/pivotTable/"
     "1790908079191/Report.json?format=jsonObject&data=stock"

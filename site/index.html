@@ -1328,11 +1328,11 @@
       <div class="summary-row" style="margin-bottom:16px;">
         <div class="summary-card">
           <div class="value" id="turnover-kpi-main">—</div>
-          <div class="label">Current inventory position — Dripping Springs</div>
+          <div class="label" id="turnover-kpi-main-label">Current inventory position — Dripping Springs</div>
         </div>
         <div class="summary-card">
           <div class="value" id="turnover-kpi-fba">—</div>
-          <div class="label">Current inventory position — Amazon FBA</div>
+          <div class="label" id="turnover-kpi-fba-label">Current inventory position — Amazon FBA</div>
         </div>
         <div class="summary-card">
           <div class="value" id="turnover-kpi-days">—</div>
@@ -1355,9 +1355,11 @@
         <table class="attack-table sticky-table">
           <thead>
             <tr>
+              <th></th>
               <th>SKU</th>
               <th>Category</th>
               <th id="turnover-amount-header">Units on hand</th>
+              <th>Turnover</th>
               <th>Location</th>
             </tr>
           </thead>
@@ -3083,33 +3085,43 @@ function renderOffHoursCard() {
 }
 
 // ---------------------------------------------------------------------
-// Inventory Turnover tab. IMPORTANT HONESTY NOTE: this does not yet
-// compute a real turnover ratio (units/dollars sold / average
-// inventory) — that needs both (a) enough daily snapshot history to
-// average over (logging started 2026-10-01), and (b) sales-volume data,
-// which isn't wired into this dashboard's pipeline yet (it lives in the
-// separate reorder-point project's Finale report pulls). What IS real
-// here: the search, category filter, and the actual current inventory
-// position per SKU from turnover_snapshots — framed honestly as
-// "current position," never as a fabricated turnover number.
+// Inventory Turnover tab. Real, computed turnover ratios (annualized —
+// turns per year, industry-standard convention) come from
+// turnover_computed, derived server-side each day from turnover_snapshots
+// history plus Finale sales data (see compute_turnover() in
+// ops_common.py). Uses whatever period has ACTUALLY elapsed since
+// logging started (not a fixed 90-day assumption) — early figures are
+// inherently noisier with less history behind them, which is exactly
+// what the "gathering baseline data" banner communicates.
 const TURNOVER_BASELINE_DAYS = 30; // same threshold as Aging/Volume
 
 let turnoverMode = "units";
 
 function turnoverDaysCollected() {
+  // Prefer the real days_elapsed the actual computation used; fall
+  // back to counting distinct snapshot dates directly if no computed
+  // data exists yet (e.g. right after this feature first ships, before
+  // the first daily pull has run with it).
+  if (currentTurnoverComputed.length) return currentTurnoverComputed[0].days_elapsed;
   return new Set(currentTurnoverSnapshots.map(r => r.pulled_at)).size;
 }
 
 function turnoverLatestByProduct() {
-  // Keeps only each product's MOST RECENT snapshot row (snapshots
-  // accumulate one row per product per day; the table shows current
-  // position, not history, until the real turnover calc exists).
+  // Keeps only each product's MOST RECENT snapshot row — current
+  // position for display, separate from the averages compute_turnover()
+  // already used for the actual ratio.
   const latest = new Map();
   for (const row of currentTurnoverSnapshots) {
     const existing = latest.get(row.product_id);
     if (!existing || row.pulled_at > existing.pulled_at) latest.set(row.product_id, row);
   }
   return latest;
+}
+
+function turnoverComputedByProduct() {
+  const map = new Map();
+  for (const row of currentTurnoverComputed) map.set(row.product_id, row);
+  return map;
 }
 
 function turnoverCategoryLookup() {
@@ -3135,6 +3147,50 @@ function setTurnoverMode(mode) {
 }
 
 function renderTurnoverKpis() {
+  const computed = currentTurnoverComputed;
+  const haveComputed = computed.length > 0;
+
+  if (haveComputed) {
+    // Overall ratio = total sold / total average on hand, across every
+    // product with a defined ratio — a weighted average, not an
+    // average-of-ratios (which would let a tiny, fast-turning SKU skew
+    // the headline number as much as your highest-volume product).
+    let mainSold = 0, mainAvg = 0, fbaSold = 0, fbaAvg = 0;
+    for (const row of computed) {
+      const sold = turnoverMode === "units" ? row.units_sold : row.dollars_sold;
+      const avgMain = turnoverMode === "units" ? row.avg_units_on_hand : row.avg_value_on_hand;
+      const avgFba = turnoverMode === "units" ? row.avg_fba_units_on_hand : row.avg_fba_value_on_hand;
+      mainSold += sold || 0;
+      mainAvg += avgMain || 0;
+      // FBA-held products' sales are already counted once in `sold`
+      // above (sales are summed by the product's OWN SKU — a product
+      // held at FBA, like "EAP190-1L- FBA", has its sales counted
+      // there, not double-counted here) — this only needs the FBA
+      // average-on-hand side for its own ratio.
+      fbaAvg += avgFba || 0;
+      if (avgFba > 0) fbaSold += sold || 0;
+    }
+    const days = turnoverDaysCollected();
+    const annualize = 365.0 / Math.max(1, days);
+    const mainRatio = mainAvg > 0 ? (mainSold / mainAvg * annualize) : null;
+    const fbaRatio = fbaAvg > 0 ? (fbaSold / fbaAvg * annualize) : null;
+    document.getElementById("turnover-kpi-main").innerHTML = mainRatio !== null
+      ? `${mainRatio.toFixed(1)}x<span style="font-size:13px;color:var(--text-muted);font-weight:400;">/yr</span>`
+      : "—";
+    document.getElementById("turnover-kpi-fba").innerHTML = fbaRatio !== null
+      ? `${fbaRatio.toFixed(1)}x<span style="font-size:13px;color:var(--text-muted);font-weight:400;">/yr</span>`
+      : "—";
+    document.getElementById("turnover-kpi-main-label").textContent = "Turnover — Dripping Springs";
+    document.getElementById("turnover-kpi-fba-label").textContent = "Turnover — Amazon FBA";
+    return;
+  }
+
+  document.getElementById("turnover-kpi-main-label").textContent = "Current inventory position — Dripping Springs";
+  document.getElementById("turnover-kpi-fba-label").textContent = "Current inventory position — Amazon FBA";
+
+  // No computed data yet (first run after this feature shipped, before
+  // the daily pull has run with it) — fall back to current position,
+  // same honest framing as before.
   const latest = turnoverLatestByProduct();
   let mainUnits = 0, mainValue = 0, fbaUnits = 0, fbaValue = 0;
   for (const row of latest.values()) {
@@ -3158,7 +3214,9 @@ function renderTurnoverTab() {
 
   if (daysCollected < TURNOVER_BASELINE_DAYS) {
     banner.style.display = "block";
-    sub.textContent = `${daysCollected} of ${TURNOVER_BASELINE_DAYS} days collected — turnover ratios need this history before they're statistically meaningful. Showing current inventory position in the meantime.`;
+    sub.textContent = currentTurnoverComputed.length
+      ? `${daysCollected} of ${TURNOVER_BASELINE_DAYS} days collected — the turnover ratios below are real, but based on limited history so far and will get more stable as more days accumulate.`
+      : `${daysCollected} of ${TURNOVER_BASELINE_DAYS} days collected — turnover ratios need this history before they're statistically meaningful. Showing current inventory position in the meantime.`;
   } else {
     banner.style.display = "none";
   }
@@ -3180,47 +3238,84 @@ function renderTurnoverTab() {
   renderTurnoverTable();
 }
 
+function turnoverColor(t) {
+  if (t === null || t === undefined) return "var(--text-muted)";
+  if (t < 4) return "#e34948";
+  if (t < 8) return "#eda100";
+  return "#1baf7a";
+}
+
+function turnoverHealthIcon(t) {
+  if (t === null || t === undefined) return '<span title="Not enough data yet" style="color:var(--text-muted);">●</span>';
+  const color = turnoverColor(t);
+  const symbol = t < 4 ? "&#9650;" : t < 8 ? "&#9679;" : "&#10003;"; // slow=triangle, watch=dot, healthy=check
+  return `<span style="color:${color};" title="${t.toFixed(1)}x/yr">${symbol}</span>`;
+}
+
 function renderTurnoverTable() {
   const latest = turnoverLatestByProduct();
+  const computedByProduct = turnoverComputedByProduct();
   const categoryLookup = turnoverCategoryLookup();
   const query = document.getElementById("turnover-sku-search").value.trim().toLowerCase();
   const category = document.getElementById("turnover-category-select").value;
 
-  let rows = [...latest.entries()].map(([pid, r]) => ({
-    sku: pid,
-    category: categoryLookup.get(pid) || "Uncategorized",
-    units: r.units_on_hand || 0,
-    value: r.total_value || 0,
-    fbaUnits: r.fba_units_on_hand || 0,
-    fbaValue: r.fba_total_value || 0,
-  }));
+  let rows = [...latest.entries()].map(([pid, r]) => {
+    const c = computedByProduct.get(pid);
+    return {
+      sku: pid,
+      category: categoryLookup.get(pid) || "Uncategorized",
+      units: r.units_on_hand || 0,
+      value: r.total_value || 0,
+      fbaUnits: r.fba_units_on_hand || 0,
+      fbaValue: r.fba_total_value || 0,
+      turnoverMain: c ? (turnoverMode === "units" ? c.turnover_units : c.turnover_dollars) : null,
+      turnoverFba: c && (c.avg_fba_units_on_hand > 0 || c.avg_fba_value_on_hand > 0)
+        ? (turnoverMode === "units"
+            ? (c.avg_fba_units_on_hand > 0 ? (c.units_sold / c.avg_fba_units_on_hand) * (365 / c.days_elapsed) : null)
+            : (c.avg_fba_value_on_hand > 0 ? (c.dollars_sold / c.avg_fba_value_on_hand) * (365 / c.days_elapsed) : null))
+        : null,
+    };
+  });
 
   if (query) rows = rows.filter(r => r.sku.toLowerCase().includes(query));
   if (category !== "all") rows = rows.filter(r => r.category === category);
-  rows.sort((a, b) => a.sku.localeCompare(b.sku));
+  // Slowest movers first (nulls — not enough data — sort to the end,
+  // not mixed in as if they were worse than every real number).
+  rows.sort((a, b) => {
+    if (a.turnoverMain === null && b.turnoverMain === null) return a.sku.localeCompare(b.sku);
+    if (a.turnoverMain === null) return 1;
+    if (b.turnoverMain === null) return -1;
+    return a.turnoverMain - b.turnoverMain;
+  });
 
   document.getElementById("turnover-amount-header").textContent = turnoverMode === "units" ? "Units on hand" : "Value on hand";
 
   const tbody = document.getElementById("turnover-tbody");
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="4" class="bar-empty">${query || category !== "all" ? "No matching SKUs" : "No snapshot data yet"}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="bar-empty">${query || category !== "all" ? "No matching SKUs" : "No snapshot data yet"}</td></tr>`;
     return;
   }
 
   tbody.innerHTML = rows.map(r => {
     const mainDisplay = turnoverMode === "units" ? r.units.toLocaleString(undefined, { maximumFractionDigits: 1 }) : `$${r.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
     const fbaDisplay = turnoverMode === "units" ? r.fbaUnits.toLocaleString(undefined, { maximumFractionDigits: 1 }) : `$${r.fbaValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    const mainTurnoverLabel = r.turnoverMain === null ? "no data" : `${r.turnoverMain.toFixed(1)}x/yr`;
+    const fbaTurnoverLabel = r.turnoverFba === null ? "no data" : `${r.turnoverFba.toFixed(1)}x/yr`;
     let out = `<tr>
+      <td style="text-align:center;">${turnoverHealthIcon(r.turnoverMain)}</td>
       <td>${r.sku}</td>
       <td>${r.category}</td>
       <td>${mainDisplay}</td>
+      <td style="color:${turnoverColor(r.turnoverMain)}; font-weight:500;">${mainTurnoverLabel}</td>
       <td><span class="priority-pill">Dripping Springs</span></td>
     </tr>`;
     if (r.fbaUnits > 0 || r.fbaValue > 0) {
       out += `<tr>
+        <td style="text-align:center;">${turnoverHealthIcon(r.turnoverFba)}</td>
         <td>${r.sku}</td>
         <td>${r.category}</td>
         <td>${fbaDisplay}</td>
+        <td style="color:${turnoverColor(r.turnoverFba)}; font-weight:500;">${fbaTurnoverLabel}</td>
         <td><span class="priority-pill channel">Amazon FBA</span></td>
       </tr>`;
     }
@@ -3637,6 +3732,7 @@ function formatLastUpdated(pulledAtIso) {
 let currentStockLevels = [];
 let currentHealthSnapshots = [];
 let currentTurnoverSnapshots = [];
+let currentTurnoverComputed = [];
 
 async function refresh() {
   try {
@@ -3680,6 +3776,19 @@ async function refresh() {
     } catch (turnoverErr) {
       console.error("turnover_snapshots fetch failed (non-fatal):", turnoverErr);
       currentTurnoverSnapshots = [];
+    }
+
+    // The real, computed turnover ratios — derived server-side from
+    // turnover_snapshots history plus Finale sales data each time the
+    // daily pull runs (see compute_turnover() in ops_common.py). Same
+    // non-fatal pattern; empty until the first run after this feature
+    // was added.
+    try {
+      const computedResult = await client.from("turnover_computed").select("*");
+      currentTurnoverComputed = computedResult.data || [];
+    } catch (computedErr) {
+      console.error("turnover_computed fetch failed (non-fatal):", computedErr);
+      currentTurnoverComputed = [];
     }
 
     const dot = document.getElementById("last-updated-dot");
