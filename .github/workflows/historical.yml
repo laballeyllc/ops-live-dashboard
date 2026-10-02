@@ -1,29 +1,31 @@
 name: Historical Banking Pull
 
-# Runs twice a day: once at end-of-day (catches that day's shipping
-# activity) and once the next morning (catches anything that shipped
-# late, between the evening run and midnight, so it gets reconciled
-# into the right day). Writes to Supabase's 'snapshots' table, which is
-# append-only — every run adds rows, nothing is ever overwritten.
+# Triggered externally (an outside cron service calling GitHub's API to
+# fire workflow_dispatch) rather than GitHub's own native `schedule:`
+# trigger — same reasoning as live_queue.yml: the native scheduler is
+# currently unreliable platform-wide, drifting hours off its intended
+# times, while manual/API-triggered runs fire correctly every time.
 #
-# IMPORTANT — timezone: GitHub Actions cron always runs in UTC. The two
-# times below (22:00 and 12:00 UTC) correspond to 5:00 PM and 7:00 AM
-# Central *Daylight* Time (UTC-5), which is correct right now (Sep 2026).
-# When Daylight Saving ends in November and Central reverts to Standard
-# Time (UTC-6), these same UTC times will land at 4:00 PM and 6:00 AM
-# local instead — an hour early. If you want to correct for that twice a
-# year, change the two numbers below:
-#   Daylight Saving (Mar-Nov): 22 and 12
-#   Standard Time    (Nov-Mar): 23 and 13
-# Left as a manual, once-a-season adjustment rather than automated,
-# since an hour of drift on a banking job twice a year is a minor,
-# honest trade-off — not worth the added complexity of a self-adjusting
-# schedule for this use case.
+# CONFIRMED, FIXED (2026-10-03): this file still had BOTH the native
+# schedule: block AND workflow_dispatch active at the same time — the
+# schedule: block was apparently never removed when the external
+# trigger was added. Result: this workflow was firing twice as often as
+# intended, every single day since at least 2026-09-16, once cleanly
+# from the external trigger and once more, unpredictably drifted, from
+# GitHub's own flaky scheduler — exactly the extra, irregularly-timed
+# rows found in the snapshots table. schedule: is removed below; only
+# the external trigger remains, matching every other workflow in this
+# project.
+#
+# The actual 5pm/7am timing now lives entirely in the EXTERNAL
+# scheduler's configuration (cron-job.org or similar). The same DST
+# caveat as before still applies there: Central Daylight Time (Mar-Nov)
+# is UTC-5, Standard Time (Nov-Mar) is UTC-6 — adjust the external
+# scheduler's cron times by an hour each season if you want exact local
+# time, same trade-off as before (an hour of drift twice a year on a
+# banking job is a minor, accepted trade-off, not automated away).
 on:
-  schedule:
-    - cron: "0 22 * * *"  # ~5:00 PM Central (Daylight Time)
-    - cron: "0 12 * * *"  # ~7:00 AM Central (Daylight Time)
-  workflow_dispatch: {}  # lets you trigger a run manually from the Actions tab, for testing
+  workflow_dispatch: {}
 
 concurrency:
   group: historical-banking-pull
