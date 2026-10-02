@@ -141,6 +141,26 @@
     color: var(--text-muted);
   }
 
+  .turnover-gathering-banner {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+
+  .turnover-gathering-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  .turnover-gathering-sub {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
   .toggle-label {
     display: flex;
     align-items: center;
@@ -1004,6 +1024,7 @@
   <button class="tab-btn active" id="tab-btn-breakdown" onclick="switchTab('breakdown')">Queue Breakdown</button>
   <button class="tab-btn" id="tab-btn-strategy" onclick="switchTab('strategy')">Queue Strategy Tools</button>
   <button class="tab-btn" id="tab-btn-history" onclick="switchTab('history')">Historical Analysis</button>
+  <button class="tab-btn" id="tab-btn-turnover" onclick="switchTab('turnover')">Inventory Turnover</button>
 </div>
 
 <main>
@@ -1285,6 +1306,63 @@
         <div class="health-label">Average Build % — production hours, selected range</div>
         <div id="history-range-value" class="history-rolling-value">—</div>
         <div id="history-range-sub" class="health-label"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-turnover" class="tab-panel" style="display:none;">
+    <h3 class="history-section-title">Inventory Turnover</h3>
+    <div class="history-note">How efficiently stock is moving — (units or dollars sold over a period) &divide; (average inventory held over that period). Logged once daily, starting 2026-10-01; needs real history to be meaningful before showing live numbers, the same honesty rule already used for Aging/Volume on the Queue Breakdown health dial.</div>
+
+    <div id="turnover-gathering-banner" class="turnover-gathering-banner" style="display:none;">
+      <div class="turnover-gathering-title">Gathering baseline data</div>
+      <div class="turnover-gathering-sub" id="turnover-gathering-sub"></div>
+    </div>
+
+    <div id="turnover-content">
+      <div class="list-controls">
+        <button class="toggle-btn active" id="turnover-mode-units" onclick="setTurnoverMode('units')">By units</button>
+        <button class="toggle-btn" id="turnover-mode-dollars" onclick="setTurnoverMode('dollars')">By dollar value</button>
+      </div>
+
+      <div class="summary-row" style="margin-bottom:16px;">
+        <div class="summary-card">
+          <div class="value" id="turnover-kpi-main">—</div>
+          <div class="label">Current inventory position — Dripping Springs</div>
+        </div>
+        <div class="summary-card">
+          <div class="value" id="turnover-kpi-fba">—</div>
+          <div class="label">Current inventory position — Amazon FBA</div>
+        </div>
+        <div class="summary-card">
+          <div class="value" id="turnover-kpi-days">—</div>
+          <div class="label">Days of snapshot history collected</div>
+        </div>
+        <div class="summary-card">
+          <div class="value" id="turnover-kpi-skus">—</div>
+          <div class="label">SKUs currently tracked</div>
+        </div>
+      </div>
+
+      <div class="list-controls">
+        <input type="text" class="sku-search-input" id="turnover-sku-search" placeholder="Search SKU or description..." oninput="renderTurnoverTable()">
+        <select id="turnover-category-select" class="sku-search-input" onchange="renderTurnoverTable()" style="width:180px;">
+          <option value="all">All categories</option>
+        </select>
+      </div>
+
+      <div class="table-scroll-wrap">
+        <table class="attack-table sticky-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Category</th>
+              <th id="turnover-amount-header">Units on hand</th>
+              <th>Location</th>
+            </tr>
+          </thead>
+          <tbody id="turnover-tbody"></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -2885,7 +2963,7 @@ let hasData = false;
 let activeTab = "breakdown";
 
 function updateTabVisibility() {
-  const tabs = ["breakdown", "strategy", "history"];
+  const tabs = ["breakdown", "strategy", "history", "turnover"];
   for (const t of tabs) {
     const el = document.getElementById(`tab-${t}`);
     if (!hasData) {
@@ -2898,12 +2976,13 @@ function updateTabVisibility() {
 
 function switchTab(tab) {
   activeTab = tab;
-  const tabs = ["breakdown", "strategy", "history"];
+  const tabs = ["breakdown", "strategy", "history", "turnover"];
   for (const t of tabs) {
     document.getElementById(`tab-btn-${t}`).classList.toggle("active", t === tab);
   }
   updateTabVisibility();
   if (tab === "history") renderHistoryTab();
+  if (tab === "turnover") renderTurnoverTab();
 }
 
 function toggleSubsection(bodyId, chevronId) {
@@ -3001,6 +3080,152 @@ function renderOffHoursCard() {
       <div class="stat-sub">Build % if the ${offHoursCount} order${offHoursCount === 1 ? '' : 's'} that arrived during the most recent ${gapLabel} gap weren't counted yet (${adjustedTotal} orders counted instead of ${adjustedTotal + offHoursCount})</div>
     `;
   }
+}
+
+// ---------------------------------------------------------------------
+// Inventory Turnover tab. IMPORTANT HONESTY NOTE: this does not yet
+// compute a real turnover ratio (units/dollars sold / average
+// inventory) — that needs both (a) enough daily snapshot history to
+// average over (logging started 2026-10-01), and (b) sales-volume data,
+// which isn't wired into this dashboard's pipeline yet (it lives in the
+// separate reorder-point project's Finale report pulls). What IS real
+// here: the search, category filter, and the actual current inventory
+// position per SKU from turnover_snapshots — framed honestly as
+// "current position," never as a fabricated turnover number.
+const TURNOVER_BASELINE_DAYS = 30; // same threshold as Aging/Volume
+
+let turnoverMode = "units";
+
+function turnoverDaysCollected() {
+  return new Set(currentTurnoverSnapshots.map(r => r.pulled_at)).size;
+}
+
+function turnoverLatestByProduct() {
+  // Keeps only each product's MOST RECENT snapshot row (snapshots
+  // accumulate one row per product per day; the table shows current
+  // position, not history, until the real turnover calc exists).
+  const latest = new Map();
+  for (const row of currentTurnoverSnapshots) {
+    const existing = latest.get(row.product_id);
+    if (!existing || row.pulled_at > existing.pulled_at) latest.set(row.product_id, row);
+  }
+  return latest;
+}
+
+function turnoverCategoryLookup() {
+  // Best-effort category lookup from live_queue — only covers products
+  // currently in the queue, so many SKUs will fall back to
+  // "Uncategorized" until a proper catalog-wide category source is
+  // wired in. Flagged as a known preview limitation, not hidden.
+  const lookup = new Map();
+  for (const row of currentRows) {
+    if (row.product_id && row.category && !lookup.has(row.product_id)) {
+      lookup.set(row.product_id, row.category);
+    }
+  }
+  return lookup;
+}
+
+function setTurnoverMode(mode) {
+  turnoverMode = mode;
+  document.getElementById("turnover-mode-units").classList.toggle("active", mode === "units");
+  document.getElementById("turnover-mode-dollars").classList.toggle("active", mode === "dollars");
+  renderTurnoverKpis();
+  renderTurnoverTable();
+}
+
+function renderTurnoverKpis() {
+  const latest = turnoverLatestByProduct();
+  let mainUnits = 0, mainValue = 0, fbaUnits = 0, fbaValue = 0;
+  for (const row of latest.values()) {
+    mainUnits += row.units_on_hand || 0;
+    mainValue += row.total_value || 0;
+    fbaUnits += row.fba_units_on_hand || 0;
+    fbaValue += row.fba_total_value || 0;
+  }
+  document.getElementById("turnover-kpi-main").textContent = turnoverMode === "units"
+    ? mainUnits.toLocaleString(undefined, { maximumFractionDigits: 0 })
+    : `$${mainValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  document.getElementById("turnover-kpi-fba").textContent = turnoverMode === "units"
+    ? fbaUnits.toLocaleString(undefined, { maximumFractionDigits: 0 })
+    : `$${fbaValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+}
+
+function renderTurnoverTab() {
+  const daysCollected = turnoverDaysCollected();
+  const banner = document.getElementById("turnover-gathering-banner");
+  const sub = document.getElementById("turnover-gathering-sub");
+
+  if (daysCollected < TURNOVER_BASELINE_DAYS) {
+    banner.style.display = "block";
+    sub.textContent = `${daysCollected} of ${TURNOVER_BASELINE_DAYS} days collected — turnover ratios need this history before they're statistically meaningful. Showing current inventory position in the meantime.`;
+  } else {
+    banner.style.display = "none";
+  }
+  document.getElementById("turnover-kpi-days").textContent = daysCollected;
+  document.getElementById("turnover-kpi-skus").textContent = turnoverLatestByProduct().size;
+
+  renderTurnoverKpis();
+
+  // Populate category dropdown from whatever's actually present.
+  const latest = turnoverLatestByProduct();
+  const categoryLookup = turnoverCategoryLookup();
+  const categories = [...new Set([...latest.keys()].map(pid => categoryLookup.get(pid) || "Uncategorized"))].sort();
+  const select = document.getElementById("turnover-category-select");
+  const currentValue = select.value;
+  select.innerHTML = '<option value="all">All categories</option>' +
+    categories.map(c => `<option value="${c}">${c}</option>`).join("");
+  if (categories.includes(currentValue)) select.value = currentValue;
+
+  renderTurnoverTable();
+}
+
+function renderTurnoverTable() {
+  const latest = turnoverLatestByProduct();
+  const categoryLookup = turnoverCategoryLookup();
+  const query = document.getElementById("turnover-sku-search").value.trim().toLowerCase();
+  const category = document.getElementById("turnover-category-select").value;
+
+  let rows = [...latest.entries()].map(([pid, r]) => ({
+    sku: pid,
+    category: categoryLookup.get(pid) || "Uncategorized",
+    units: r.units_on_hand || 0,
+    value: r.total_value || 0,
+    fbaUnits: r.fba_units_on_hand || 0,
+    fbaValue: r.fba_total_value || 0,
+  }));
+
+  if (query) rows = rows.filter(r => r.sku.toLowerCase().includes(query));
+  if (category !== "all") rows = rows.filter(r => r.category === category);
+  rows.sort((a, b) => a.sku.localeCompare(b.sku));
+
+  document.getElementById("turnover-amount-header").textContent = turnoverMode === "units" ? "Units on hand" : "Value on hand";
+
+  const tbody = document.getElementById("turnover-tbody");
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="bar-empty">${query || category !== "all" ? "No matching SKUs" : "No snapshot data yet"}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const mainDisplay = turnoverMode === "units" ? r.units.toLocaleString(undefined, { maximumFractionDigits: 1 }) : `$${r.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    const fbaDisplay = turnoverMode === "units" ? r.fbaUnits.toLocaleString(undefined, { maximumFractionDigits: 1 }) : `$${r.fbaValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    let out = `<tr>
+      <td>${r.sku}</td>
+      <td>${r.category}</td>
+      <td>${mainDisplay}</td>
+      <td><span class="priority-pill">Dripping Springs</span></td>
+    </tr>`;
+    if (r.fbaUnits > 0 || r.fbaValue > 0) {
+      out += `<tr>
+        <td>${r.sku}</td>
+        <td>${r.category}</td>
+        <td>${fbaDisplay}</td>
+        <td><span class="priority-pill channel">Amazon FBA</span></td>
+      </tr>`;
+    }
+    return out;
+  }).join("");
 }
 
 function renderHistoryTab() {
@@ -3411,6 +3636,7 @@ function formatLastUpdated(pulledAtIso) {
 
 let currentStockLevels = [];
 let currentHealthSnapshots = [];
+let currentTurnoverSnapshots = [];
 
 async function refresh() {
   try {
@@ -3441,6 +3667,19 @@ async function refresh() {
     } catch (healthErr) {
       console.error("health_snapshots fetch failed (non-fatal):", healthErr);
       currentHealthSnapshots = [];
+    }
+
+    // Turnover snapshot history — same non-fatal pattern. Powers the
+    // Inventory Turnover tab, which shows "gathering baseline data"
+    // until enough daily history exists for the numbers to mean
+    // anything (same honesty pattern as Aging/Volume on the health
+    // dial) — this table only started being logged 2026-10-01.
+    try {
+      const turnoverResult = await client.from("turnover_snapshots").select("*").order("pulled_at", { ascending: true });
+      currentTurnoverSnapshots = turnoverResult.data || [];
+    } catch (turnoverErr) {
+      console.error("turnover_snapshots fetch failed (non-fatal):", turnoverErr);
+      currentTurnoverSnapshots = [];
     }
 
     const dot = document.getElementById("last-updated-dot");
