@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "hourly or nightly"
+        description: "hourly, nightly, or diagnose"
         default: "hourly"
       start:
         description: "Backfill start date YYYY-MM-DD (optional)"
@@ -46,6 +46,7 @@ jobs:
 
       - name: Run pull_kpi_data.py
         env:
+          PYTHONUNBUFFERED: "1"
           FINALE_API_KEY: ${{ secrets.FINALE_API_KEY }}
           FINALE_API_SECRET: ${{ secrets.FINALE_API_SECRET }}
           SHIPSTATION_API_KEY: ${{ secrets.SHIPSTATION_API_KEY }}
@@ -60,6 +61,9 @@ jobs:
           ARGS=""
           if [ "${{ github.event.schedule }}" = "30 8 * * *" ] || [ "${{ inputs.mode }}" = "nightly" ]; then
             ARGS="--nightly"
+          fi
+          if [ "${{ inputs.mode }}" = "diagnose" ]; then
+            ARGS="--diagnose"
           fi
           if [ -n "${{ inputs.start }}" ]; then ARGS="$ARGS --start ${{ inputs.start }}"; fi
           if [ -n "${{ inputs.end }}" ]; then ARGS="$ARGS --end ${{ inputs.end }}"; fi
