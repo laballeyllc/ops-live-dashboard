@@ -594,6 +594,85 @@ def section_sheets(sb) -> str:
 
 
 # ---------------------------------------------------------------------
+# Diagnostics: counts and IDs only, no customer details.
+# ---------------------------------------------------------------------
+
+def _top(counter: dict, n: int = 15) -> str:
+    items = sorted(counter.items(), key=lambda kv: -kv[1])[:n]
+    return "; ".join(f"{k}: {v}" for k, v in items) or "(none)"
+
+
+def diagnose_window(ss, start: date, end: date, wh_names: dict, tag_names: dict, store_names: dict) -> None:
+    print(f"\n######## {start} to {end} ########")
+    placed = ss_paged(ss, "/orders", {"orderDateStart": f"{start} 00:00:00", "orderDateEnd": f"{end} 23:59:59"}, "orders")
+    shipments = ss_paged(ss, "/shipments", {"shipDateStart": start.isoformat(), "shipDateEnd": end.isoformat(),
+                                            "includeShipmentItems": "false"}, "shipments")
+    print(f"orders placed: {len(placed)}   shipment records: {len(shipments)}")
+
+    def count(fn, rows):
+        c = {}
+        for r in rows:
+            k = fn(r)
+            for kk in (k if isinstance(k, list) else [k]):
+                c[kk] = c.get(kk, 0) + 1
+        return c
+
+    adv = lambda o: o.get("advancedOptions") or {}
+    print("by status:        ", _top(count(lambda o: o.get("orderStatus"), placed)))
+    print("by ship-from:     ", _top(count(lambda o: f"{adv(o).get('warehouseId')} ({wh_names.get(adv(o).get('warehouseId'), '?')})", placed)))
+    print("by store:         ", _top(count(lambda o: store_names.get(adv(o).get("storeId"), adv(o).get("storeId")), placed)))
+    print("by tag:           ", _top(count(lambda o: [tag_names.get(t, t) for t in (o.get("tagIds") or [])] or ["(no tags)"], placed), 20))
+    shipped = [o for o in placed if o.get("orderStatus") == "shipped"]
+    print(f"shipped orders with shipDate: {sum(1 for o in shipped if o.get('shipDate'))} of {len(shipped)}")
+    print(f"externallyFulfilled: {sum(1 for o in placed if o.get('externallyFulfilled'))}   "
+          f"mergedOrSplit: {sum(1 for o in placed if adv(o).get('mergedOrSplit'))}   "
+          f"has parentId: {sum(1 for o in placed if adv(o).get('parentId'))}   "
+          f"active=false: {sum(1 for o in placed if o.get('active') is False)}")
+    print(f"order numbers containing '-': {sum(1 for o in placed if '-' in str(o.get('orderNumber') or ''))}")
+    print("shipments by ship-from:", _top(count(lambda s: f"{s.get('warehouseId')} ({wh_names.get(s.get('warehouseId'), '?')})", shipments)))
+
+    placed_ids = {o["orderId"] for o in placed}
+    unmatched = [s for s in shipments if s.get("orderId") not in placed_ids and not s.get("voided")]
+    print(f"shipments whose order was placed in this window: {len(shipments) - len(unmatched)}; not: {len(unmatched)}")
+    for s in unmatched[:6]:
+        print(f"  label {s.get('shipmentId')}: orderId {s.get('orderId')} orderNumber {s.get('orderNumber')} "
+              f"shipDate {s.get('shipDate')} ship-from {s.get('warehouseId')}")
+        try:
+            o = ss._get(f"/orders/{s.get('orderId')}")
+            a = o.get("advancedOptions") or {}
+            print(f"    -> order {o.get('orderNumber')}: orderDate {o.get('orderDate')} createDate {o.get('createDate')} "
+                  f"status {o.get('orderStatus')} shipDate {o.get('shipDate')} ship-from {a.get('warehouseId')} "
+                  f"store {store_names.get(a.get('storeId'), a.get('storeId'))} "
+                  f"tags {[tag_names.get(t, t) for t in (o.get('tagIds') or [])]} "
+                  f"mergedOrSplit {a.get('mergedOrSplit')} parentId {a.get('parentId')} "
+                  f"mergedIds {len(a.get('mergedIds') or [])} active {o.get('active')}")
+        except Exception as e:
+            print(f"    -> could not fetch: {e}")
+    no_date = [o for o in shipped if not o.get("shipDate")][:4]
+    for o in no_date:
+        a = adv(o)
+        print(f"  shipped without shipDate: order {o.get('orderNumber')} orderDate {o.get('orderDate')} "
+              f"modifyDate {o.get('modifyDate')} externallyFulfilled {o.get('externallyFulfilled')} "
+              f"mergedOrSplit {a.get('mergedOrSplit')} parentId {a.get('parentId')} "
+              f"tags {[tag_names.get(t, t) for t in (o.get('tagIds') or [])]}")
+
+
+def run_diagnose(start: date | None, end: date | None) -> int:
+    ss = ShipStationClient()
+    wh_names = {w["warehouseId"]: w.get("warehouseName") for w in ss._get("/warehouses")}
+    print("ShipStation ship-from locations:", "; ".join(f"{k} = {v}" for k, v in wh_names.items()))
+    tag_names = ss.list_tags()
+    store_names = ss.list_stores()
+    windows = [(start, end)] if start and end else [
+        (date(2025, 3, 5), date(2025, 3, 11)),
+        (date(2026, 9, 21), date(2026, 9, 27)),
+    ]
+    for s, e in windows:
+        diagnose_window(ss, s, e, wh_names, tag_names, store_names)
+    return 0
+
+
+# ---------------------------------------------------------------------
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -601,7 +680,11 @@ def main() -> int:
     ap.add_argument("--end")
     ap.add_argument("--nightly", action="store_true", help="also refresh product attributes and Finale reports")
     ap.add_argument("--only", help="comma-separated sections to run")
+    ap.add_argument("--diagnose", action="store_true", help="print ShipStation structure counts and exit")
     args = ap.parse_args()
+    if args.diagnose:
+        return run_diagnose(parse_any_date(args.start) if args.start else None,
+                            parse_any_date(args.end) if args.end else None)
 
     today = central_today()
     end = parse_any_date(args.end) if args.end else today
