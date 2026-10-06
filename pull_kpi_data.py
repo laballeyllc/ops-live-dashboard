@@ -188,28 +188,63 @@ def end_of_shift_instant(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, END_OF_SHIFT_HOUR, tzinfo=CHICAGO_TZ).astimezone(timezone.utc)
 
 
-def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id) -> None:
+def order_row(o: dict, label_time: dict, wh_id, fr_id) -> dict:
+    oid = o["orderId"]
+    order_dt = parse_shipstation_naive(o.get("orderDate"))
+    ship_date = parse_any_date((o.get("shipDate") or "")[:10]) if o.get("orderStatus") == "shipped" else None
+    ship_dt, source = None, None
+    if ship_date:
+        if oid in label_time:
+            ship_dt, source = label_time[oid], "label"
+        else:
+            ship_dt, source = end_of_shift_instant(ship_date), "end_of_shift"
+    items = items_of(o)
+    return {
+        "order_id": oid,
+        "order_number": o.get("orderNumber"),
+        "queue": queue_name(o, wh_id, fr_id),
+        "status": o.get("orderStatus"),
+        "order_dt": order_dt.isoformat() if order_dt else None,
+        "order_date": order_dt.astimezone(CHICAGO_TZ).date().isoformat() if order_dt else None,
+        "ship_date": ship_date.isoformat() if ship_date else None,
+        "ship_dt": ship_dt.isoformat() if ship_dt else None,
+        "ship_dt_source": source,
+        "queue_bhours": round(business_hours_elapsed(order_dt, ship_dt), 2) if (order_dt and ship_dt) else None,
+        "units": sum(i["qty"] for i in items),
+        "items": items,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, ctx: dict) -> None:
+    """One date window. ctx carries state across windows in the same run:
+    raw orders seen and the earliest label time per order, so an order
+    placed in one window and shipped in a later one still gets its real
+    label time (see finish_shipstation)."""
     s_str, e_str = f"{start} 00:00:00", f"{end} 23:59:59"
     print(f"ShipStation {start} to {end}")
 
     placed = ss_paged(ss, "/orders", {"orderDateStart": s_str, "orderDateEnd": e_str}, "orders")
     print(f"  {len(placed)} orders placed")
+    # Orders shipped in the window but placed before it. ShipStation has no
+    # shipDate filter, so this uses a modifyDate net around the window --
+    # reliable for recent dates (hourly runs). For old dates it finds
+    # nothing, because old orders keep getting modified later; backfills
+    # cover that gap in finish_shipstation instead.
     shipped = ss_paged(ss, "/orders", {
         "orderStatus": "shipped",
         "modifyDateStart": f"{start - timedelta(days=3)} 00:00:00",
         "modifyDateEnd": f"{end + timedelta(days=3)} 23:59:59",
     }, "orders")
     shipped = [o for o in shipped if start.isoformat() <= (o.get("shipDate") or "")[:10] <= end.isoformat()]
-    print(f"  {len(shipped)} orders shipped")
+    print(f"  {len(shipped)} older orders shipped (found by modify date)")
     shipments = ss_paged(ss, "/shipments", {
         "shipDateStart": start.isoformat(), "shipDateEnd": end.isoformat(),
         "includeShipmentItems": "false",
     }, "shipments")
     print(f"  {len(shipments)} shipment records")
 
-    # Earliest label time per order: the closest thing ShipStation has to
-    # a real ship timestamp (order shipDate is date-only).
-    label_time: dict[int, datetime] = {}
+    label_time = ctx["label_time"]
     shipment_rows = []
     for s in shipments:
         created = parse_shipstation_naive(s.get("createDate"))
@@ -226,50 +261,76 @@ def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id) -> Non
             "voided": bool(s.get("voided")),
         })
 
-    orders: dict[int, dict] = {}
+    window_orders: dict[int, dict] = {}
     for o in placed + shipped:          # shipped second: its status wins on overlap
-        orders[o["orderId"]] = o
-
-    rows = []
-    for oid, o in orders.items():
-        order_dt = parse_shipstation_naive(o.get("orderDate"))
-        ship_date = parse_any_date((o.get("shipDate") or "")[:10]) if o.get("orderStatus") == "shipped" else None
-        ship_dt, source = None, None
-        if ship_date:
-            if oid in label_time:
-                ship_dt, source = label_time[oid], "label"
-            else:
-                ship_dt, source = end_of_shift_instant(ship_date), "end_of_shift"
-        items = items_of(o)
-        rows.append({
-            "order_id": oid,
-            "order_number": o.get("orderNumber"),
-            "queue": queue_name(o, wh_id, fr_id),
-            "status": o.get("orderStatus"),
-            "order_dt": order_dt.isoformat() if order_dt else None,
-            "order_date": order_dt.astimezone(CHICAGO_TZ).date().isoformat() if order_dt else None,
-            "ship_date": ship_date.isoformat() if ship_date else None,
-            "ship_dt": ship_dt.isoformat() if ship_dt else None,
-            "ship_dt_source": source,
-            "queue_bhours": round(business_hours_elapsed(order_dt, ship_dt), 2) if (order_dt and ship_dt) else None,
-            "units": sum(i["qty"] for i in items),
-            "items": items,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        })
+        window_orders[o["orderId"]] = o
+    rows = [order_row(o, label_time, wh_id, fr_id) for o in window_orders.values()]
+    for o, r in zip(window_orders.values(), rows):
+        # Keep a slim copy only of what finish_shipstation might need to
+        # re-save; full ShipStation order records are large.
+        ctx["orders"][o["orderId"]] = slim_order(o) if r["ship_dt_source"] == "end_of_shift" else None
+    shipped_count = sum(1 for r in rows if r["ship_date"] and start.isoformat() <= r["ship_date"] <= end.isoformat())
+    print(f"  {shipped_count} of the orders above shipped within this window")
     upsert(sb, "kpi_orders", rows, "order_id")
     upsert(sb, "kpi_shipments", [r for r in shipment_rows if r["shipment_id"]], "shipment_id")
+
+
+MAX_SINGLE_ORDER_FETCHES = 1500
+
+
+def slim_order(o: dict) -> dict:
+    return {
+        "orderId": o.get("orderId"), "orderNumber": o.get("orderNumber"),
+        "orderDate": o.get("orderDate"), "orderStatus": o.get("orderStatus"),
+        "shipDate": o.get("shipDate"),
+        "items": [{"sku": i.get("sku"), "quantity": i.get("quantity")} for i in (o.get("items") or [])],
+        "advancedOptions": {"warehouseId": (o.get("advancedOptions") or {}).get("warehouseId")},
+    }
+
+
+def finish_shipstation(ss, sb, ctx: dict, wh_id, fr_id) -> str:
+    """After all windows: (1) re-save orders whose label turned up in a
+    later window, so they use the real label time instead of the 4 PM
+    fallback; (2) fetch, one by one, orders that have a label in the run
+    but were never seen -- placed before the run's start date. On a
+    multi-week backfill that's mostly the first week's carry-over."""
+    orders, label_time = ctx["orders"], ctx["label_time"]
+    fixed = []
+    for oid, o in orders.items():
+        if o is not None and oid in label_time:
+            fixed.append(order_row(o, label_time, wh_id, fr_id))
+    missing = [oid for oid in label_time if oid not in orders]
+    fetched = []
+    for oid in missing[:MAX_SINGLE_ORDER_FETCHES]:
+        try:
+            o = ss._get(f"/orders/{oid}")
+        except Exception as e:
+            print(f"  could not fetch order {oid}: {e}")
+            continue
+        if o and o.get("orderId"):
+            fetched.append(order_row(o, label_time, wh_id, fr_id))
+    if fixed:
+        upsert(sb, "kpi_orders", fixed, "order_id")
+    if fetched:
+        upsert(sb, "kpi_orders", fetched, "order_id")
+    skipped = max(0, len(missing) - MAX_SINGLE_ORDER_FETCHES)
+    return (f"label times applied to {len(fixed)} orders; fetched {len(fetched)} orders placed before the start date"
+            + (f"; {skipped} more not fetched (cap)" if skipped else ""))
 
 
 def section_shipstation(sb, start: date, end: date) -> str:
     ss = ShipStationClient()
     wh_id = ss.get_warehouse_id(WAREHOUSE_LOCATION_NAME)
     fr_id = ss.get_warehouse_id(FREIGHT_LOCATION_NAME)
+    ctx = {"orders": {}, "label_time": {}}
     chunk_start = start
     while chunk_start <= end:      # weekly chunks keep each request set small on backfills
         chunk_end = min(chunk_start + timedelta(days=6), end)
-        sync_shipstation_window(ss, sb, chunk_start, chunk_end, wh_id, fr_id)
+        sync_shipstation_window(ss, sb, chunk_start, chunk_end, wh_id, fr_id, ctx)
         chunk_start = chunk_end + timedelta(days=1)
-    return f"{start} to {end}"
+    detail = finish_shipstation(ss, sb, ctx, wh_id, fr_id)
+    print(f"  {detail}")
+    return f"{start} to {end}: {detail}"
 
 
 def section_queue(sb) -> str:
