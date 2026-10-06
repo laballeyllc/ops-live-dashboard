@@ -1,0 +1,70 @@
+# KPI Summary sync (pull_kpi_data.py) -> kpi_* tables in Supabase.
+#
+# Hourly on weekdays during the shift, plus a nightly run that also
+# refreshes product attributes and the Finale builds/PO/receipt reports.
+# GitHub's own scheduler can run late or skip under load (the other
+# workflows here are triggered by cron-job.org for that reason); if you
+# see gaps, point a cron-job.org job at this workflow's dispatch API the
+# same way, with inputs {"mode": "hourly"} or {"mode": "nightly"}.
+#
+# Backfill: Actions tab -> KPI Sync -> Run workflow, set start/end dates.
+name: KPI Sync
+
+on:
+  schedule:
+    - cron: "15 13-23 * * 1-5"   # hourly, ~8 AM-6 PM Central, Mon-Fri
+    - cron: "30 8 * * *"         # nightly, ~3 AM Central
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "hourly, nightly, or diagnose"
+        default: "hourly"
+      start:
+        description: "Backfill start date YYYY-MM-DD (optional)"
+        default: ""
+      end:
+        description: "Backfill end date YYYY-MM-DD (optional)"
+        default: ""
+
+concurrency:
+  group: kpi-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pull_kpi_data.py
+        env:
+          PYTHONUNBUFFERED: "1"
+          FINALE_API_KEY: ${{ secrets.FINALE_API_KEY }}
+          FINALE_API_SECRET: ${{ secrets.FINALE_API_SECRET }}
+          SHIPSTATION_API_KEY: ${{ secrets.SHIPSTATION_API_KEY }}
+          SHIPSTATION_API_SECRET: ${{ secrets.SHIPSTATION_API_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          FINALE_BUILDS_REPORT_URL: ${{ vars.FINALE_BUILDS_REPORT_URL }}
+          FINALE_PO_REPORT_URL: ${{ vars.FINALE_PO_REPORT_URL }}
+          FINALE_RECEIPTS_REPORT_URL: ${{ vars.FINALE_RECEIPTS_REPORT_URL }}
+        run: |
+          ARGS=""
+          if [ "${{ github.event.schedule }}" = "30 8 * * *" ] || [ "${{ inputs.mode }}" = "nightly" ]; then
+            ARGS="--nightly"
+          fi
+          if [ "${{ inputs.mode }}" = "diagnose" ]; then
+            ARGS="--diagnose"
+          fi
+          if [ -n "${{ inputs.start }}" ]; then ARGS="$ARGS --start ${{ inputs.start }}"; fi
+          if [ -n "${{ inputs.end }}" ]; then ARGS="$ARGS --end ${{ inputs.end }}"; fi
+          python pull_kpi_data.py $ARGS

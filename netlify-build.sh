@@ -28,12 +28,12 @@ if [ -z "$SUPABASE_ANON_KEY" ]; then
   exit 1
 fi
 
-sed -i "s|YOUR_ANON_KEY_HERE|${SUPABASE_ANON_KEY}|g" site/index.html
-
+   sed -i "s|YOUR_ANON_KEY_HERE|${SUPABASE_ANON_KEY}|g" site/index.html site/kpi.html
+   
 # Confirm the substitution actually happened (catches a placeholder-text
 # mismatch after some future edit, rather than silently deploying a
 # still-broken page).
-if grep -q "YOUR_ANON_KEY_HERE" site/index.html; then
+if grep -q "YOUR_ANON_KEY_HERE" site/index.html site/kpi.html; then
   echo "ERROR: placeholder text still present after substitution — check"
   echo "that site/index.html still contains the expected placeholder string."
   exit 1

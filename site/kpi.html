@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab Alley — KPI Summary</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  /* Same palette as Ops Live (site/index.html) so the two pages read as one tool. */
+  :root {
+    --bg: #1B1F23;
+    --panel: #22272C;
+    --panel-raised: #282E34;
+    --border: #2E343A;
+    --text: #E8E6E1;
+    --text-muted: #9AA0A6;
+    --better: #4FB0A5;
+    --worse: #C1594A;
+    --warehouse: #4FB0A5;
+    --freight: #D9A441;
+    --radius-s: 4px;
+    --radius-m: 8px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+  }
+  a { color: var(--text); }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--freight); outline-offset: 2px; }
+
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 24px 20px 64px; }
+
+  header.top {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 20px;
+  }
+  header.top h1 { font-size: 24px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  header.top nav { display: flex; gap: 16px; align-items: baseline; color: var(--text-muted); font-size: 13px; }
+  header.top nav a { color: var(--text-muted); }
+
+  /* ---- Period picker ------------------------------------------------ */
+  .controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 20px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-m);
+    padding: 16px;
+  }
+  .presets {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2px 8px;
+  }
+  .presets button, .quarters button {
+    text-align: left;
+    background: none; border: 0; border-radius: var(--radius-s);
+    padding: 5px 8px; cursor: pointer; color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .presets button:hover, .quarters button:hover { color: var(--text); background: var(--panel-raised); }
+  .presets button[aria-pressed="true"], .quarters button[aria-pressed="true"] {
+    background: var(--text); color: var(--bg); font-weight: 600;
+  }
+  .quarters {
+    grid-column: 1 / -1;
+    display: flex; gap: 8px; align-items: center;
+    border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px;
+  }
+  .quarters span { color: var(--text-muted); font-size: 13px; padding: 0 4px 0 8px; }
+  .custom-dates { display: none; grid-column: 1 / -1; gap: 8px; align-items: center; padding: 8px 8px 0; flex-wrap: wrap; }
+  .custom-dates.on { display: flex; }
+  .custom-dates input {
+    background: var(--panel-raised); border: 1px solid var(--border); border-radius: var(--radius-s);
+    padding: 5px 8px; color-scheme: dark;
+  }
+  .custom-dates button {
+    background: var(--text); color: var(--bg); border: 0; border-radius: var(--radius-s);
+    padding: 6px 12px; font-weight: 600; cursor: pointer;
+  }
+
+  .compare { display: flex; flex-direction: column; gap: 6px; min-width: 200px; }
+  .compare h2 { font-size: 13px; font-weight: 500; color: var(--text-muted); margin: 0 0 2px; }
+  .seg { display: flex; flex-direction: column; gap: 2px; }
+  .seg button {
+    text-align: left; background: none; border: 1px solid transparent; border-radius: var(--radius-s);
+    padding: 5px 8px; cursor: pointer; color: var(--text-muted);
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] { border-color: var(--text-muted); color: var(--text); }
+  .seg button:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ---- Range readout -------------------------------------------------- */
+  .range-line {
+    display: flex; flex-wrap: wrap; gap: 4px 24px; align-items: baseline;
+    margin: 24px 0 8px;
+  }
+  .range-line .current { font-size: 28px; font-weight: 700; letter-spacing: -0.015em; }
+  .range-line .vs { color: var(--text-muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 20px; }
+  .status { color: var(--text-muted); font-size: 13px; min-height: 20px; margin-bottom: 8px; }
+  .status.error { color: var(--worse); }
+
+  /* ---- KPI table ------------------------------------------------------ */
+  .table-scroll { overflow-x: auto; }
+  table.kpis { width: 100%; border-collapse: collapse; min-width: 640px; }
+  table.kpis th, table.kpis td { padding: 9px 10px; text-align: right; vertical-align: top; }
+  table.kpis th:first-child, table.kpis td:first-child { text-align: left; }
+  table.kpis thead th {
+    font-size: 13px; font-weight: 500; color: var(--text-muted);
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg);
+  }
+  table.kpis tbody.group th {
+    text-align: left; font-size: 17px; font-weight: 600; padding: 28px 10px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.kpis tbody tr.row td { border-bottom: 1px solid var(--border); }
+  td.label .name { font-weight: 500; }
+  td.label .note { display: block; color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+  td.value { font-size: 18px; font-weight: 600; white-space: nowrap; }
+  td.cmp { color: var(--text-muted); white-space: nowrap; }
+  td.delta { white-space: nowrap; font-weight: 500; }
+  td.delta.better { color: var(--better); }
+  td.delta.worse { color: var(--worse); }
+  td.delta.flat { color: var(--text-muted); }
+  .na { color: var(--text-muted); font-weight: 400; font-size: 14px; }
+
+  details.locs { margin-top: 6px; }
+  details.locs summary { cursor: pointer; color: var(--text-muted); font-size: 13px; }
+  details.locs ul { list-style: none; padding: 6px 0 0; margin: 0; columns: 2; column-gap: 24px; font-size: 13px; }
+  details.locs li { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; break-inside: avoid; }
+  details.locs li span:last-child { color: var(--text-muted); }
+
+  /* ---- Mix ------------------------------------------------------------ */
+  section.mix { margin-top: 40px; }
+  section.mix > h2 { font-size: 17px; font-weight: 600; margin: 0 0 4px; }
+  section.mix > p { color: var(--text-muted); margin: 0 0 16px; font-size: 14px; max-width: 70ch; }
+  .dim-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px; }
+  .dim-tabs button {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-s);
+    padding: 6px 12px; cursor: pointer; color: var(--text-muted);
+  }
+  .dim-tabs button[aria-selected="true"] { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+  .bars { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px 14px; align-items: center; margin-bottom: 20px; }
+  .bars .bar-label { color: var(--text-muted); font-size: 14px; }
+  .bar { display: flex; height: 26px; border-radius: var(--radius-s); overflow: hidden; background: var(--panel-raised); }
+  .bar span { display: block; height: 100%; min-width: 0; }
+  .bar.empty { align-items: center; padding-left: 10px; color: var(--text-muted); font-size: 13px; }
+  table.mix-table { width: 100%; border-collapse: collapse; min-width: 520px; }
+  table.mix-table th, table.mix-table td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+  table.mix-table th:first-child, table.mix-table td:first-child { text-align: left; }
+  table.mix-table th { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 8px; vertical-align: 0; }
+  .units { color: var(--text-muted); font-size: 13px; margin-left: 6px; }
+
+  /* ---- Supplier origin -------------------------------------------------- */
+  details.suppliers { margin-top: 40px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-m); padding: 14px 16px; }
+  details.suppliers summary { cursor: pointer; font-weight: 600; }
+  details.suppliers p { color: var(--text-muted); font-size: 14px; max-width: 70ch; }
+  .supplier-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 24px; }
+  .supplier-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .supplier-row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .origin { display: flex; border: 1px solid var(--border); border-radius: var(--radius-s); overflow: hidden; flex: none; }
+  .origin button { background: none; border: 0; padding: 3px 10px; cursor: pointer; color: var(--text-muted); font-size: 13px; }
+  .origin button[aria-pressed="true"] { background: var(--panel-raised); color: var(--text); font-weight: 600; }
+
+  @media (max-width: 760px) {
+    .controls { grid-template-columns: 1fr; }
+    .presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .compare .seg { flex-direction: row; flex-wrap: wrap; }
+    .range-line .current { font-size: 22px; }
+    .bars { grid-template-columns: 1fr; gap: 4px; }
+    .bars .bar { margin-bottom: 8px; }
+    details.locs ul { columns: 1; }
+    /* KPI rows stack: label, then the value, then each comparison with its change. */
+    table.kpis { min-width: 0; }
+    table.kpis thead { display: none; }
+    table.kpis, table.kpis tbody, table.kpis tr, table.kpis td, table.kpis th { display: block; }
+    table.kpis tbody.group th { padding: 24px 0 6px; }
+    table.kpis tr.row { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+    table.kpis tbody tr.row td { border: 0; padding: 0; text-align: left; }
+    table.kpis td.label, table.kpis td.value { grid-column: 1 / -1; }
+    table.kpis td.value { font-size: 20px; margin: 2px 0; }
+    table.kpis td.cmp:not(:empty)::before { content: attr(data-label) ": "; }
+    table.mix-table { min-width: 0; }
+    .units { display: none; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .bar span { transition: flex-basis .3s ease; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>KPI Summary</h1>
+    <nav>
+      <span id="last-sync"></span>
+      <a href="/">Ops Live</a>
+    </nav>
+  </header>
+
+  <div class="controls">
+    <div class="presets" id="presets" role="group" aria-label="Time period">
+      <!-- column-major order, matching the Finale-style picker -->
+      <button data-p="all">All time</button>
+      <button data-p="last7">Last 7 days</button>
+      <button data-p="lastweek_sun">Last week (Sun–Sat)</button>
+      <button data-p="lastmonth">Last month</button>
+      <button data-p="today">Today</button>
+      <button data-p="last14">Last 14 days</button>
+      <button data-p="lastweek_mon">Last week (Mon–Sun)</button>
+      <button data-p="lastyear">Last year</button>
+      <button data-p="yesterday">Yesterday</button>
+      <button data-p="last30">Last 30 days</button>
+      <button data-p="thisweek_sun">This week (Sun–Sat)</button>
+      <button data-p="thismonth">This month</button>
+      <button data-p="custom">Custom</button>
+      <button data-p="last90">Last 90 days</button>
+      <button data-p="thisweek_mon">This week (Mon–Sun)</button>
+      <button data-p="thisyear">This year</button>
+      <div class="quarters" id="quarters">
+        <span id="q-year"></span>
+        <button data-p="q1">Q1</button>
+        <button data-p="q2">Q2</button>
+        <button data-p="q3">Q3</button>
+        <button data-p="q4">Q4</button>
+      </div>
+      <div class="custom-dates" id="custom-dates">
+        <label>From <input type="date" id="c-start"></label>
+        <label>to <input type="date" id="c-end"></label>
+        <button id="c-apply">Show</button>
+      </div>
+    </div>
+    <div class="compare">
+      <h2>Compare to</h2>
+      <div class="seg" id="compare" role="group" aria-label="Comparison">
+        <button data-c="prior">Previous period</button>
+        <button data-c="lastyear">Same period last year</button>
+        <button data-c="both">Both</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="range-line">
+    <div class="current" id="range-current"></div>
+    <div class="vs" id="range-vs"></div>
+  </div>
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+
+  <div class="table-scroll">
+    <table class="kpis" id="kpis"></table>
+  </div>
+
+  <section class="mix">
+    <h2>Order mix by units</h2>
+    <p>Share of units shipped in the period, units on orders placed in the period, and the average daily makeup of the Warehouse and Freight queue.</p>
+    <div class="dim-tabs" id="dim-tabs" role="tablist"></div>
+    <div class="bars" id="mix-bars"></div>
+    <div class="table-scroll"><table class="mix-table" id="mix-table"></table></div>
+  </section>
+
+  <details class="suppliers" id="suppliers">
+    <summary>Domestic and import suppliers</summary>
+    <p>Lead time is split by supplier origin. Mark each supplier once; receipts from unmarked suppliers count toward the overall average only.</p>
+    <div class="supplier-list" id="supplier-list"></div>
+  </details>
+</div>
+
+<script>
+// The anon key is the public, read-only key; netlify-build.sh injects it
+// at deploy time, same as site/index.html.
+const SUPABASE_URL = "https://pdflsmequzgpeuodnxyg.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR_ANON_KEY_HERE";
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ---------------------------------------------------------------- dates
+// All periods are Central-time calendar days, matching the warehouse and
+// every other number on Ops Live. Dates are handled as UTC-midnight Date
+// objects so arithmetic never crosses a DST boundary.
+const TZ = "America/Chicago";
+const todayISO = () => new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(new Date());
+const D = iso => new Date(iso + "T00:00:00Z");
+const iso = d => d.toISOString().slice(0, 10);
+const addDays = (d, n) => { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; };
+const lastDayOfMonth = (y, m) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+function addMonths(d, n) {
+  const y = d.getUTCFullYear(), m = d.getUTCMonth(), day = d.getUTCDate();
+  const isMonthEnd = day === lastDayOfMonth(y, m);
+  const t = new Date(Date.UTC(y, m + n, 1));
+  const tl = lastDayOfMonth(t.getUTCFullYear(), t.getUTCMonth());
+  t.setUTCDate(isMonthEnd ? tl : Math.min(day, tl));
+  return t;
+}
+const daysBetween = (a, b) => Math.round((b - a) / 86400000) + 1;
+const fmtDay = (d, withYear = true) => d.toLocaleDateString("en-US", {
+  timeZone: "UTC", month: "short", day: "numeric", ...(withYear ? { year: "numeric" } : {}),
+});
+function fmtRange(r) {
+  if (!r) return "";
+  const s = D(r.start), e = D(r.end);
+  if (r.start === r.end) return fmtDay(s);
+  const sameYear = s.getUTCFullYear() === e.getUTCFullYear();
+  return `${fmtDay(s, !sameYear)} – ${fmtDay(e)}`;
+}
+
+// A period is {start, end, unit, n}. unit says how "previous period"
+// steps back: by calendar month/year (keeps month ends aligned) or by a
+// number of days.
+function periodFor(key, today) {
+  const t = D(today);
+  const dow = t.getUTCDay();                // 0 = Sunday
+  const y = t.getUTCFullYear(), m = t.getUTCMonth();
+  const mk = (s, e, unit, n) => ({ start: iso(s), end: iso(e), unit, n });
+  const qStart = q => new Date(Date.UTC(y, (q - 1) * 3, 1));
+  const qEnd = q => new Date(Date.UTC(y, q * 3, 0));
+  switch (key) {
+    case "all": return { start: "2000-01-01", end: today, unit: "none", n: 0 };
+    case "today": return mk(t, t, "days", 1);
+    case "yesterday": return mk(addDays(t, -1), addDays(t, -1), "days", 1);
+    case "last7": case "last14": case "last30": case "last90": {
+      const n = +key.slice(4);
+      return mk(addDays(t, -(n - 1)), t, "days", n);
+    }
+    case "thisweek_sun": return mk(addDays(t, -dow), t, "days", 7);
+    case "thisweek_mon": { const back = (dow + 6) % 7; return mk(addDays(t, -back), t, "days", 7); }
+    case "lastweek_sun": { const s = addDays(t, -dow - 7); return mk(s, addDays(s, 6), "days", 7); }
+    case "lastweek_mon": { const s = addDays(t, -((dow + 6) % 7) - 7); return mk(s, addDays(s, 6), "days", 7); }
+    case "thismonth": return mk(new Date(Date.UTC(y, m, 1)), t, "months", 1);
+    case "lastmonth": return mk(new Date(Date.UTC(y, m - 1, 1)), new Date(Date.UTC(y, m, 0)), "months", 1);
+    case "thisyear": return mk(new Date(Date.UTC(y, 0, 1)), t, "months", 12);
+    case "lastyear": return mk(new Date(Date.UTC(y - 1, 0, 1)), new Date(Date.UTC(y - 1, 11, 31)), "months", 12);
+    case "q1": case "q2": case "q3": case "q4": {
+      const q = +key[1];
+      const e = qEnd(q) > t ? t : qEnd(q);   // the current quarter runs through today
+      return mk(qStart(q), e, "months", 3);
+    }
+  }
+  return null;
+}
+function shift(p, how) {
+  if (!p || p.unit === "none") return null;
+  if (how === "lastyear") return { start: iso(addMonths(D(p.start), -12)), end: iso(addMonths(D(p.end), -12)) };
+  if (p.unit === "months") return { start: iso(addMonths(D(p.start), -p.n)), end: iso(addMonths(D(p.end), -p.n)) };
+  const n = p.unit === "days" ? p.n : daysBetween(D(p.start), D(p.end));
+  return { start: iso(addDays(D(p.start), -n)), end: iso(addDays(D(p.end), -n)) };
+}
+
+// ---------------------------------------------------------------- format
+const nf0 = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const nf1 = new Intl.NumberFormat("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const FMT = {
+  int: v => nf0.format(v),
+  money: v => money.format(v),
+  pct: v => nf1.format(v * 100) + "%",
+  hours: v => nf1.format(v) + " h",
+  days: v => nf1.format(v) + " days",
+  turns: v => nf1.format(v) + "× / yr",
+};
+
+// ---------------------------------------------------------------- KPIs
+// better: which direction is good ("up", "down", or null for neutral
+// volume measures where more isn't better or worse by itself).
+// needs: a `has` flag that must be true, otherwise the source isn't
+// connected yet and the row says so instead of showing a fake zero.
+const GROUPS = [
+  { title: "Shipping", rows: [
+    { key: "orders_in", label: "Orders in", note: "Placed in the period, Warehouse and Freight, not cancelled", fmt: "int", better: null, needs: "orders" },
+    { key: "orders_out", label: "Orders shipped", note: "Ship date in the period, Warehouse and Freight", fmt: "int", better: "up", needs: "orders" },
+    { key: "packages_shipped", label: "Packages shipped", note: "Shipping labels, plus one per order shipped outside ShipStation", fmt: "int", better: "up", needs: "orders" },
+    { key: "warehouse_orders", label: "Warehouse orders", note: "Placed in the period", fmt: "int", better: null, needs: "orders" },
+    { key: "freight_orders", label: "Freight orders", note: "Placed in the period", fmt: "int", better: null, needs: "orders" },
+    { key: "sla_48_pct", label: "Shipped within 48 business hours", note: r => r.sla_48_sample ? `Warehouse orders shipped in the period (${nf0.format(r.sla_48_sample)} orders)` : "Warehouse orders shipped in the period", fmt: "pct", better: "up", needs: "orders", pts: true },
+    { key: "queue_hours", label: "Average time in queue", note: r => {
+        const parts = [];
+        if (r.queue_hours_wh != null) parts.push(`Warehouse ${FMT.hours(r.queue_hours_wh)}`);
+        if (r.queue_hours_fr != null) parts.push(`freight ${FMT.hours(r.queue_hours_fr)}`);
+        return parts.length ? `Business hours, order placed to shipped. ${parts.join(", ")}` : "Business hours, order placed to shipped";
+      }, fmt: "hours", better: "down", needs: "orders" },
+  ]},
+  { title: "Production", rows: [
+    { key: "builds_completed", label: "Builds completed", fmt: "int", better: "up", needs: "builds" },
+    { key: "units_built", label: "Units built", fmt: "int", better: "up", needs: "builds" },
+    { key: "unique_skus_built", label: "Unique SKUs built", fmt: "int", better: "up", needs: "builds" },
+  ]},
+  { title: "Purchasing", rows: [
+    { key: "pos_issued", label: "POs issued", fmt: "int", better: null, needs: "pos" },
+    { key: "po_value", label: "Value of POs issued", fmt: "money", better: null, needs: "pos" },
+    { key: "lead_days", label: "Average supplier lead time", note: r => {
+        const n = r.lead_receipts || 0, u = r.lead_unclassified || 0;
+        if (!n) return "Order to receipt, for receipts in the period";
+        return `Order to receipt, ${nf0.format(n)} receipts` + (u ? `, ${nf0.format(u)} from unmarked suppliers` : "");
+      }, fmt: "days", better: "down", needs: "receipts" },
+    { key: "lead_days_domestic", label: "Domestic", indent: true, fmt: "days", better: "down", needs: "receipts" },
+    { key: "lead_days_import", label: "Import", indent: true, fmt: "days", better: "down", needs: "receipts" },
+  ]},
+  { title: "Inventory", rows: [
+    { key: "accuracy_avg", label: "Inventory accuracy", note: "Average of each location's most recent cycle count as of the period end", fmt: "pct", better: "up", needs: "counts", pts: true, locations: true },
+    { key: "turnover", label: "Inventory turnover", note: r => r.turnover_days_covered
+        ? `Sales ÷ average inventory value, annualized. ${nf0.format(r.turnover_days_covered)} days of inventory history in this period`
+        : "Sales ÷ average inventory value, annualized", fmt: "turns", better: "up", needs: null },
+  ]},
+  { title: "New products", rows: [
+    { key: "products_added", label: "Products added or converted", note: "Product Staging blocks whose week starts in the period", fmt: "int", better: "up", needs: "staging" },
+  ]},
+];
+
+const MIX_DIMS = [
+  { key: "category", label: "Category" },
+  { key: "chem", label: "Chem tech level" },
+  { key: "lab_room", label: "Lab room required" },
+  { key: "downpack", label: "Downpack product" },
+  { key: "hazmat", label: "HAZMAT" },
+];
+const MIX_SOURCES = [
+  { key: "shipped", label: "Shipped" },
+  { key: "received", label: "Received" },
+  { key: "queue", label: "Queue average" },
+];
+const PALETTE = ["#4FB0A5", "#D9A441", "#8B7FC7", "#C1594A", "#6E9FD6", "#A3B86C", "#D98BB5", "#B08E6E"];
+const OTHER_COLOR = "#5A6168";
+
+// ---------------------------------------------------------------- state
+const state = {
+  preset: "last30",
+  compare: "prior",
+  custom: null,
+  dim: "category",
+  cur: null, prior: null, ly: null,
+  ranges: {},
+  token: 0,
+};
+
+function readURL() {
+  const q = new URLSearchParams(location.search);
+  if (q.get("p")) state.preset = q.get("p");
+  if (["prior", "lastyear", "both"].includes(q.get("c"))) state.compare = q.get("c");
+  if (state.preset === "custom" && q.get("s") && q.get("e")) state.custom = { start: q.get("s"), end: q.get("e") };
+  if (state.preset === "custom" && !state.custom) state.preset = "last30";
+}
+function writeURL() {
+  const q = new URLSearchParams({ p: state.preset, c: state.compare });
+  if (state.preset === "custom" && state.custom) { q.set("s", state.custom.start); q.set("e", state.custom.end); }
+  history.replaceState(null, "", "?" + q.toString());
+}
+
+// ---------------------------------------------------------------- data
+async function summary(r) {
+  if (!r) return null;
+  const { data, error } = await db.rpc("kpi_summary", { p_start: r.start, p_end: r.end });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function load() {
+  const today = todayISO();
+  const p = state.preset === "custom"
+    ? { ...state.custom, unit: "days", n: daysBetween(D(state.custom.start), D(state.custom.end)) }
+    : periodFor(state.preset, today);
+  const wantPrior = state.compare !== "lastyear";
+  const wantLY = state.compare !== "prior";
+  state.ranges = {
+    cur: p,
+    prior: wantPrior ? shift(p, "prior") : null,
+    ly: wantLY ? shift(p, "lastyear") : null,
+  };
+  writeURL();
+  paintControls();
+  paintRange();
+
+  const token = ++state.token;
+  setStatus("Loading…");
+  try {
+    const [cur, prior, ly] = await Promise.all([
+      summary(state.ranges.cur), summary(state.ranges.prior), summary(state.ranges.ly),
+    ]);
+    if (token !== state.token) return;   // a newer selection superseded this one
+    Object.assign(state, { cur, prior, ly });
+    paintTable();
+    paintMix();
+    paintSync();
+    setStatus(coverageNote());
+  } catch (e) {
+    if (token !== state.token) return;
+    setStatus(`Couldn't load the numbers: ${e.message}. If this is the first deploy, run kpi_schema.sql in Supabase.`, true);
+  }
+}
+
+function coverageNote() {
+  const c = state.cur;
+  if (!c || !c.has || !c.has.orders) return "No ShipStation data yet. It appears after the KPI Sync workflow runs in GitHub Actions.";
+  const notes = [];
+  const since = c.orders_since;
+  const earliest = [state.ranges.cur, state.ranges.prior, state.ranges.ly].filter(Boolean)
+    .map(r => r.start).sort()[0];
+  if (since && state.preset !== "all" && earliest < since) {
+    notes.push(`ShipStation history starts ${fmtDay(D(since))}, so earlier comparison periods are partial.`);
+  }
+  // Before mid-2026 ShipStation kept no ship date on orders; only those
+  // with a ShipStation label can be dated. Say so instead of showing a
+  // shipped count that looks like a real drop.
+  const cov = [["This period", c], ["The previous period", state.prior], ["Last year", state.ly]]
+    .filter(([, d]) => d && d.ship_date_coverage != null && d.ship_date_coverage < 0.9)
+    .map(([name, d]) => `${name}: ${FMT.pct(+d.ship_date_coverage)}`);
+  if (cov.length) {
+    notes.push(`Ship dates are known for only part of the shipped orders (${cov.join("; ")}), ` +
+      "so orders shipped, packages, the 48-hour rate and time in queue undercount there.");
+  }
+  return notes.join(" ");
+}
+
+// ---------------------------------------------------------------- paint
+function setStatus(msg, isError = false) {
+  const el = document.getElementById("status");
+  el.textContent = msg || "";
+  el.classList.toggle("error", !!isError);
+}
+
+function paintControls() {
+  document.querySelectorAll("#presets button[data-p]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.p === state.preset)));
+  const isAll = state.preset === "all";
+  document.querySelectorAll("#compare button").forEach(b => {
+    b.setAttribute("aria-pressed", String(!isAll && b.dataset.c === state.compare));
+    b.disabled = isAll;
+  });
+  document.getElementById("custom-dates").classList.toggle("on", state.preset === "custom");
+  document.getElementById("q-year").textContent = todayISO().slice(0, 4);
+  document.querySelectorAll("#quarters button").forEach(b => {
+    const q = +b.dataset.p[1];
+    const startMonth = (q - 1) * 3 + 1;
+    b.disabled = `${todayISO().slice(0, 4)}-${String(startMonth).padStart(2, "0")}-01` > todayISO();
+  });
+}
+
+function paintRange() {
+  const r = state.ranges;
+  document.getElementById("range-current").textContent =
+    state.preset === "all" ? "All time" : fmtRange(r.cur);
+  const vs = [];
+  if (r.prior) vs.push(`<span>Previous: ${fmtRange(r.prior)}</span>`);
+  if (r.ly) vs.push(`<span>Last year: ${fmtRange(r.ly)}</span>`);
+  document.getElementById("range-vs").innerHTML = vs.join("");
+}
+
+function paintSync() {
+  const t = state.cur && state.cur.last_sync;
+  document.getElementById("last-sync").textContent = t
+    ? "Data as of " + new Date(t).toLocaleString("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : "";
+}
+
+function deltaCell(row, cur, cmp) {
+  if (cur == null || cmp == null) return `<td class="delta flat"></td>`;
+  let text, diff;
+  if (row.pts) {
+    diff = (cur - cmp) * 100;
+    text = (diff > 0 ? "+" : diff < 0 ? "−" : "") + nf1.format(Math.abs(diff)) + " pts";
+  } else if (cmp === 0) {
+    return `<td class="delta flat">${cur === 0 ? "0%" : "new"}</td>`;
+  } else {
+    diff = (cur - cmp) / Math.abs(cmp) * 100;
+    text = (diff > 0 ? "+" : diff < 0 ? "−" : "") + nf0.format(Math.abs(diff)) + "%";
+  }
+  let cls = "flat";
+  if (row.better && Math.abs(diff) >= 0.5) {
+    const up = diff > 0;
+    cls = (row.better === "up") === up ? "better" : "worse";
+  }
+  return `<td class="delta ${cls}">${text}</td>`;
+}
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function paintTable() {
+  const { cur, prior, ly } = state;
+  const showPrior = !!state.ranges.prior, showLY = !!state.ranges.ly;
+  const cols = 2 + (showPrior ? 2 : 0) + (showLY ? 2 : 0);
+  let html = `<thead><tr><th scope="col">Measure</th><th scope="col">This period</th>`;
+  if (showPrior) html += `<th scope="col">Previous</th><th scope="col">Change</th>`;
+  if (showLY) html += `<th scope="col">Last year</th><th scope="col">Change</th>`;
+  html += `</tr></thead>`;
+
+  for (const g of GROUPS) {
+    html += `<tbody class="group"><tr><th colspan="${cols}" scope="rowgroup">${g.title}</th></tr></tbody><tbody>`;
+    for (const row of g.rows) {
+      const connected = !row.needs || (cur.has && cur.has[row.needs]);
+      const v = connected ? cur[row.key] : null;
+      const note = typeof row.note === "function" ? row.note(cur) : row.note;
+      const fmt = FMT[row.fmt];
+      const valueCell = !connected
+        ? `<span class="na">Not connected yet</span>`
+        : (v == null ? `<span class="na">No data</span>` : fmt(+v));
+      let label = `<span class="name"${row.indent ? ' style="padding-left:16px"' : ""}>${row.label}</span>`;
+      if (note && connected) label += `<span class="note"${row.indent ? ' style="padding-left:16px"' : ""}>${esc(note)}</span>`;
+      if (row.locations && connected && Array.isArray(cur.accuracy_by_location) && cur.accuracy_by_location.length) {
+        label += `<details class="locs"><summary>By location</summary><ul>` +
+          cur.accuracy_by_location.map(l =>
+            `<li><span>${esc(l.location)} ${FMT.pct(+l.accuracy)}</span><span>${fmtDay(D(l.week), false)}</span></li>`
+          ).join("") + `</ul></details>`;
+      }
+      html += `<tr class="row"><td class="label">${label}</td><td class="value">${valueCell}</td>`;
+      for (const [show, data] of [[showPrior, prior], [showLY, ly]]) {
+        if (!show) continue;
+        const c = connected && data ? data[row.key] : null;
+        html += `<td class="cmp" data-label="${data === prior ? "Previous" : "Last year"}">${c == null ? "" : fmt(+c)}</td>`;
+        html += deltaCell(row, v == null ? null : +v, c == null ? null : +c);
+      }
+      html += `</tr>`;
+    }
+    html += `</tbody>`;
+  }
+  document.getElementById("kpis").innerHTML = html;
+}
+
+function paintMix() {
+  const tabs = document.getElementById("dim-tabs");
+  tabs.innerHTML = MIX_DIMS.map(d =>
+    `<button role="tab" data-d="${d.key}" aria-selected="${d.key === state.dim}">${d.label}</button>`).join("");
+
+  const mix = (state.cur && state.cur.mix && state.cur.mix[state.dim]) || {};
+  // Order values by shipped units (then received, then queue), keep the
+  // top 7, fold the rest into "Other" so the bars stay readable.
+  const totals = {};
+  for (const s of MIX_SOURCES) for (const [k, v] of Object.entries(mix[s.key] || {})) {
+    totals[k] = (totals[k] || 0) + (+v) * (s.key === "shipped" ? 1e6 : s.key === "received" ? 1e3 : 1);
+  }
+  const order = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
+  const top = order.slice(0, 7), rest = order.slice(7);
+  const color = {};
+  top.forEach((k, i) => color[k] = PALETTE[i]);
+  const keys = rest.length ? [...top, "Other"] : top;
+  color.Other = OTHER_COLOR;
+  const sumFor = src => {
+    const vals = mix[src] || {};
+    const out = {};
+    for (const k of top) out[k] = +(vals[k] || 0);
+    if (rest.length) out.Other = rest.reduce((a, k) => a + +(vals[k] || 0), 0);
+    out.__total = Object.values(out).reduce((a, b) => a + b, 0);
+    return out;
+  };
+  const sums = Object.fromEntries(MIX_SOURCES.map(s => [s.key, sumFor(s.key)]));
+
+  const queueNote = state.cur && !state.cur.queue_snapshot_days
+    ? "No queue snapshots in this period yet" : "No units in this period";
+  document.getElementById("mix-bars").innerHTML = MIX_SOURCES.map(s => {
+    const t = sums[s.key].__total;
+    const bar = t > 0
+      ? `<div class="bar" role="img" aria-label="${s.label} mix">` + keys.map(k => {
+          const share = sums[s.key][k] / t;
+          return share > 0 ? `<span style="flex:0 0 ${(share * 100).toFixed(3)}%;background:${color[k]}" title="${esc(k)}: ${FMT.pct(share)}"></span>` : "";
+        }).join("") + `</div>`
+      : `<div class="bar empty">${s.key === "queue" ? queueNote : "No units in this period"}</div>`;
+    return `<div class="bar-label">${s.label}</div>${bar}`;
+  }).join("");
+
+  let html = `<thead><tr><th scope="col">${MIX_DIMS.find(d => d.key === state.dim).label}</th>` +
+    MIX_SOURCES.map(s => `<th scope="col">${s.label}</th>`).join("") + `</tr></thead><tbody>`;
+  if (!keys.length) {
+    html += `<tr><td colspan="4" class="na">No order lines in this period.</td></tr>`;
+  }
+  for (const k of keys) {
+    html += `<tr><td><span class="swatch" style="background:${color[k]}"></span>${esc(k)}</td>`;
+    for (const s of MIX_SOURCES) {
+      const t = sums[s.key].__total, u = sums[s.key][k] || 0;
+      html += `<td>${t > 0 ? FMT.pct(u / t) : ""}<span class="units">${t > 0 ? nf0.format(u) : ""}</span></td>`;
+    }
+    html += `</tr>`;
+  }
+  document.getElementById("mix-table").innerHTML = html + `</tbody>`;
+}
+
+// ---------------------------------------------------------------- suppliers
+async function loadSuppliers() {
+  const list = document.getElementById("supplier-list");
+  const { data, error } = await db.from("kpi_supplier_list").select("*");
+  if (error) { list.textContent = `Couldn't load suppliers: ${error.message}`; return; }
+  if (!data || !data.length) { list.textContent = "Suppliers appear here once purchase orders or receipts are synced from Finale."; return; }
+  list.innerHTML = data.map(s => `
+    <div class="supplier-row">
+      <span class="name" title="${esc(s.supplier)}">${esc(s.supplier)}</span>
+      <span class="origin" role="group" aria-label="Origin for ${esc(s.supplier)}">
+        <button data-s="${esc(s.supplier)}" data-o="domestic" aria-pressed="${s.origin === "domestic"}">Domestic</button>
+        <button data-s="${esc(s.supplier)}" data-o="import" aria-pressed="${s.origin === "import"}">Import</button>
+      </span>
+    </div>`).join("");
+}
+
+document.getElementById("supplier-list").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-o]");
+  if (!b) return;
+  const group = b.parentElement;
+  const prev = [...group.querySelectorAll("button")].map(x => x.getAttribute("aria-pressed"));
+  group.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  const { error } = await db.from("kpi_supplier_origin").upsert({
+    supplier: b.dataset.s.trim().toLowerCase(), origin: b.dataset.o, updated_at: new Date().toISOString(),
+  });
+  if (error) {
+    group.querySelectorAll("button").forEach((x, i) => x.setAttribute("aria-pressed", prev[i]));
+    setStatus(`Couldn't save ${b.dataset.s}: ${error.message}`, true);
+    return;
+  }
+  load();
+});
+document.getElementById("suppliers").addEventListener("toggle", e => { if (e.target.open) loadSuppliers(); });
+
+// ---------------------------------------------------------------- events
+document.getElementById("presets").addEventListener("click", e => {
+  const b = e.target.closest("button[data-p]");
+  if (!b || b.disabled) return;
+  state.preset = b.dataset.p;
+  if (state.preset === "custom") {
+    const r = state.custom || periodFor("last30", todayISO());
+    document.getElementById("c-start").value = r.start;
+    document.getElementById("c-end").value = r.end;
+    paintControls();
+    document.getElementById("c-start").focus();
+    return;
+  }
+  load();
+});
+document.getElementById("c-apply").addEventListener("click", () => {
+  const s = document.getElementById("c-start").value, en = document.getElementById("c-end").value;
+  if (!s || !en) { setStatus("Pick both dates.", true); return; }
+  state.custom = s <= en ? { start: s, end: en } : { start: en, end: s };
+  state.preset = "custom";
+  load();
+});
+document.getElementById("compare").addEventListener("click", e => {
+  const b = e.target.closest("button[data-c]");
+  if (!b || b.disabled) return;
+  state.compare = b.dataset.c;
+  load();
+});
+document.getElementById("dim-tabs").addEventListener("click", e => {
+  const b = e.target.closest("button[data-d]");
+  if (!b) return;
+  state.dim = b.dataset.d;
+  paintMix();
+});
+
+readURL();
+if (state.preset === "custom" && state.custom) {
+  document.getElementById("c-start").value = state.custom.start;
+  document.getElementById("c-end").value = state.custom.end;
+}
+load();
+</script>
+</body>
+</html>
