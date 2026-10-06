@@ -1323,6 +1323,12 @@
       <div class="list-controls">
         <button class="toggle-btn active" id="turnover-mode-units" onclick="setTurnoverMode('units')">By units</button>
         <button class="toggle-btn" id="turnover-mode-dollars" onclick="setTurnoverMode('dollars')">By dollar value</button>
+        <select id="turnover-window-select" class="sku-search-input" onchange="setTurnoverWindow(this.value)" style="width:140px;">
+          <option value="week">Week</option>
+          <option value="month">Month</option>
+          <option value="quarter">Quarter</option>
+          <option value="year" selected>Year</option>
+        </select>
       </div>
 
       <div class="summary-row" style="margin-bottom:16px;">
@@ -1349,6 +1355,10 @@
         <select id="turnover-category-select" class="sku-search-input" onchange="renderTurnoverTable()" style="width:180px;">
           <option value="all">All categories</option>
         </select>
+        <label class="toggle-label">
+          <input type="checkbox" id="turnover-show-nodata-checkbox" onchange="renderTurnoverTable()">
+          Show SKUs with no turnover data (no stock, no sales, or both)
+        </label>
       </div>
 
       <div class="table-scroll-wrap">
@@ -3096,14 +3106,23 @@ function renderOffHoursCard() {
 const TURNOVER_BASELINE_DAYS = 30; // same threshold as Aging/Volume
 
 let turnoverMode = "units";
+let turnoverWindow = "year"; // week | month | quarter | year — matches TURNOVER_WINDOWS in ops_common.py
+
+function turnoverComputedForWindow() {
+  return currentTurnoverComputed.filter(r => r.window_name === turnoverWindow);
+}
 
 function turnoverDaysCollected() {
-  // Prefer the real days_elapsed the actual computation used; fall
-  // back to counting distinct snapshot dates directly if no computed
-  // data exists yet (e.g. right after this feature first ships, before
-  // the first daily pull has run with it).
-  if (currentTurnoverComputed.length) return currentTurnoverComputed[0].days_elapsed;
-  return new Set(currentTurnoverSnapshots.map(r => r.pulled_at)).size;
+  // The real days_elapsed the actual computation used FOR THE SELECTED
+  // WINDOW specifically (each window builds up independently — "week"
+  // reaching a full 7 days says nothing about whether "year" has enough
+  // history yet). Returns null if nothing has been computed yet. There
+  // is deliberately NO fallback to counting snapshot dates in the
+  // browser: currentTurnoverSnapshots now holds only the latest day (the
+  // full history grows ~1100 rows/day and the browser doesn't need it),
+  // so any such count would silently read "1".
+  const forWindow = turnoverComputedForWindow();
+  return forWindow.length ? forWindow[0].days_elapsed : null;
 }
 
 function turnoverLatestByProduct() {
@@ -3119,18 +3138,25 @@ function turnoverLatestByProduct() {
 }
 
 function turnoverComputedByProduct() {
+  // Each product now has up to 4 rows (one per window) — filter to the
+  // currently-selected window FIRST, so every lookup/KPI/table render
+  // only ever sees the one row per product that actually matches what's
+  // on screen.
   const map = new Map();
-  for (const row of currentTurnoverComputed) map.set(row.product_id, row);
+  for (const row of turnoverComputedForWindow()) map.set(row.product_id, row);
   return map;
 }
 
 function turnoverCategoryLookup() {
-  // Best-effort category lookup from live_queue — only covers products
-  // currently in the queue, so many SKUs will fall back to
-  // "Uncategorized" until a proper catalog-wide category source is
-  // wired in. Flagged as a known preview limitation, not hidden.
+  // Real, catalog-wide category, from turnover_computed (populated
+  // server-side from Finale's "Master product list" report — confirmed
+  // 2026-10-03 to cover 6060 of 6195 products regardless of current
+  // order/sales activity, replacing the old live_queue-based lookup
+  // which only covered products with a CURRENT order in the queue).
+  // Category doesn't vary by window, but filtering anyway keeps this
+  // consistent with every other lookup here.
   const lookup = new Map();
-  for (const row of currentRows) {
+  for (const row of turnoverComputedForWindow()) {
     if (row.product_id && row.category && !lookup.has(row.product_id)) {
       lookup.set(row.product_id, row.category);
     }
@@ -3146,8 +3172,13 @@ function setTurnoverMode(mode) {
   renderTurnoverTable();
 }
 
+function setTurnoverWindow(window) {
+  turnoverWindow = window;
+  renderTurnoverTab();
+}
+
 function renderTurnoverKpis() {
-  const computed = currentTurnoverComputed;
+  const computed = turnoverComputedForWindow();
   const haveComputed = computed.length > 0;
 
   if (haveComputed) {
@@ -3212,15 +3243,16 @@ function renderTurnoverTab() {
   const banner = document.getElementById("turnover-gathering-banner");
   const sub = document.getElementById("turnover-gathering-sub");
 
-  if (daysCollected < TURNOVER_BASELINE_DAYS) {
+  if (daysCollected === null) {
     banner.style.display = "block";
-    sub.textContent = currentTurnoverComputed.length
-      ? `${daysCollected} of ${TURNOVER_BASELINE_DAYS} days collected — the turnover ratios below are real, but based on limited history so far and will get more stable as more days accumulate.`
-      : `${daysCollected} of ${TURNOVER_BASELINE_DAYS} days collected — turnover ratios need this history before they're statistically meaningful. Showing current inventory position in the meantime.`;
+    sub.textContent = "Turnover hasn't been computed yet — it's calculated by the daily Turnover Snapshot Pull. Showing current inventory position in the meantime.";
+  } else if (daysCollected < TURNOVER_BASELINE_DAYS) {
+    banner.style.display = "block";
+    sub.textContent = `${daysCollected} of ${TURNOVER_BASELINE_DAYS} days collected — the turnover ratios below are real, but based on limited history so far and will get more stable as more days accumulate.`;
   } else {
     banner.style.display = "none";
   }
-  document.getElementById("turnover-kpi-days").textContent = daysCollected;
+  document.getElementById("turnover-kpi-days").textContent = daysCollected === null ? "—" : daysCollected;
   document.getElementById("turnover-kpi-skus").textContent = turnoverLatestByProduct().size;
 
   renderTurnoverKpis();
@@ -3258,68 +3290,84 @@ function renderTurnoverTable() {
   const categoryLookup = turnoverCategoryLookup();
   const query = document.getElementById("turnover-sku-search").value.trim().toLowerCase();
   const category = document.getElementById("turnover-category-select").value;
+  const showNoData = document.getElementById("turnover-show-nodata-checkbox").checked;
 
-  let rows = [...latest.entries()].map(([pid, r]) => {
+  // One display row per (product, LOCATION), each judged on its OWN
+  // turnover. CONFIRMED BUG, FIXED (2026-10-06): the FBA row used to be
+  // tacked onto its product's Dripping Springs row, and the "hide SKUs
+  // with no data" filter looked only at the Dripping Springs figure —
+  // so any product held ONLY at Amazon FBA (the normal case for the
+  // "- FBA" SKUs, which have no Dripping Springs stock to divide by)
+  // was hidden by default, even though its FBA turnover was real.
+  let rows = [];
+  for (const [pid, r] of latest) {
     const c = computedByProduct.get(pid);
-    return {
-      sku: pid,
-      category: categoryLookup.get(pid) || "Uncategorized",
-      units: r.units_on_hand || 0,
-      value: r.total_value || 0,
-      fbaUnits: r.fba_units_on_hand || 0,
-      fbaValue: r.fba_total_value || 0,
-      turnoverMain: c ? (turnoverMode === "units" ? c.turnover_units : c.turnover_dollars) : null,
-      turnoverFba: c && (c.avg_fba_units_on_hand > 0 || c.avg_fba_value_on_hand > 0)
-        ? (turnoverMode === "units"
-            ? (c.avg_fba_units_on_hand > 0 ? (c.units_sold / c.avg_fba_units_on_hand) * (365 / c.days_elapsed) : null)
-            : (c.avg_fba_value_on_hand > 0 ? (c.dollars_sold / c.avg_fba_value_on_hand) * (365 / c.days_elapsed) : null))
-        : null,
-    };
-  });
+    const cat = categoryLookup.get(pid) || "Uncategorized";
+    const units = r.units_on_hand || 0, value = r.total_value || 0;
+    const fbaUnits = r.fba_units_on_hand || 0, fbaValue = r.fba_total_value || 0;
+    const hasMain = units > 0 || value > 0;
+    const hasFba = fbaUnits > 0 || fbaValue > 0;
+
+    const turnoverMain = c ? (turnoverMode === "units" ? c.turnover_units : c.turnover_dollars) : null;
+    const turnoverFba = c && (c.avg_fba_units_on_hand > 0 || c.avg_fba_value_on_hand > 0)
+      ? (turnoverMode === "units"
+          ? (c.avg_fba_units_on_hand > 0 ? (c.units_sold / c.avg_fba_units_on_hand) * (365 / c.days_elapsed) : null)
+          : (c.avg_fba_value_on_hand > 0 ? (c.dollars_sold / c.avg_fba_value_on_hand) * (365 / c.days_elapsed) : null))
+      : null;
+
+    // Dripping Springs row: whenever there's stock there, a defined
+    // turnover from earlier in the window, or no FBA presence at all
+    // (so a dead SKU still shows up once, under the toggle). An
+    // FBA-only product does NOT also get an empty Dripping Springs row.
+    if (hasMain || !hasFba || turnoverMain !== null) {
+      rows.push({ sku: pid, category: cat, location: "main", amount: turnoverMode === "units" ? units : value, turnover: turnoverMain });
+    }
+    if (hasFba) {
+      rows.push({ sku: pid, category: cat, location: "fba", amount: turnoverMode === "units" ? fbaUnits : fbaValue, turnover: turnoverFba });
+    }
+  }
 
   if (query) rows = rows.filter(r => r.sku.toLowerCase().includes(query));
   if (category !== "all") rows = rows.filter(r => r.category === category);
+  // "No data" = genuinely undefined (null, no stock to divide by) OR a
+  // real, defined zero (stock on hand, but literally nothing sold in
+  // the window) -- both read as "nothing interesting going on with
+  // this SKU right now" to someone scanning the list, so the toggle
+  // treats them as one bucket rather than splitting hairs between them.
+  if (!showNoData) rows = rows.filter(r => r.turnover !== null && r.turnover !== 0);
   // Slowest movers first (nulls — not enough data — sort to the end,
   // not mixed in as if they were worse than every real number).
   rows.sort((a, b) => {
-    if (a.turnoverMain === null && b.turnoverMain === null) return a.sku.localeCompare(b.sku);
-    if (a.turnoverMain === null) return 1;
-    if (b.turnoverMain === null) return -1;
-    return a.turnoverMain - b.turnoverMain;
+    if (a.turnover === null && b.turnover === null) return a.sku.localeCompare(b.sku) || a.location.localeCompare(b.location);
+    if (a.turnover === null) return 1;
+    if (b.turnover === null) return -1;
+    return a.turnover - b.turnover || a.sku.localeCompare(b.sku);
   });
 
   document.getElementById("turnover-amount-header").textContent = turnoverMode === "units" ? "Units on hand" : "Value on hand";
 
   const tbody = document.getElementById("turnover-tbody");
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="bar-empty">${query || category !== "all" ? "No matching SKUs" : "No snapshot data yet"}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="bar-empty">${query || category !== "all" ? "No matching SKUs" : (showNoData ? "No snapshot data yet" : "No SKUs with turnover data in this window")}</td></tr>`;
     return;
   }
 
   tbody.innerHTML = rows.map(r => {
-    const mainDisplay = turnoverMode === "units" ? r.units.toLocaleString(undefined, { maximumFractionDigits: 1 }) : `$${r.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-    const fbaDisplay = turnoverMode === "units" ? r.fbaUnits.toLocaleString(undefined, { maximumFractionDigits: 1 }) : `$${r.fbaValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-    const mainTurnoverLabel = r.turnoverMain === null ? "no data" : `${r.turnoverMain.toFixed(1)}x/yr`;
-    const fbaTurnoverLabel = r.turnoverFba === null ? "no data" : `${r.turnoverFba.toFixed(1)}x/yr`;
-    let out = `<tr>
-      <td style="text-align:center;">${turnoverHealthIcon(r.turnoverMain)}</td>
+    const amount = turnoverMode === "units"
+      ? r.amount.toLocaleString(undefined, { maximumFractionDigits: 1 })
+      : `$${r.amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    const label = r.turnover === null ? "no data" : `${r.turnover.toFixed(1)}x/yr`;
+    const pill = r.location === "fba"
+      ? '<span class="priority-pill channel">Amazon FBA</span>'
+      : '<span class="priority-pill">Dripping Springs</span>';
+    return `<tr>
+      <td style="text-align:center;">${turnoverHealthIcon(r.turnover)}</td>
       <td>${r.sku}</td>
       <td>${r.category}</td>
-      <td>${mainDisplay}</td>
-      <td style="color:${turnoverColor(r.turnoverMain)}; font-weight:500;">${mainTurnoverLabel}</td>
-      <td><span class="priority-pill">Dripping Springs</span></td>
+      <td>${amount}</td>
+      <td style="color:${turnoverColor(r.turnover)}; font-weight:500;">${label}</td>
+      <td>${pill}</td>
     </tr>`;
-    if (r.fbaUnits > 0 || r.fbaValue > 0) {
-      out += `<tr>
-        <td style="text-align:center;">${turnoverHealthIcon(r.turnoverFba)}</td>
-        <td>${r.sku}</td>
-        <td>${r.category}</td>
-        <td>${fbaDisplay}</td>
-        <td style="color:${turnoverColor(r.turnoverFba)}; font-weight:500;">${fbaTurnoverLabel}</td>
-        <td><span class="priority-pill channel">Amazon FBA</span></td>
-      </tr>`;
-    }
-    return out;
   }).join("");
 }
 
@@ -3734,12 +3782,37 @@ let currentHealthSnapshots = [];
 let currentTurnoverSnapshots = [];
 let currentTurnoverComputed = [];
 
+// Supabase silently caps ANY single request at 1000 rows -- no error,
+// just a truncated array. CONFIRMED BUG, FIXED (2026-10-05): every
+// read below used a bare .select("*"), so (a) stock_levels (1100+ rows)
+// was missing its last ~100+ products every refresh, randomly different
+// each run (making real in-stock orders look blocked), (b) health
+// history silently dropped its NEWEST rows once past 1000, and (c) the
+// turnover tab saw only the first 1000 of ~4400 computed rows (all one
+// window) plus only the first day of snapshots -- hence "1 day of data
+// collected" no matter how many days existed. Any read of a table that
+// can reach 1000 rows MUST go through this. Ordered by a unique column
+// (id) so pages can't overlap or skip.
+async function fetchAllRows(table, { orderCol = "id", ascending = true, filter = null } = {}) {
+  const pageSize = 1000;
+  const all = [];
+  let start = 0;
+  while (true) {
+    let q = client.from(table).select("*");
+    if (filter) q = filter(q);
+    const { data, error } = await q.order(orderCol, { ascending }).range(start, start + pageSize - 1);
+    if (error) throw error;
+    const batch = data || [];
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+    start += pageSize;
+  }
+  return all;
+}
+
 async function refresh() {
   try {
-    const { data, error } = await client.from("live_queue").select("*");
-    if (error) throw error;
-
-    currentRows = data || [];
+    currentRows = await fetchAllRows("live_queue");
 
     // Stock levels: fetched separately and non-fatally — if this table
     // is empty or the query fails (e.g. before the first Stock Levels
@@ -3747,8 +3820,7 @@ async function refresh() {
     // stock-dependent sections (Shipping List, Production List) will
     // show as empty rather than the whole page erroring out.
     try {
-      const stockResult = await client.from("stock_levels").select("*");
-      currentStockLevels = stockResult.data || [];
+      currentStockLevels = await fetchAllRows("stock_levels");
     } catch (stockErr) {
       console.error("stock_levels fetch failed (non-fatal):", stockErr);
       currentStockLevels = [];
@@ -3758,8 +3830,8 @@ async function refresh() {
     // Historical Analysis tab; the rest of the dashboard works fine
     // without it.
     try {
-      const healthResult = await client.from("health_snapshots").select("*").order("pulled_at", { ascending: true });
-      currentHealthSnapshots = healthResult.data || [];
+      currentHealthSnapshots = (await fetchAllRows("health_snapshots"))
+        .sort((a, b) => (a.pulled_at < b.pulled_at ? -1 : a.pulled_at > b.pulled_at ? 1 : 0));
     } catch (healthErr) {
       console.error("health_snapshots fetch failed (non-fatal):", healthErr);
       currentHealthSnapshots = [];
@@ -3771,8 +3843,17 @@ async function refresh() {
     // anything (same honesty pattern as Aging/Volume on the health
     // dial) — this table only started being logged 2026-10-01.
     try {
-      const turnoverResult = await client.from("turnover_snapshots").select("*").order("pulled_at", { ascending: true });
-      currentTurnoverSnapshots = turnoverResult.data || [];
+      // Only the LATEST day is loaded here: this table gains ~1100 rows
+      // every day forever, and the browser only needs today's current
+      // position (days-collected and the averages come pre-computed in
+      // turnover_computed) -- downloading the whole history on every
+      // refresh would get slower every single day.
+      const latestRes = await client.from("turnover_snapshots").select("pulled_at").order("pulled_at", { ascending: false }).limit(1);
+      if (latestRes.error) throw latestRes.error;
+      const latestDate = latestRes.data && latestRes.data[0] ? latestRes.data[0].pulled_at : null;
+      currentTurnoverSnapshots = latestDate
+        ? await fetchAllRows("turnover_snapshots", { filter: q => q.eq("pulled_at", latestDate) })
+        : [];
     } catch (turnoverErr) {
       console.error("turnover_snapshots fetch failed (non-fatal):", turnoverErr);
       currentTurnoverSnapshots = [];
@@ -3784,8 +3865,7 @@ async function refresh() {
     // non-fatal pattern; empty until the first run after this feature
     // was added.
     try {
-      const computedResult = await client.from("turnover_computed").select("*");
-      currentTurnoverComputed = computedResult.data || [];
+      currentTurnoverComputed = await fetchAllRows("turnover_computed");
     } catch (computedErr) {
       console.error("turnover_computed fetch failed (non-fatal):", computedErr);
       currentTurnoverComputed = [];
