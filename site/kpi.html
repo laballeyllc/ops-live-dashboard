@@ -498,13 +498,24 @@ async function load() {
 function coverageNote() {
   const c = state.cur;
   if (!c || !c.has || !c.has.orders) return "No ShipStation data yet. It appears after the KPI Sync workflow runs in GitHub Actions.";
+  const notes = [];
   const since = c.orders_since;
   const earliest = [state.ranges.cur, state.ranges.prior, state.ranges.ly].filter(Boolean)
     .map(r => r.start).sort()[0];
   if (since && state.preset !== "all" && earliest < since) {
-    return `ShipStation history starts ${fmtDay(D(since))}. Periods before that show partial counts until it's backfilled.`;
+    notes.push(`ShipStation history starts ${fmtDay(D(since))}, so earlier comparison periods are partial.`);
   }
-  return "";
+  // Before mid-2026 ShipStation kept no ship date on orders; only those
+  // with a ShipStation label can be dated. Say so instead of showing a
+  // shipped count that looks like a real drop.
+  const cov = [["This period", c], ["The previous period", state.prior], ["Last year", state.ly]]
+    .filter(([, d]) => d && d.ship_date_coverage != null && d.ship_date_coverage < 0.9)
+    .map(([name, d]) => `${name}: ${FMT.pct(+d.ship_date_coverage)}`);
+  if (cov.length) {
+    notes.push(`Ship dates are known for only part of the shipped orders (${cov.join("; ")}), ` +
+      "so orders shipped, packages, the 48-hour rate and time in queue undercount there.");
+  }
+  return notes.join(" ");
 }
 
 // ---------------------------------------------------------------- paint
