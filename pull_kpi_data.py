@@ -41,14 +41,18 @@ import requests
 from dotenv import load_dotenv
 
 from shipstation_client import ShipStationClient
+# Only long-standing basics are borrowed from ops_common. Anything KPI-
+# specific (business hours, daily sales) lives in this file, so changes
+# to Ops Live can't break the KPI sync.
 from ops_common import (
     CHICAGO_TZ,
     WAREHOUSE_LOCATION_NAME, FREIGHT_LOCATION_NAME,
     ORDERS_REPORT_URL,
-    parse_shipstation_naive, business_hours_elapsed,
-    fetch_finale_report, fetch_product_sales_totals,
+    parse_shipstation_naive,
+    fetch_finale_report,
     get_supabase_client,
 )
+import ops_common
 
 load_dotenv()
 
@@ -66,6 +70,26 @@ FIRST_LOCATION_HEADER = "ROW 1"
 # ---------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------
+
+def business_hours_elapsed(start: datetime, end: datetime) -> float:
+    """Hours between start and end with weekends excluded (Saturday 00:00
+    through Monday 00:00, Chicago time): the 48-hour clock pauses over the
+    weekend. Same rule Ops Live used for its SLA clock."""
+    if not start or not end or end <= start:
+        return 0.0
+    total_seconds = (end - start).total_seconds()
+    excluded_seconds = 0.0
+    cursor = start.astimezone(CHICAGO_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    while cursor.astimezone(timezone.utc) < end:
+        day_end = cursor + timedelta(days=1)
+        if cursor.weekday() in (5, 6):
+            overlap_start = max(cursor.astimezone(timezone.utc), start)
+            overlap_end = min(day_end.astimezone(timezone.utc), end)
+            if overlap_end > overlap_start:
+                excluded_seconds += (overlap_end - overlap_start).total_seconds()
+        cursor = day_end
+    return (total_seconds - excluded_seconds) / 3600.0
+
 
 def central_today() -> date:
     return datetime.now(CHICAGO_TZ).date()
@@ -407,23 +431,28 @@ def section_attrs(sb) -> str:
 
 
 def section_sales(sb, start: date, end: date) -> str:
-    """Daily sales totals for turnover. Only for days that have an
-    inventory snapshot, since turnover can't be computed without one."""
+    """Daily sales totals for turnover, from Finale's Product sales history
+    report (one fetch for the whole range). Only days that have an
+    inventory snapshot matter, since turnover needs both."""
     first = sb.table("kpi_inventory_daily").select("snap_date").order("snap_date").limit(1).execute().data
     if not first:
         return "skipped: no inventory snapshots yet"
-    first_day = parse_any_date(first[0]["snap_date"])
-    days = [d for d in daterange(max(start, first_day), min(end, central_today()))]
-    rows = []
-    for d in days:
-        totals = fetch_product_sales_totals(d.isoformat(), d.isoformat())
-        rows.append({
-            "sale_date": d.isoformat(),
-            "units": sum(t["units_sold"] for t in totals.values()),
-            "dollars": sum(t["dollars_sold"] for t in totals.values()),
-        })
-    if rows:
-        upsert(sb, "kpi_sales_daily", rows, "sale_date")
+    s_day = max(start, parse_any_date(first[0]["snap_date"]))
+    e_day = min(end, central_today())
+    if s_day > e_day:
+        return "nothing to do"
+    if hasattr(ops_common, "fetch_product_sales_by_date"):
+        by_product = ops_common.fetch_product_sales_by_date(s_day.isoformat(), e_day.isoformat())
+    else:
+        raise RuntimeError("ops_common.fetch_product_sales_by_date no longer exists; the sales step needs updating.")
+    totals = {d.isoformat(): {"units": 0.0, "dollars": 0.0} for d in daterange(s_day, e_day)}
+    for dates in by_product.values():
+        for d, v in dates.items():
+            if d in totals:
+                totals[d]["units"] += float(v.get("units_sold") or 0)
+                totals[d]["dollars"] += float(v.get("dollars_sold") or 0)
+    rows = [{"sale_date": d, **t} for d, t in totals.items()]
+    upsert(sb, "kpi_sales_daily", rows, "sale_date")
     return f"{len(rows)} days"
 
 
