@@ -1110,7 +1110,7 @@
         </div>
         <div class="summary-card agingrisk overdue">
           <div class="value" id="overdue-count">0</div>
-          <div class="label">Orders past 48 business hours (already overdue)</div>
+          <div class="label">Orders 48h+ old (already overdue)</div>
         </div>
         <div class="summary-card">
           <div class="value" id="pickable-count">0</div>
@@ -1124,7 +1124,7 @@
     </div>
 
     <div id="subtab-shipping" class="subtab-panel">
-      <div class="scope-note">Warehouse/Freight/Both orders only, held orders excluded — company goal: every order shipped within 48 business hours (weekends excluded). What to pick and pack right now, based on usable stock — prioritized by Amazon/Walmart, then FIFO; blocked orders need Production first.</div>
+      <div class="scope-note">Warehouse/Freight/Both orders only, held orders excluded — company goal: every order shipped within 48 hours of its order date (ShipStation's Age -- weekends count). What to pick and pack right now, based on usable stock — prioritized by Amazon/Walmart, then FIFO; blocked orders need Production first.</div>
       <div class="list-controls">
         <label class="toggle-label">
           <input type="checkbox" id="shipping-blocked-checkbox" onchange="toggleShippingBlockedVisibility()">
@@ -1242,7 +1242,7 @@
       </div>
     </div>
 
-    <div class="history-note">Production hours: Mon–Fri, 8am–4pm Central — snapshots outside that window are shown on the chart below for context, but excluded from the average above, since Build % naturally drifts while no one's working to act on shortages.</div>
+    <div class="history-note">Production hours: Mon–Fri, 8am–4pm Central — snapshots outside that window are shown on the chart below for context, but excluded from the average above, since Build % naturally drifts while no one's working to act on shortages. Order age (the 24h / 48h thresholds behind Build %) now follows ShipStation's Age -- real elapsed time, weekends included. Pulls logged before that switch measured it in business hours (weekends excluded), so a range that spans the switch isn't directly comparable.</div>
 
     <div class="attack-subsection">
       <h3>Chart <span id="history-day-label" class="h2-note"></span></h3>
@@ -1313,6 +1313,7 @@
   <div id="tab-turnover" class="tab-panel" style="display:none;">
     <h3 class="history-section-title">Inventory Turnover</h3>
     <div class="history-note">How efficiently stock is moving — (units or dollars sold over a period) &divide; (average inventory held over that period). Logged once daily, starting 2026-10-01; needs real history to be meaningful before showing live numbers, the same honesty rule already used for Aging/Volume on the Queue Breakdown health dial.</div>
+    <div class="history-note" id="turnover-computed-at" style="margin-top:-6px;"></div>
 
     <div id="turnover-gathering-banner" class="turnover-gathering-banner" style="display:none;">
       <div class="turnover-gathering-title">Gathering baseline data</div>
@@ -1856,13 +1857,12 @@ function renderHeldBreakdown(reasonBreakdown) {
 }
 
 // ---------------------------------------------------------------------
-// Business-hours math: converts ShipStation's naive order timestamp
-// (wall-clock time in America/Chicago, confirmed directly by the
-// account owner -- no timezone marker in the raw string) into a true
-// UTC instant, correctly handling CST (-6) vs CDT (-5) depending on
-// the date. Then computes hours elapsed with weekends fully excluded
-// (the 48-business-hour SLA clock pauses at midnight Friday night and
-// resumes at midnight Monday morning).
+// Order timestamp math: converts ShipStation's naive order timestamp
+// (wall-clock time in US Pacific -- confirmed 2026-09-23 against a real
+// order: the v1 API ignores the account's configured timezone) into a
+// true UTC instant, correctly handling PST (-8) vs PDT (-7) depending on
+// the date. Order AGE is then plain elapsed time from that instant (see
+// orderAgeHours below) -- weekends count, matching ShipStation's Age.
 //
 // Both functions are unit-tested in isolation (DST transition edges,
 // weekend-exclusion boundaries) before being wired into anything below
@@ -2030,27 +2030,18 @@ function offHoursGapType(start, nextStart) {
   return hours > 24 ? "weekend" : "overnight";
 }
 
-function businessHoursElapsed(startMs, endMs) {
-  if (!startMs || endMs <= startMs) return 0;
-  let excludedMs = 0;
-  let dayStart = chicagoMidnightMs(startMs, 0);
-  while (dayStart < endMs) {
-    const dayEnd = chicagoMidnightMs(dayStart, 1);
-    const wd = chicagoPartsForInstant(dayStart).weekday;
-    if (wd === "Sat" || wd === "Sun") {
-      const overlapStart = Math.max(dayStart, startMs);
-      const overlapEnd = Math.min(dayEnd, endMs);
-      if (overlapEnd > overlapStart) excludedMs += (overlapEnd - overlapStart);
-    }
-    dayStart = dayEnd;
-  }
-  return (endMs - startMs - excludedMs) / 3600000;
-}
-
-function businessHoursSinceOrder(orderDatetimeStr) {
+// Order age = real elapsed time since the order's ShipStation Order Date,
+// weekends and nights INCLUDED -- exactly what ShipStation's own "Age"
+// column shows, because that is the number the rest of the company sees
+// and uses. CHANGED 2026-10-06: this used to be "business hours" with
+// weekends excluded (the 48h clock paused Sat/Sun), which made every
+// threshold here (24h at-risk, 48h overdue, Build %) disagree with what
+// everyone else was reading in ShipStation.
+function orderAgeHours(orderDatetimeStr) {
   const orderMs = parseShipStationNaive(orderDatetimeStr);
   if (!orderMs) return 0;
-  return businessHoursElapsed(orderMs.getTime(), Date.now());
+  const ms = Date.now() - orderMs.getTime();
+  return ms > 0 ? ms / 3600000 : 0;
 }
 
 function formatAge(hours) {
@@ -2456,7 +2447,7 @@ function buildShippingList(rows) {
       items,
       blockers,
       isChannelPriority,
-      hours: businessHoursSinceOrder(orderDatetime),
+      hours: orderAgeHours(orderDatetime),
       orderDatetime,
     });
   }
@@ -2856,7 +2847,7 @@ function renderAttackSection(rows) {
   let atRisk = 0, overdue = 0;
   const totalQueueOrders = linesByOrder.size;
   for (const [oid, lines] of linesByOrder) {
-    const hours = businessHoursSinceOrder(lines[0].order_datetime);
+    const hours = orderAgeHours(lines[0].order_datetime);
     if (hours >= OVERDUE_HOURS) overdue++;
     else if (hours >= AT_RISK_HOURS) atRisk++;
   }
@@ -3240,6 +3231,15 @@ function renderTurnoverKpis() {
 
 function renderTurnoverTab() {
   const daysCollected = turnoverDaysCollected();
+  const computedAtEl = document.getElementById("turnover-computed-at");
+  if (turnoverLoadError) {
+    computedAtEl.textContent = `Couldn't read turnover data from the database: ${turnoverLoadError}`;
+  } else if (currentTurnoverComputed.length) {
+    const when = new Date(currentTurnoverComputed[0].computed_at).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    computedAtEl.textContent = `Last computed ${when} CT · ${currentTurnoverComputed.length.toLocaleString()} rows loaded`;
+  } else {
+    computedAtEl.textContent = "No computed turnover rows found in the database yet.";
+  }
   const banner = document.getElementById("turnover-gathering-banner");
   const sub = document.getElementById("turnover-gathering-sub");
 
@@ -3396,7 +3396,7 @@ function renderHistoryTab() {
   if (todayProdSnapshots.length > 0) {
     const avg = todayProdSnapshots.reduce((sum, s) => sum + (parseFloat(s.build_hit_rate_pct) || 0), 0) / todayProdSnapshots.length;
     document.getElementById("history-rolling-value").textContent = `${avg.toFixed(0)}%`;
-    document.getElementById("history-rolling-sub").textContent = `Averaged across ${todayProdSnapshots.length} production-hours pull${todayProdSnapshots.length === 1 ? '' : 's'} today`;
+    document.getElementById("history-rolling-sub").textContent = `Averaged across ${todayProdSnapshots.length} pull${todayProdSnapshots.length === 1 ? '' : 's'} during production hours (every 30 min, 8am\u20134pm) today`;
   } else {
     document.getElementById("history-rolling-value").textContent = "—";
     document.getElementById("history-rolling-sub").textContent = "No production-hours snapshots logged yet today.";
@@ -3451,6 +3451,69 @@ function shiftOrderFlowDay(delta) {
   fetchOrderFlow();
 }
 
+function daysInRange(startDate, endDate) {
+  return Math.round((new Date(endDate + "T00:00:00Z") - new Date(startDate + "T00:00:00Z")) / 86400000) + 1;
+}
+
+// Orders In/Out runs as a Netlify function, which has a hard time limit.
+// A wide range needs many ShipStation pages, and when it ran out of time
+// Netlify answered with an HTML error page -- which this code then tried
+// to read as data, producing the unreadable `Unexpected token '<'`.
+// Now (1) the response is parsed safely, and (2) a range is fetched in
+// pieces (7 days to start; if a piece times out, the piece size is halved
+// and that piece retried, down to a single day) and the pieces are added
+// up. The addition is exact: Orders In is counted by order date and
+// Orders Out by ship date, so every order falls in exactly one piece.
+let ORDERFLOW_PAUSE_MS = 3000; // breathing room between pieces for ShipStation's rate limit
+
+class OrderFlowTimeout extends Error {}
+
+async function fetchOrderFlowPiece(startDate, endDate) {
+  const res = await fetch(`/.netlify/functions/order-flow?startDate=${startDate}&endDate=${endDate}`);
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch (_) { throw new OrderFlowTimeout(`No data came back for ${startDate} to ${endDate} (HTTP ${res.status}) -- the lookup most likely timed out.`); }
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+async function fetchOrderFlowRange(startDate, endDate, onProgress) {
+  const totalDays = daysInRange(startDate, endDate);
+  const combined = { startDate, endDate, dayCount: 0, ordersIn: 0, ordersOut: 0, hourlyIn: new Array(24).fill(0), dailyLabels: [], dailyIn: [], dailyOut: [] };
+  let pieceDays = 7;
+  let cursor = startDate;
+  while (cursor <= endDate) {
+    let data, pieceEnd, errorAttempts = 0;
+    while (true) {
+      pieceEnd = shiftDateStr(cursor, pieceDays - 1);
+      if (pieceEnd > endDate) pieceEnd = endDate;
+      try {
+        data = await fetchOrderFlowPiece(cursor, pieceEnd);
+        break;
+      } catch (err) {
+        if (err instanceof OrderFlowTimeout) {
+          if (pieceDays > 1) { pieceDays = Math.max(1, Math.floor(pieceDays / 2)); continue; }
+          throw new Error(`${err.message} Even a single day timed out, so the lookup itself is failing -- check the Netlify function log.`);
+        }
+        if (++errorAttempts >= 2) throw err; // a real error from the function: one retry, then report it as-is
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+    combined.dayCount += data.dayCount;
+    combined.ordersIn += data.ordersIn;
+    combined.ordersOut += data.ordersOut;
+    data.hourlyIn.forEach((v, h) => { combined.hourlyIn[h] += v; });
+    combined.dailyLabels.push(...data.dailyLabels);
+    combined.dailyIn.push(...data.dailyIn);
+    combined.dailyOut.push(...data.dailyOut);
+    cursor = shiftDateStr(pieceEnd, 1);
+    if (onProgress) onProgress(daysInRange(startDate, pieceEnd), totalDays);
+    if (cursor <= endDate) await new Promise(r => setTimeout(r, ORDERFLOW_PAUSE_MS));
+  }
+  return combined;
+}
+
 async function fetchOrderFlow() {
   const startDate = document.getElementById("orderflow-start").value;
   const endDate = document.getElementById("orderflow-end").value;
@@ -3476,13 +3539,17 @@ async function fetchOrderFlow() {
   }
 
   btn.disabled = true;
-  resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">Fetching live from ShipStation — this can take a few seconds for wider date ranges...</div></div>`;
+  const showProgress = (daysDone, totalDays) => {
+    const msg = totalDays > 7
+      ? `Fetching live from ShipStation — ${daysDone} of ${totalDays} days done (wide ranges are fetched in pieces and can take a few minutes)...`
+      : "Fetching live from ShipStation — this can take a few seconds...";
+    resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">${msg}</div></div>`;
+  };
+  showProgress(0, daysInRange(startDate, endDate));
   hourlySection.style.display = "none";
 
   try {
-    const res = await fetch(`/.netlify/functions/order-flow?startDate=${startDate}&endDate=${endDate}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    const data = await fetchOrderFlowRange(startDate, endDate, showProgress);
 
     currentOrderFlowData = data;
 
@@ -3645,7 +3712,16 @@ function renderHistoryRange() {
 
   const avg = inRange.reduce((sum, s) => sum + parseFloat(s.build_hit_rate_pct), 0) / inRange.length;
   valueEl.textContent = `${avg.toFixed(0)}%`;
-  subEl.textContent = `Averaged across ${inRange.length} production-hours pull${inRange.length === 1 ? '' : 's'}, ${startStr} to ${endStr}`;
+  subEl.textContent = (() => {
+    // Count PULLS, not hours: one pull every 30 min, Mon-Fri 8am-4pm
+    // Central = 16 per working day. Say so, plus the working-day count,
+    // so the number can be sanity-checked at a glance.
+    const workingDays = new Set(inRange.map(s => {
+      const p = chicagoPartsForInstant(new Date(s.pulled_at).getTime());
+      return `${p.year}-${p.month}-${p.day}`;
+    })).size;
+    return `Averaged across ${inRange.length} pull${inRange.length === 1 ? '' : 's'} (${workingDays} working day${workingDays === 1 ? '' : 's'}, one pull every 30 min, Mon\u2013Fri 8am\u20134pm), ${startStr} to ${endStr}`;
+  })();
 }
 
 function renderHistoryDay(dateStr) {
@@ -3665,7 +3741,7 @@ function renderHistoryDay(dateStr) {
   if (dayProdSnapshots.length > 0) {
     const avg = dayProdSnapshots.reduce((sum, s) => sum + parseFloat(s.build_hit_rate_pct), 0) / dayProdSnapshots.length;
     document.getElementById("history-day-avg-value").textContent = `${avg.toFixed(0)}%`;
-    document.getElementById("history-day-avg-sub").textContent = `Averaged across ${dayProdSnapshots.length} production-hours pull${dayProdSnapshots.length === 1 ? '' : 's'} on ${dateStr}`;
+    document.getElementById("history-day-avg-sub").textContent = `Averaged across ${dayProdSnapshots.length} pull${dayProdSnapshots.length === 1 ? '' : 's'} during production hours (every 30 min, 8am\u20134pm) on ${dateStr}`;
   } else {
     document.getElementById("history-day-avg-value").textContent = "—";
     document.getElementById("history-day-avg-sub").textContent = `No production-hours snapshots logged for ${dateStr}.`;
@@ -3781,6 +3857,7 @@ let currentStockLevels = [];
 let currentHealthSnapshots = [];
 let currentTurnoverSnapshots = [];
 let currentTurnoverComputed = [];
+let turnoverLoadError = null; // set if reading turnover data from the database FAILED (as opposed to it simply being empty)
 
 // Supabase silently caps ANY single request at 1000 rows -- no error,
 // just a truncated array. CONFIRMED BUG, FIXED (2026-10-05): every
@@ -3842,6 +3919,7 @@ async function refresh() {
     // until enough daily history exists for the numbers to mean
     // anything (same honesty pattern as Aging/Volume on the health
     // dial) — this table only started being logged 2026-10-01.
+    turnoverLoadError = null;
     try {
       // Only the LATEST day is loaded here: this table gains ~1100 rows
       // every day forever, and the browser only needs today's current
@@ -3856,6 +3934,7 @@ async function refresh() {
         : [];
     } catch (turnoverErr) {
       console.error("turnover_snapshots fetch failed (non-fatal):", turnoverErr);
+      turnoverLoadError = (turnoverErr && turnoverErr.message) || String(turnoverErr);
       currentTurnoverSnapshots = [];
     }
 
@@ -3868,6 +3947,7 @@ async function refresh() {
       currentTurnoverComputed = await fetchAllRows("turnover_computed");
     } catch (computedErr) {
       console.error("turnover_computed fetch failed (non-fatal):", computedErr);
+      turnoverLoadError = (computedErr && computedErr.message) || String(computedErr);
       currentTurnoverComputed = [];
     }
 

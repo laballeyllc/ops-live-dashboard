@@ -852,17 +852,33 @@ def compute_turnover(pulled_at: str) -> list[dict]:
 
 
 def write_turnover_computed(results: list[dict]) -> None:
-    """Replaces the entire turnover_computed table every run — this is
-    the CURRENT best computation, not a historical log itself (the real
-    history already lives in turnover_snapshots, which this is derived
-    from); same "right now" relationship stock_levels has to live_queue."""
+    """Replaces turnover_computed with the new results -- the CURRENT best
+    computation, not a historical log (the real history lives in
+    turnover_snapshots, which this is derived from).
+
+    CONFIRMED FLAW, FIXED (2026-10-06): this used to delete the whole
+    table FIRST and insert after, so any failure partway (e.g. a missing
+    column) left the table EMPTY and the dashboard showing nothing --
+    "no days collected, everything uncategorized, no turnover" -- until
+    someone found the cause and re-ran it. Now the new rows go in FIRST
+    and the old rows are removed only after every batch has succeeded; if
+    an insert fails, the partial new rows are rolled back and the previous
+    good data stays in place. An empty result also leaves the table alone
+    rather than wiping it."""
     client = get_supabase_client()
-    client.table("turnover_computed").delete().gt("id", 0).execute()
     if not results:
-        print("No turnover results to write.")
+        print("No turnover results to write -- leaving the existing turnover_computed rows untouched.")
         return
-    insert_in_batches(client, "turnover_computed", results)
-    print(f"Wrote {len(results)} turnover computations to Supabase.")
+    prev = client.table("turnover_computed").select("id").order("id", desc=True).limit(1).execute().data
+    old_max_id = prev[0]["id"] if prev else 0
+    try:
+        insert_in_batches(client, "turnover_computed", results)
+    except Exception:
+        client.table("turnover_computed").delete().gt("id", old_max_id).execute()
+        print("Insert FAILED -- rolled back the partial new rows; the previous turnover_computed data is unchanged.")
+        raise
+    client.table("turnover_computed").delete().lte("id", old_max_id).execute()
+    print(f"Wrote {len(results)} turnover computations to Supabase (replaced the previous set).")
 
 
 def build_stock_levels() -> list[dict]:
@@ -959,36 +975,20 @@ def parse_shipstation_naive(naive_str: str):
     return pacific_dt.astimezone(timezone.utc)
 
 
-def business_hours_elapsed(start: datetime, end: datetime) -> float:
-    """Hours elapsed between start and end, weekends fully excluded
-    (Saturday 00:00 through Monday 00:00, Chicago time) — the 48-hour
-    SLA clock pauses at midnight Friday night, resumes midnight Monday.
-    Mirrors the frontend's businessHoursElapsed(); verified against the
-    same 4 test scenarios (including a span landing entirely inside one
-    weekend) to confirm the two implementations agree."""
-    if not start or end <= start:
-        return 0.0
-    total_seconds = (end - start).total_seconds()
-    excluded_seconds = 0.0
-    cursor = start.astimezone(CHICAGO_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
-    while cursor.astimezone(timezone.utc) < end:
-        day_end = cursor + timedelta(days=1)
-        if cursor.weekday() in (5, 6):  # Saturday=5, Sunday=6
-            day_start_utc = cursor.astimezone(timezone.utc)
-            day_end_utc = day_end.astimezone(timezone.utc)
-            overlap_start = max(day_start_utc, start)
-            overlap_end = min(day_end_utc, end)
-            if overlap_end > overlap_start:
-                excluded_seconds += (overlap_end - overlap_start).total_seconds()
-        cursor = day_end
-    return (total_seconds - excluded_seconds) / 3600.0
-
-
-def business_hours_since(naive_str: str) -> float:
+def order_age_hours(naive_str: str) -> float:
+    """Real elapsed hours since the order's ShipStation Order Date --
+    weekends and nights INCLUDED, exactly like ShipStation's own "Age"
+    column, because that is the number the rest of the company sees and
+    uses. CHANGED 2026-10-06: this used to be a "business hours" figure
+    that excluded Saturday and Sunday entirely (the 48h clock paused
+    all weekend), so every threshold derived from it -- 24h at-risk, 48h
+    overdue, Build % -- disagreed with what everyone else was reading
+    in ShipStation. Mirrors orderAgeHours() in site/index.html."""
     start = parse_shipstation_naive(naive_str)
     if not start:
         return 0.0
-    return business_hours_elapsed(start, datetime.now(timezone.utc))
+    seconds = (datetime.now(timezone.utc) - start).total_seconds()
+    return seconds / 3600.0 if seconds > 0 else 0.0
 
 
 # --- Off-hours order pile-up tracking (mirrors currentOffHoursWindow() /
@@ -1234,7 +1234,7 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
         elif core_queue == "Both":
             both_count += 1
 
-        hours = business_hours_since(first.get("Order datetime"))
+        hours = order_age_hours(first.get("Order datetime"))
         is_overdue = hours >= 48
         if is_overdue:
             aged_48h += 1
@@ -1347,8 +1347,8 @@ def log_health_snapshot(rows: list[dict], stock: dict[str, dict], pulled_at: str
 
 
 def log_turnover_snapshot(pulled_at: str) -> None:
-    """Appends one row per product to turnover_snapshots — an
-    append-only daily history log (same spirit as health_snapshots),
+    """Writes one row per product per day to turnover_snapshots — a
+    daily history log (re-running the same day replaces that day) (same spirit as health_snapshots),
     not a "right now" replace like stock_levels. This is what inventory
     turnover is computed from: (units or dollars sold over a period) /
     (average of units_on_hand / total_value across that period's daily
@@ -1371,6 +1371,14 @@ def log_turnover_snapshot(pulled_at: str) -> None:
         }
         for pid, v in valuation.items()
     ]
+    # ONE row per product per day. CONFIRMED BUG, FIXED (2026-10-06): this
+    # used to be a blind append, so running the pull twice on the same day
+    # (a manual run plus the daily trigger -- 2026-10-02 was logged more
+    # than once) stacked a second full copy of that day's rows, and the
+    # average-inventory side of the turnover math counts rows, so doubled
+    # days were quietly weighted double. Now a re-run REPLACES that day's
+    # rows. (A unique index in the database enforces the same rule.)
+    client.table("turnover_snapshots").delete().eq("pulled_at", pulled_at).execute()
     # Reuses the same batching helper already proven for stock_levels'
     # bulk writes, rather than a new one-off chunking loop.
     insert_in_batches(client, "turnover_snapshots", snapshot_rows)
