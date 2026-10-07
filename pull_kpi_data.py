@@ -427,11 +427,51 @@ def section_sales(sb, start: date, end: date) -> str:
     return f"{len(rows)} days"
 
 
-def fill_down(rows: list[dict], keys: list[str]) -> list[dict]:
-    """Finale pivot reports put a group value (Product ID, Supplier...) on
-    a header row and leave it blank on the detail rows below. Carry the
-    last seen value down so every detail row is self-contained."""
-    carried: dict[str, object] = {}
+def norm_key(k) -> str:
+    return re.sub(r"\s+", " ", str(k)).strip().lower()
+
+
+def resolve_columns(rows: list[dict], spec: dict) -> dict:
+    """Finds each needed column by keywords instead of exact names, since
+    Finale report headers vary ('Qty to produce', 'Product to produce'...).
+    spec: field -> list of alternatives; each alternative is a tuple of
+    words that must all appear in the header (first alternative wins);
+    a word starting with '!' must NOT appear.
+    Returns field -> actual column name (or None)."""
+    columns = []
+    for r in rows[:200]:
+        for k in r.keys():
+            if k not in columns:
+                columns.append(k)
+    out = {}
+    for field, alternatives in spec.items():
+        out[field] = None
+        for words in alternatives:
+            hit = next((c for c in columns
+                        if all((w[1:] not in norm_key(c)) if w.startswith("!") else (w in norm_key(c)) for w in words)),
+                       None)
+            if hit:
+                out[field] = hit
+                break
+    return out
+
+
+def describe(mapping: dict, rows: list[dict]) -> str:
+    cols = []
+    for r in rows[:200]:
+        for k in r.keys():
+            if k not in cols:
+                cols.append(k)
+    found = ", ".join(f"{f}='{c}'" for f, c in mapping.items())
+    return f"columns used: {found} | all columns: {[norm_key(c) for c in cols]}"
+
+
+def fill_down(rows: list[dict], keys: list) -> list[dict]:
+    """Finale pivot reports put a group value (order ID, supplier...) on
+    the first row of a group and leave it blank on the rows below. Carry
+    the last seen value down so every row is self-contained."""
+    keys = [k for k in keys if k]
+    carried: dict = {}
     out = []
     for r in rows:
         r = dict(r)
@@ -444,85 +484,139 @@ def fill_down(rows: list[dict], keys: list[str]) -> list[dict]:
     return out
 
 
-def report_rows(env_name: str, fill_keys: list[str]) -> list[dict] | None:
+def load_report(env_name: str):
     url = os.environ.get(env_name, "").strip()
     if not url:
         return None
-    return fill_down(fetch_finale_report(url), fill_keys)
+    url = url.replace("/pivotTableStream/", "/pivotTable/")   # the Stream form returns a web page, not data
+    return fetch_finale_report(url)
+
+
+def is_total_row(r: dict) -> bool:
+    return any(str(v).strip().upper().startswith("TOTAL") for v in r.values() if isinstance(v, str))
+
+
+def require(mapping: dict, fields: list, rows: list, what: str) -> None:
+    missing = [f for f in fields if not mapping.get(f)]
+    if missing:
+        raise RuntimeError(f"{what}: couldn't find column(s) for {missing}. {describe(mapping, rows)}")
 
 
 def section_builds(sb) -> str:
-    rows = report_rows("FINALE_BUILDS_REPORT_URL", ["Product ID", "Product"])
+    rows = load_report("FINALE_BUILDS_REPORT_URL")
     if rows is None:
         return "skipped: FINALE_BUILDS_REPORT_URL not set"
-    out, seen = [], set()
+    m = resolve_columns(rows, {
+        "build_id": [("build", "id"), ("build",)],
+        "product": [("product", "produce"), ("product", "id"), ("product",)],
+        "qty": [("qty", "produce"), ("quantity", "produce"), ("qty",), ("quantity",)],
+        "done": [("complete", "actual"), ("complete",), ("completed",)],
+    })
+    require(m, ["build_id", "qty", "done"], rows, "Builds report")
+    rows = fill_down(rows, [m["build_id"]])
+    out = {}
     for r in rows:
-        bid = pick(r, ["Build ID", "Build", "Build id"])
-        done = parse_any_date(pick(r, ["Complete date actual", "Complete date", "Completed date"]))
-        qty = to_number(pick(r, ["Quantity to produce", "Quantity", "Quantity produced", "Units"]))
-        pid = pick(r, ["Product ID", "Product"])
-        if not bid or str(bid) == "TOTAL:" or not done or not qty:
+        if is_total_row(r):
             continue
-        key = str(bid)
-        if key in seen:
+        bid, done, qty = r.get(m["build_id"]), parse_any_date(r.get(m["done"])), to_number(r.get(m["qty"]))
+        if not bid or not done or not qty:
             continue
-        seen.add(key)
-        out.append({"build_id": key, "product_id": str(pid or "").strip(), "quantity": qty,
-                    "complete_date": done.isoformat()})
+        key = str(bid).strip()
+        if key not in out:
+            out[key] = {"build_id": key, "product_id": str(r.get(m["product"]) or "").strip() if m["product"] else "",
+                        "quantity": qty, "complete_date": done.isoformat()}
     if not out:
-        raise RuntimeError(f"Builds report returned {len(rows)} rows but none parsed. "
-                           f"Columns seen: {sorted(rows[0].keys()) if rows else 'none'}")
-    upsert(sb, "kpi_builds", out, "build_id")
-    return f"{len(out)} builds"
+        raise RuntimeError(f"Builds report: {len(rows)} rows, none usable. {describe(m, rows)}")
+    upsert(sb, "kpi_builds", list(out.values()), "build_id")
+    return f"{len(out)} builds; {describe(m, rows)}"
+
+
+PO_EXCLUDED_STATUSES = ("draft", "cancel", "created")
 
 
 def section_pos(sb) -> str:
-    rows = report_rows("FINALE_PO_REPORT_URL", ["Supplier"])
+    rows = load_report("FINALE_PO_REPORT_URL")
     if rows is None:
         return "skipped: FINALE_PO_REPORT_URL not set"
-    out: dict[str, dict] = {}
+    m = resolve_columns(rows, {
+        "po_id": [("order", "id"), ("po", "!date", "!status"), ("order", "!date", "!status", "!ship", "!receiv")],
+        "supplier": [("supplier",), ("vendor",)],
+        "date": [("order", "date", "!receiv", "!ship"), ("date", "!receiv", "!eta")],
+        "status": [("order", "status"), ("status",)],
+        "subtotal": [("subtotal",), ("total",)],
+        "item": [("product", "id"), ("item",), ("product",)],
+    })
+    require(m, ["po_id", "date", "subtotal"], rows, "PO report")
+    rows = fill_down(rows, [m["po_id"], m["supplier"], m["date"], m["status"]])
+    pos: dict = {}
     for r in rows:
-        po = pick(r, ["Order ID", "PO ID", "Purchase order ID", "Order"])
-        if not po or str(po) == "TOTAL:":
+        if is_total_row(r):
             continue
-        d = parse_any_date(pick(r, ["Order date", "Order Date", "Date"]))
-        if not d:
+        po = r.get(m["po_id"])
+        d = parse_any_date(r.get(m["date"]))
+        if not po or not d:
             continue
-        val = to_number(pick(r, ["Subtotal sum", "Subtotal", "Total", "Order total"])) or 0.0
+        status = str(r.get(m["status"]) or "").lower() if m["status"] else ""
         key = str(po).strip()
-        entry = out.setdefault(key, {"po_id": key, "supplier": str(pick(r, ["Supplier"]) or "").strip(),
-                                     "order_date": d.isoformat(), "value": 0.0})
-        entry["value"] += val   # one row per PO, or one per line: either way this sums correctly
+        e = pos.setdefault(key, {"po_id": key, "supplier": str(r.get(m["supplier"]) or "").strip() if m["supplier"] else "",
+                                 "order_date": d.isoformat(), "status": status, "line_sum": 0.0, "has_lines": False,
+                                 "header_value": 0.0})
+        val = to_number(r.get(m["subtotal"])) or 0.0
+        if m["item"] and r.get(m["item"]) not in (None, "", "--"):
+            e["line_sum"] += val
+            e["has_lines"] = True
+        else:
+            e["header_value"] = max(e["header_value"], val)   # a group row carrying the PO's total
+    out, skipped_ids = [], []
+    for e in pos.values():
+        if any(x in e["status"] for x in PO_EXCLUDED_STATUSES):
+            skipped_ids.append(e["po_id"])
+            continue
+        out.append({"po_id": e["po_id"], "supplier": e["supplier"], "order_date": e["order_date"],
+                    "value": e["line_sum"] if e["has_lines"] else e["header_value"]})
     if not out:
-        raise RuntimeError(f"PO report returned {len(rows)} rows but none parsed. "
-                           f"Columns seen: {sorted(rows[0].keys()) if rows else 'none'}")
-    upsert(sb, "kpi_purchase_orders", list(out.values()), "po_id")
-    return f"{len(out)} purchase orders"
+        raise RuntimeError(f"PO report: {len(rows)} rows, none usable. {describe(m, rows)}")
+    upsert(sb, "kpi_purchase_orders", out, "po_id")
+    # A PO saved by an earlier run may since have been cancelled: remove it.
+    for i in range(0, len(skipped_ids), 200):
+        sb.table("kpi_purchase_orders").delete().in_("po_id", skipped_ids[i:i + 200]).execute()
+    skipped = len(skipped_ids)
+    statuses = sorted({e["status"] for e in pos.values()})
+    return f"{len(out)} POs ({skipped} draft/cancelled skipped; statuses seen {statuses}); {describe(m, rows)}"
 
 
 def section_receipts(sb) -> str:
-    rows = report_rows("FINALE_RECEIPTS_REPORT_URL", ["Product ID", "Product", "Supplier"])
+    rows = load_report("FINALE_RECEIPTS_REPORT_URL")
     if rows is None:
         return "skipped: FINALE_RECEIPTS_REPORT_URL not set"
-    out: dict[str, dict] = {}
+    m = resolve_columns(rows, {
+        "product": [("product", "id"), ("product",)],
+        "supplier": [("supplier",), ("vendor",), ("origin",)],
+        "ordered": [("order", "date", "!receiv", "!ship"), ("po", "date", "!receiv")],
+        "received": [("receiv", "date"), ("receiv",), ("deliver",), ("shipment", "date")],
+        "ref": [("shipment", "id"), ("receipt",), ("order", "id")],
+    })
+    require(m, ["ordered", "received"], rows, "Receipts report")
+    rows = fill_down(rows, [m["product"], m["supplier"]])
+    out: dict = {}
     for r in rows:
-        ordered = parse_any_date(pick(r, ["Order date", "Order Date", "PO order date"]))
-        received = parse_any_date(pick(r, ["Receive date", "Received date", "Receive date actual",
-                                           "Shipment receive date", "Date received"]))
+        if is_total_row(r):
+            continue
+        ordered, received = parse_any_date(r.get(m["ordered"])), parse_any_date(r.get(m["received"]))
         if not ordered or not received or received < ordered:
             continue
-        pid = str(pick(r, ["Product ID", "Product"]) or "").strip()
-        supplier = str(pick(r, ["Supplier"]) or "").strip()
-        ref = str(pick(r, ["Shipment ID", "Receipt ID", "Order ID"]) or "")
+        pid = str(r.get(m["product"]) or "").strip() if m["product"] else ""
+        supplier = str(r.get(m["supplier"]) or "").strip() if m["supplier"] else ""
+        ref = str(r.get(m["ref"]) or "") if m["ref"] else ""
         key = hashlib.md5(f"{ref}|{pid}|{supplier}|{ordered}|{received}".encode()).hexdigest()
         out[key] = {"receipt_key": key, "product_id": pid, "supplier": supplier,
                     "order_date": ordered.isoformat(), "receive_date": received.isoformat(),
                     "lead_days": (received - ordered).days}
     if not out:
-        raise RuntimeError(f"Receipts report returned {len(rows)} rows but none parsed. "
-                           f"Columns seen: {sorted(rows[0].keys()) if rows else 'none'}")
+        raise RuntimeError(f"Receipts report: {len(rows)} rows, none usable. {describe(m, rows)}")
     upsert(sb, "kpi_receipts", list(out.values()), "receipt_key")
-    return f"{len(out)} receipts"
+    note = "" if m["supplier"] else " WARNING: no supplier column, so lead time can't split domestic/import."
+    return f"{len(out)} receipts;{note} {describe(m, rows)}"
 
 
 # ---------------------------------------------------------------------
