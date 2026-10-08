@@ -98,6 +98,9 @@
   .seg button:hover { color: var(--text); }
   .seg button[aria-pressed="true"] { border-color: var(--text-muted); color: var(--text); }
   .seg button:disabled { opacity: .4; cursor: not-allowed; }
+  .fba-toggle { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); cursor: pointer; }
+  .fba-toggle input { margin-top: 3px; accent-color: var(--better); }
+  .fba-toggle small { display: block; color: var(--text-muted); font-size: 12px; max-width: 30ch; margin-top: 2px; }
 
   /* ---- Range readout -------------------------------------------------- */
   .range-line {
@@ -279,6 +282,10 @@
         <button data-c="lastyear">Same period last year</button>
         <button data-c="both">Both</button>
       </div>
+      <label class="fba-toggle">
+        <input type="checkbox" id="fba-toggle" checked>
+        <span>Include Amazon FBA<small>FBA SKUs and stock held at Amazon, in turnover and production. Amazon orders shipped from Dripping Springs always count.</small></span>
+      </label>
     </div>
   </div>
 
@@ -434,11 +441,12 @@ const GROUPS = [
         const parts = [];
         if (r.queue_hours_wh != null) parts.push(`Warehouse ${FMT.hours(r.queue_hours_wh)}`);
         if (r.queue_hours_fr != null) parts.push(`freight ${FMT.hours(r.queue_hours_fr)}`);
-        return parts.length ? `Business hours, order placed to shipped. ${parts.join(", ")}` : "Business hours, order placed to shipped";
+        const base = "Business hours (Mon–Fri, 8 AM–5 PM), order placed to ship day";
+        return parts.length ? `${base}. ${parts.join(", ")}` : base;
       }, fmt: "hours", better: "down", needs: "orders" },
   ]},
   { title: "Production", rows: [
-    { key: "builds_completed", label: "Builds completed", fmt: "int", better: "up", needs: "builds" },
+    { key: "builds_completed", label: "Builds completed", note: r => r.include_fba === false ? "Excluding Amazon FBA SKUs" : "", fmt: "int", better: "up", needs: "builds" },
     { key: "units_built", label: "Units built", fmt: "int", better: "up", needs: "builds" },
     { key: "unique_skus_built", label: "Unique SKUs built", fmt: "int", better: "up", needs: "builds" },
   ]},
@@ -455,9 +463,14 @@ const GROUPS = [
   ]},
   { title: "Inventory", rows: [
     { key: "accuracy_avg", label: "Inventory accuracy", note: "Average of each location's most recent cycle count as of the period end", fmt: "pct", better: "up", needs: "counts", pts: true, locations: true },
-    { key: "turnover", label: "Inventory turnover", note: r => r.turnover_days_covered
-        ? `Sales ÷ average inventory value, annualized. ${nf0.format(r.turnover_days_covered)} days of inventory history in this period`
-        : "Sales ÷ average inventory value, annualized", fmt: "turns", better: "up", needs: null },
+    { key: "turnover", label: "Inventory turnover", note: r => {
+        const scope = r.include_fba === false ? "Dripping Springs only" : "Including Amazon FBA";
+        let n = `Cost of goods sold ÷ average inventory at cost, annualized. ${scope}`;
+        if (r.turnover_days_covered) n += `. ${nf0.format(r.turnover_days_covered)} days of inventory history in this period`;
+        if (r.turnover_cost_coverage != null && r.turnover_cost_coverage < 0.98) n += `. Unit cost known for ${FMT.pct(+r.turnover_cost_coverage)} of units sold`;
+        return n;
+      }, fmt: "turns", better: "up", needs: null },
+    { key: "days_on_hand", label: "Days of inventory on hand", note: "Average inventory ÷ daily cost of goods sold. Same scope as turnover", fmt: "days", better: "down", needs: null },
   ]},
   { title: "New products", rows: [
     { key: "products_added", label: "Products added or converted", note: "Product Staging blocks whose week starts in the period", fmt: "int", better: "up", needs: "staging" },
@@ -483,6 +496,7 @@ const OTHER_COLOR = "#5A6168";
 const state = {
   preset: "last30",
   compare: "prior",
+  fba: true,
   custom: null,
   dim: "category",
   cur: null, prior: null, ly: null,
@@ -494,11 +508,13 @@ function readURL() {
   const q = new URLSearchParams(location.search);
   if (q.get("p")) state.preset = q.get("p");
   if (["prior", "lastyear", "both"].includes(q.get("c"))) state.compare = q.get("c");
+  if (q.get("f") === "0") state.fba = false;
   if (state.preset === "custom" && q.get("s") && q.get("e")) state.custom = { start: q.get("s"), end: q.get("e") };
   if (state.preset === "custom" && !state.custom) state.preset = "last30";
 }
 function writeURL() {
   const q = new URLSearchParams({ p: state.preset, c: state.compare });
+  if (!state.fba) q.set("f", "0");
   if (state.preset === "custom" && state.custom) { q.set("s", state.custom.start); q.set("e", state.custom.end); }
   history.replaceState(null, "", "?" + q.toString());
 }
@@ -506,7 +522,7 @@ function writeURL() {
 // ---------------------------------------------------------------- data
 async function summary(r) {
   if (!r) return null;
-  const { data, error } = await db.rpc("kpi_summary", { p_start: r.start, p_end: r.end });
+  const { data, error } = await db.rpc("kpi_summary", { p_start: r.start, p_end: r.end, p_include_fba: state.fba });
   if (error) throw new Error(error.message);
   return data;
 }
@@ -882,6 +898,10 @@ document.getElementById("compare").addEventListener("click", e => {
   state.compare = b.dataset.c;
   load();
 });
+document.getElementById("fba-toggle").addEventListener("change", e => {
+  state.fba = e.target.checked;
+  load();
+});
 document.getElementById("dim-tabs").addEventListener("click", e => {
   const b = e.target.closest("button[data-d]");
   if (!b) return;
@@ -890,6 +910,7 @@ document.getElementById("dim-tabs").addEventListener("click", e => {
 });
 
 readURL();
+document.getElementById("fba-toggle").checked = state.fba;
 if (state.preset === "custom" && state.custom) {
   document.getElementById("c-start").value = state.custom.start;
   document.getElementById("c-end").value = state.custom.end;
