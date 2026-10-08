@@ -70,6 +70,95 @@ FIRST_LOCATION_HEADER = "ROW 1"
 # ---------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Finance's on-time shipping KPI (Shipping OKR sheet, "Run Filtered SLA
+# Analysis" Apps Script). Ported line for line and checked against the
+# sheet's own results: Jun 1-Sep 30 2026 gives 13,066 lines analyzed,
+# 12,090 passed (92.53%), with zero row-level differences.
+#
+#   - business hours: Mon-Fri, 8 AM-5 PM Central, no holidays
+#   - clock: order date -> ship DATE at midnight (ShipStation ship dates
+#     have no time, so a ship day counts from its 8 AM start)
+#   - pass: <= 24 business hours
+#   - counted per order LINE, not per order (the export has a row per item)
+#   - eligible: status Shipped; ship-from "Dripping Springs Warehouse" or
+#     "Austin Office & Warehouse"; line extended price >= 0; Custom Field 2
+#     blank (excludes 'frt' freight and custom shipping options)
+# ---------------------------------------------------------------------
+FIN_SLA_HOURS = 24
+FIN_WORK_START = 8
+FIN_WORK_END = 17
+FIN_WAREHOUSE_NAMES = ("Dripping Springs Warehouse", "Austin Office & Warehouse")
+# "Austin Office & Warehouse" was deleted from ShipStation after the move,
+# so /warehouses no longer lists it; orders from that era still carry its
+# ID. 251393 is the deleted location the 2025-26 labels came from.
+AUSTIN_WAREHOUSE_ID_FALLBACK = 251393
+
+
+def _fin_normalize(d: datetime) -> datetime:
+    while True:
+        wd = d.weekday()
+        if wd == 6:
+            return (d + timedelta(days=1)).replace(hour=FIN_WORK_START, minute=0, second=0, microsecond=0)
+        if wd == 5:
+            return (d + timedelta(days=2)).replace(hour=FIN_WORK_START, minute=0, second=0, microsecond=0)
+        if d.hour >= FIN_WORK_END:
+            d = (d + timedelta(days=1)).replace(hour=FIN_WORK_START, minute=0, second=0, microsecond=0)
+            continue
+        if d.hour < FIN_WORK_START:
+            d = d.replace(hour=FIN_WORK_START, minute=0, second=0, microsecond=0)
+        return d
+
+
+def finance_business_hours(order_local: datetime, ship_day: date) -> float:
+    """order_local: naive Central time. ship_day: the ship date."""
+    start = order_local
+    end = datetime(ship_day.year, ship_day.month, ship_day.day)
+    if start >= end:
+        return 0.0
+    start, end = _fin_normalize(start), _fin_normalize(end)
+    if start >= end:
+        return 0.0
+    sd = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    ed = end.replace(hour=0, minute=0, second=0, microsecond=0)
+    if sd == ed:
+        return (end.hour - start.hour) + (end.minute - start.minute) / 60
+    first = (FIN_WORK_END - start.hour) - start.minute / 60
+    last = (end.hour - FIN_WORK_START) + end.minute / 60
+    n, it = 0, sd + timedelta(days=1)
+    while it < ed:
+        if it.weekday() < 5:
+            n += 1
+        it += timedelta(days=1)
+    return n * (FIN_WORK_END - FIN_WORK_START) + first + last
+
+
+def finance_lines(o: dict, sla_wh_ids: set) -> int:
+    """How many of this order's lines Finance's KPI counts (0 if the order
+    itself doesn't qualify)."""
+    adv = o.get("advancedOptions") or {}
+    if o.get("orderStatus") != "shipped" or adv.get("warehouseId") not in sla_wh_ids:
+        return 0
+    if str(adv.get("customField2") or "").strip():
+        return 0
+    n = 0
+    for it in o.get("items") or []:
+        try:
+            ext = float(it.get("unitPrice")) * float(it.get("quantity") or 0)
+        except (TypeError, ValueError):
+            continue
+        if ext >= 0:
+            n += 1
+    return n
+
+
+def finance_hours_for(order_dt_utc: datetime | None, ship_day: date | None):
+    if not order_dt_utc or not ship_day:
+        return None
+    local = order_dt_utc.astimezone(CHICAGO_TZ).replace(tzinfo=None)
+    return round(finance_business_hours(local, ship_day), 2)
+
+
 
 def business_hours_elapsed(start: datetime, end: datetime) -> float:
     """Hours between start and end with weekends excluded (Saturday 00:00
@@ -227,7 +316,7 @@ def end_of_shift_instant(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, END_OF_SHIFT_HOUR, tzinfo=CHICAGO_TZ).astimezone(timezone.utc)
 
 
-def order_row(o: dict, wh_id, fr_id, tag_names: dict) -> dict:
+def order_row(o: dict, wh_id, fr_id, tag_names: dict, sla_wh_ids: set) -> dict:
     """Saves what ShipStation has on the order itself. Label-based ship
     dates and times are filled in afterwards by reconcile_ship_times()."""
     oid = o["orderId"]
@@ -250,11 +339,14 @@ def order_row(o: dict, wh_id, fr_id, tag_names: dict) -> dict:
         "queue_bhours": round(business_hours_elapsed(order_dt, ship_dt), 2) if (order_dt and ship_dt) else None,
         "units": sum(i["qty"] for i in items),
         "items": items,
+        "ship_from_id": (o.get("advancedOptions") or {}).get("warehouseId"),
+        "fin_lines": finance_lines(o, sla_wh_ids),
+        "fin_bhours": finance_hours_for(order_dt, ship_date),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
-def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, tag_names: dict) -> None:
+def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, tag_names: dict, sla_wh_ids: set) -> None:
     s_str, e_str = f"{start} 00:00:00", f"{end} 23:59:59"
     print(f"ShipStation {start} to {end}")
 
@@ -292,7 +384,7 @@ def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, tag_na
     window_orders: dict[int, dict] = {}
     for o in placed + shipped:          # shipped second: its status wins on overlap
         window_orders[o["orderId"]] = o
-    rows = [order_row(o, wh_id, fr_id, tag_names) for o in window_orders.values()]
+    rows = [order_row(o, wh_id, fr_id, tag_names, sla_wh_ids) for o in window_orders.values()]
     upsert(sb, "kpi_orders", rows, "order_id")
     upsert(sb, "kpi_shipments", [r for r in shipment_rows if r["shipment_id"]], "shipment_id")
 
@@ -355,6 +447,7 @@ def reconcile_ship_times(sb, start: date, end: date) -> str:
             "ship_dt": ship_dt.isoformat(),
             "ship_dt_source": source,
             "queue_bhours": round(business_hours_elapsed(order_dt, ship_dt), 2) if order_dt else None,
+            "fin_bhours": finance_hours_for(order_dt, parse_any_date(ship_date)),
         })
     if updates:
         upsert(sb, "kpi_orders", updates, "order_id")
@@ -367,15 +460,30 @@ def reconcile_ship_times(sb, start: date, end: date) -> str:
     return f"ship dates/times from labels on {len(updates)} orders; queue set on {len(label_queue)} labels"
 
 
+def finance_warehouse_ids(ss, warehouse_id) -> set:
+    ids = {warehouse_id}
+    try:
+        for w in ss._get("/warehouses") or []:
+            if (w.get("warehouseName") or "").strip() in FIN_WAREHOUSE_NAMES:
+                ids.add(w["warehouseId"])
+    except Exception as e:
+        print(f"  could not list warehouses: {e}")
+    if not any(i != warehouse_id for i in ids):
+        ids.add(AUSTIN_WAREHOUSE_ID_FALLBACK)
+    return ids
+
+
 def section_shipstation(sb, start: date, end: date) -> str:
     ss = ShipStationClient()
     wh_id = ss.get_warehouse_id(WAREHOUSE_LOCATION_NAME)
     fr_id = ss.get_warehouse_id(FREIGHT_LOCATION_NAME)
     tag_names = ss.list_tags()
+    sla_wh_ids = finance_warehouse_ids(ss, wh_id)
+    print(f"  on-time KPI ship-from IDs: {sorted(sla_wh_ids)}")
     chunk_start = start
     while chunk_start <= end:      # weekly chunks keep each request set small on backfills
         chunk_end = min(chunk_start + timedelta(days=6), end)
-        sync_shipstation_window(ss, sb, chunk_start, chunk_end, wh_id, fr_id, tag_names)
+        sync_shipstation_window(ss, sb, chunk_start, chunk_end, wh_id, fr_id, tag_names, sla_wh_ids)
         chunk_start = chunk_end + timedelta(days=1)
     detail = reconcile_ship_times(sb, start, end)
     print(f"  {detail}")
@@ -814,6 +922,7 @@ def run_diagnose(start: date | None, end: date | None) -> int:
     store_names = ss.list_stores()
     windows = [(start, end)] if start and end else [
         (date(2025, 3, 5), date(2025, 3, 11)),
+        (date(2026, 2, 9), date(2026, 2, 15)),
         (date(2026, 9, 21), date(2026, 9, 27)),
     ]
     for s, e in windows:
