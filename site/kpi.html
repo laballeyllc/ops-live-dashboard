@@ -109,6 +109,35 @@
   .status { color: var(--text-muted); font-size: 13px; min-height: 20px; margin-bottom: 8px; }
   .status.error { color: var(--worse); }
 
+  /* ---- On-time hero ---------------------------------------------------- */
+  .hero {
+    display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 24px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-m);
+    padding: 20px 24px; margin: 8px 0 8px;
+  }
+  .hero h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  .hero-value { font-size: 64px; font-weight: 700; line-height: 1.05; letter-spacing: -0.03em; margin: 8px 0 4px; }
+  .hero-value.na { font-size: 22px; font-weight: 500; color: var(--text-muted); margin: 16px 0; }
+  .hero-def { color: var(--text-muted); font-size: 13px; margin: 0 0 12px; max-width: 34ch; }
+  .hero-count { font-size: 14px; margin: 0 0 12px; }
+  .hero-target { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+  .hero-target.met { color: var(--better); }
+  .hero-target.missed { color: var(--worse); }
+  .hero-cmp { display: grid; grid-template-columns: auto auto auto; gap: 4px 12px; justify-content: start; font-size: 14px; }
+  .hero-cmp .k { color: var(--text-muted); }
+  .hero-cmp .better { color: var(--better); font-weight: 500; }
+  .hero-cmp .worse { color: var(--worse); font-weight: 500; }
+  .hero-cmp .flat { color: var(--text-muted); }
+  .hero-chart { min-width: 0; display: flex; flex-direction: column; }
+  .hero-chart .cap { color: var(--text-muted); font-size: 13px; margin-bottom: 6px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .hero-chart svg { width: 100%; height: auto; display: block; }
+  .hero-chart .axis { fill: var(--text-muted); font-size: 11px; font-family: inherit; }
+  .hero-chart .grid { stroke: var(--border); stroke-width: 1; }
+  .hero-chart .target { stroke: var(--freight); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .hero-chart .obar { fill: var(--better); }
+  .hero-chart .obar.below { fill: var(--worse); }
+  .hero-chart .empty { color: var(--text-muted); font-size: 13px; padding: 40px 0; }
+
   /* ---- KPI table ------------------------------------------------------ */
   .table-scroll { overflow-x: auto; }
   table.kpis { width: 100%; border-collapse: collapse; min-width: 640px; }
@@ -173,6 +202,9 @@
   .origin button[aria-pressed="true"] { background: var(--panel-raised); color: var(--text); font-weight: 600; }
 
   @media (max-width: 760px) {
+    .hero { grid-template-columns: 1fr; padding: 16px; }
+    .hero-value { font-size: 52px; }
+
     .controls { grid-template-columns: 1fr; }
     .presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .compare .seg { flex-direction: row; flex-wrap: wrap; }
@@ -256,6 +288,21 @@
   </div>
   <div class="status" id="status" role="status" aria-live="polite"></div>
 
+  <section class="hero" id="hero" aria-labelledby="hero-title">
+    <div>
+      <h2 id="hero-title">% of Orders Shipped &lt;48 hours</h2>
+      <div class="hero-value" id="hero-value"></div>
+      <p class="hero-def">Warehouse order lines shipped within 24 business hours (Mon–Fri, 8 AM–5 PM), using Finance's OKR method.</p>
+      <p class="hero-target" id="hero-target"></p>
+      <p class="hero-count" id="hero-count"></p>
+      <div class="hero-cmp" id="hero-cmp"></div>
+    </div>
+    <div class="hero-chart">
+      <div class="cap"><span id="chart-cap"></span><span id="chart-target"></span></div>
+      <div id="hero-chart"></div>
+    </div>
+  </section>
+
   <div class="table-scroll">
     <table class="kpis" id="kpis"></table>
   </div>
@@ -281,6 +328,10 @@
 const SUPABASE_URL = "https://pdflsmequzgpeuodnxyg.supabase.co";
 const SUPABASE_ANON_KEY = "YOUR_ANON_KEY_HERE";
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// On-time shipping target, as a fraction (0.95 = 95%). Draws a line on
+// the trend chart and colors bars below it. null = no target shown.
+const ONTIME_TARGET = 0.90;
 
 // ---------------------------------------------------------------- dates
 // All periods are Central-time calendar days, matching the warehouse and
@@ -379,7 +430,6 @@ const GROUPS = [
     { key: "packages_shipped", label: "Packages shipped", note: "Shipping labels, plus one per order shipped outside ShipStation", fmt: "int", better: "up", needs: "orders" },
     { key: "warehouse_orders", label: "Warehouse orders", note: "Placed in the period", fmt: "int", better: null, needs: "orders" },
     { key: "freight_orders", label: "Freight orders", note: "Placed in the period", fmt: "int", better: null, needs: "orders" },
-    { key: "sla_48_pct", label: "Shipped within 48 business hours", note: r => r.sla_48_sample ? `Warehouse orders shipped in the period (${nf0.format(r.sla_48_sample)} orders)` : "Warehouse orders shipped in the period", fmt: "pct", better: "up", needs: "orders", pts: true },
     { key: "queue_hours", label: "Average time in queue", note: r => {
         const parts = [];
         if (r.queue_hours_wh != null) parts.push(`Warehouse ${FMT.hours(r.queue_hours_wh)}`);
@@ -461,6 +511,19 @@ async function summary(r) {
   return data;
 }
 
+async function ontimeSeries(r, grain) {
+  const { data, error } = await db.rpc("kpi_ontime_series", { p_start: r.start, p_end: r.end, p_grain: grain });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+// Daily bars for a month or less, weekly up to ~6 months, monthly beyond.
+function grainFor(r) {
+  const start = r.start < "2024-01-01" ? (state.cur && state.cur.orders_since) || r.start : r.start;
+  const days = daysBetween(D(start), D(r.end));
+  return days <= 31 ? "day" : days <= 190 ? "week" : "month";
+}
+
 async function load() {
   const today = todayISO();
   const p = state.preset === "custom"
@@ -480,11 +543,14 @@ async function load() {
   const token = ++state.token;
   setStatus("Loading…");
   try {
-    const [cur, prior, ly] = await Promise.all([
+    const grain = grainFor(state.ranges.cur);
+    const [cur, prior, ly, series] = await Promise.all([
       summary(state.ranges.cur), summary(state.ranges.prior), summary(state.ranges.ly),
+      ontimeSeries(state.ranges.cur, grain),
     ]);
     if (token !== state.token) return;   // a newer selection superseded this one
-    Object.assign(state, { cur, prior, ly });
+    Object.assign(state, { cur, prior, ly, series, grain });
+    paintHero();
     paintTable();
     paintMix();
     paintSync();
@@ -557,6 +623,81 @@ function paintSync() {
   document.getElementById("last-sync").textContent = t
     ? "Data as of " + new Date(t).toLocaleString("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : "";
+}
+
+function paintHero() {
+  const c = state.cur || {};
+  const v = c.ontime_pct;
+  const valueEl = document.getElementById("hero-value");
+  valueEl.classList.toggle("na", v == null);
+  valueEl.textContent = v == null ? "No shipped warehouse orders in this period" : FMT.pct(+v);
+  const tEl = document.getElementById("hero-target");
+  if (v == null || ONTIME_TARGET == null) { tEl.textContent = ""; tEl.className = "hero-target"; }
+  else {
+    const gap = (v - ONTIME_TARGET) * 100;
+    tEl.className = "hero-target " + (gap >= 0 ? "met" : "missed");
+    tEl.textContent = gap >= 0
+      ? `Target ${FMT.pct(ONTIME_TARGET)}: met, ${nf1.format(gap)} pts above`
+      : `Target ${FMT.pct(ONTIME_TARGET)}: ${nf1.format(-gap)} pts below`;
+  }
+  document.getElementById("hero-count").textContent = v == null ? "" :
+    `${nf0.format(c.ontime_passed)} of ${nf0.format(c.ontime_lines)} lines on time, across ${nf0.format(c.ontime_orders)} orders`;
+
+  const rows = [];
+  for (const [label, data, show] of [["Previous", state.prior, !!state.ranges.prior], ["Last year", state.ly, !!state.ranges.ly]]) {
+    if (!show) continue;
+    const p = data && data.ontime_pct;
+    let delta = "", cls = "flat";
+    if (v != null && p != null) {
+      const diff = (v - p) * 100;
+      delta = (diff > 0 ? "+" : diff < 0 ? "−" : "") + nf1.format(Math.abs(diff)) + " pts";
+      if (Math.abs(diff) >= 0.05) cls = diff > 0 ? "better" : "worse";
+    }
+    rows.push(`<span class="k">${label}</span><span>${p == null ? "No data" : FMT.pct(+p)}</span><span class="${cls}">${delta}</span>`);
+  }
+  document.getElementById("hero-cmp").innerHTML = rows.join("");
+
+  const grainName = { day: "Daily", week: "Weekly", month: "Monthly" }[state.grain];
+  document.getElementById("chart-cap").textContent = `${grainName} rate`;
+  document.getElementById("chart-target").textContent = ONTIME_TARGET != null ? `Target ${FMT.pct(ONTIME_TARGET)}` : "";
+  document.getElementById("hero-chart").innerHTML = ontimeChart(state.series || [], state.grain);
+}
+
+function ontimeChart(series, grain) {
+  const pts = series.filter(d => d.pct != null);
+  if (pts.length < 2) return `<div class="empty">Not enough shipped days in this period for a trend.</div>`;
+  const W = 640, H = 220, L = 40, R = 8, T = 8, B = 26;
+  const vals = pts.map(d => +d.pct);
+  if (ONTIME_TARGET != null) vals.push(ONTIME_TARGET);
+  // Start the axis near the data so real differences are visible; the
+  // lowest gridline is labeled, so the cut is never hidden.
+  const rawLo = Math.max(0, Math.min(...vals) - 0.05);
+  const tick = (1 - rawLo) > 0.5 ? 0.2 : (1 - rawLo) > 0.25 ? 0.1 : 0.05;
+  const lo = Math.max(0, Math.floor(rawLo / tick + 1e-9) * tick);
+  const y = p => T + (1 - (p - lo) / (1 - lo)) * (H - T - B);
+  const step = (W - L - R) / pts.length;
+  const bw = Math.max(2, Math.min(36, step * 0.7));
+  let g = "";
+  for (let k = 0; lo + k * tick <= 1.0001; k++) {
+    const p = lo + k * tick;
+    g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(p)}" y2="${y(p)}"/>` +
+         `<text class="axis" x="${L - 6}" y="${y(p) + 4}" text-anchor="end">${Math.round(p * 100)}%</text>`;
+  }
+  const fmtB = b => {
+    const d = D(b);
+    return grain === "month" ? d.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", year: "2-digit" })
+                             : d.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" });
+  };
+  const every = Math.ceil(pts.length / 8);
+  pts.forEach((d, i) => {
+    const x = L + i * step + (step - bw) / 2, yy = y(+d.pct);
+    const below = ONTIME_TARGET != null && +d.pct < ONTIME_TARGET;
+    const label = `${grain === "week" ? "Week of " : ""}${fmtB(d.bucket)}: ${FMT.pct(+d.pct)} (${nf0.format(d.passed)} of ${nf0.format(d.lines)} lines)`;
+    g += `<rect class="obar${below ? " below" : ""}" x="${x}" y="${yy}" width="${bw}" height="${Math.max(1, H - B - yy)}" rx="2"><title>${label}</title></rect>`;
+    if (i % every === 0) g += `<text class="axis" x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${fmtB(d.bucket)}</text>`;
+  });
+  if (ONTIME_TARGET != null) g += `<line class="target" x1="${L}" x2="${W - R}" y1="${y(ONTIME_TARGET)}" y2="${y(ONTIME_TARGET)}"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="On-time rate by ${grain}">${g}</svg>`;
 }
 
 function deltaCell(row, cur, cmp) {
