@@ -52,7 +52,6 @@ from ops_common import (
     fetch_finale_report,
     get_supabase_client,
 )
-import ops_common
 
 load_dotenv()
 
@@ -282,16 +281,44 @@ WAREHOUSE_TAG = "austin warehouse"
 FREIGHT_TAG = "atx freight"
 
 
-def queue_name(order_or_shipment: dict, warehouse_id, freight_id, tag_names: dict | None = None) -> str:
-    """Ship From Location when it's set to one of the two Dripping Springs
-    locations (how Ops Live classifies, reliable since mid-2026). Before
-    that, orders were 'Unassigned', so fall back to the tags that were in
-    use throughout: 'Austin Warehouse' and 'ATX Freight'. An order with
-    both tags (a split order) counts as Freight."""
-    wh = (order_or_shipment.get("advancedOptions") or {}).get("warehouseId", order_or_shipment.get("warehouseId"))
+def is_frt(o: dict) -> bool:
+    return str((o.get("advancedOptions") or {}).get("customField2") or "").strip().lower() == "frt"
+
+
+LEGACY_CUTOFF = "2026-06-01"   # Dripping Springs ship-from locations in use from June 2026
+
+
+def queue_name(order_or_shipment: dict, warehouse_id, freight_id, tag_names: dict | None = None,
+               legacy_ids: set | None = None) -> str:
+    """Warehouse / Freight / '' (not ours). Same rule as Ops Live for every
+    order since the Dripping Springs locations went live:
+
+      1. Ship From = Dripping Springs Warehouse / Freight -> that queue.
+         This is the ONLY rule for orders from June 2026 on, so the KPI
+         page and Ops Live classify current orders identically.
+      2. Older orders, where Ship From can't tell (the deleted "Austin
+         Office & Warehouse" location, or Unassigned/blank before June
+         2026): Custom Field 2 = 'frt' -> Freight (tested ~97% against
+         the Freight location in June 2026), else the tags ('ATX Freight'
+         -> Freight, 'Austin Warehouse' -> Warehouse). An Austin-location
+         order with neither counts as Warehouse, since it shipped from us.
+      3. Anything else (vendor/dropship locations such as PA or United
+         Scientific, or Unassigned after June 2026) -> ''.
+    Pass tag_names=None to classify by Ship From alone (labels)."""
+    adv = order_or_shipment.get("advancedOptions") or {}
+    wh = adv.get("warehouseId", order_or_shipment.get("warehouseId"))
     if wh == warehouse_id:
         return "Warehouse"
     if wh == freight_id:
+        return "Freight"
+    legacy_ids = legacy_ids or {}
+    austin = wh in legacy_ids.get("austin", set())
+    unassigned_ids = legacy_ids.get("unassigned", set())
+    order_day = str(order_or_shipment.get("orderDate") or "")[:10]
+    old_unassigned = (wh is None or wh in unassigned_ids) and order_day and order_day < LEGACY_CUTOFF
+    if not (austin or old_unassigned):
+        return ""
+    if is_frt(order_or_shipment):
         return "Freight"
     if tag_names is not None:
         tags = {str(tag_names.get(t, "")).strip().lower() for t in (order_or_shipment.get("tagIds") or [])}
@@ -299,7 +326,17 @@ def queue_name(order_or_shipment: dict, warehouse_id, freight_id, tag_names: dic
             return "Freight"
         if WAREHOUSE_TAG in tags:
             return "Warehouse"
-    return ""
+    return "Warehouse" if austin else ""
+
+
+def tag_only_queue(o: dict, tag_names: dict) -> str | None:
+    """What the tags alone say (stored for testing the 'frt' flag)."""
+    tags = {str(tag_names.get(t, "")).strip().lower() for t in (o.get("tagIds") or [])}
+    if FREIGHT_TAG in tags:
+        return "Freight"
+    if WAREHOUSE_TAG in tags:
+        return "Warehouse"
+    return None
 
 
 def items_of(order: dict) -> list[dict]:
@@ -316,7 +353,7 @@ def end_of_shift_instant(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, END_OF_SHIFT_HOUR, tzinfo=CHICAGO_TZ).astimezone(timezone.utc)
 
 
-def order_row(o: dict, wh_id, fr_id, tag_names: dict, sla_wh_ids: set) -> dict:
+def order_row(o: dict, wh_id, fr_id, tag_names: dict, sla_wh_ids: set, legacy_ids: dict | None = None) -> dict:
     """Saves what ShipStation has on the order itself. Label-based ship
     dates and times are filled in afterwards by reconcile_ship_times()."""
     oid = o["orderId"]
@@ -326,27 +363,34 @@ def order_row(o: dict, wh_id, fr_id, tag_names: dict, sla_wh_ids: set) -> dict:
     if ship_date:
         ship_dt, source = end_of_shift_instant(ship_date), "end_of_shift"
     items = items_of(o)
+    bh = finance_hours_for(order_dt, ship_date)
     return {
         "order_id": oid,
         "order_number": o.get("orderNumber"),
-        "queue": queue_name(o, wh_id, fr_id, tag_names),
+        "queue": queue_name(o, wh_id, fr_id, tag_names, legacy_ids),
         "status": o.get("orderStatus"),
         "order_dt": order_dt.isoformat() if order_dt else None,
         "order_date": order_dt.astimezone(CHICAGO_TZ).date().isoformat() if order_dt else None,
         "ship_date": ship_date.isoformat() if ship_date else None,
         "ship_dt": ship_dt.isoformat() if ship_dt else None,
         "ship_dt_source": source,
-        "queue_bhours": round(business_hours_elapsed(order_dt, ship_dt), 2) if (order_dt and ship_dt) else None,
+        # Time in queue uses Finance's clock (Mon-Fri 8-5, order to ship
+        # day): ShipStation has no reliable ship timestamps.
+        "queue_bhours": bh,
+        "ship_date_source": "order" if ship_date else None,
+        "cf2_frt": is_frt(o),
+        "tag_queue": tag_only_queue(o, tag_names),
         "units": sum(i["qty"] for i in items),
         "items": items,
         "ship_from_id": (o.get("advancedOptions") or {}).get("warehouseId"),
         "fin_lines": finance_lines(o, sla_wh_ids),
-        "fin_bhours": finance_hours_for(order_dt, ship_date),
+        "fin_bhours": bh,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
-def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, tag_names: dict, sla_wh_ids: set) -> None:
+def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, tag_names: dict, sla_wh_ids: set,
+                            legacy_ids: dict | None = None) -> None:
     s_str, e_str = f"{start} 00:00:00", f"{end} 23:59:59"
     print(f"ShipStation {start} to {end}")
 
@@ -384,7 +428,7 @@ def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, tag_na
     window_orders: dict[int, dict] = {}
     for o in placed + shipped:          # shipped second: its status wins on overlap
         window_orders[o["orderId"]] = o
-    rows = [order_row(o, wh_id, fr_id, tag_names, sla_wh_ids) for o in window_orders.values()]
+    rows = [order_row(o, wh_id, fr_id, tag_names, sla_wh_ids, legacy_ids) for o in window_orders.values()]
     upsert(sb, "kpi_orders", rows, "order_id")
     upsert(sb, "kpi_shipments", [r for r in shipment_rows if r["shipment_id"]], "shipment_id")
 
@@ -401,13 +445,16 @@ def fetch_all(sb, table: str, columns: str, apply_filters) -> list[dict]:
 
 
 def reconcile_ship_times(sb, start: date, end: date) -> str:
-    """Matches labels to orders by ORDER NUMBER (2025 labels point to
-    order IDs that no longer exist; the orders were re-imported with new
-    IDs, but order numbers carried over). For each shipped order:
-      - ship date: the order's own shipDate, else its earliest label's
-      - ship time: earliest label's creation time, else 4 PM that day
-    Also gives each label its order's Warehouse/Freight queue, since
-    pre-2026 labels came from a ship-from location that no longer exists."""
+    """Fills in ship dates ShipStation no longer has on the order, then
+    recomputes business hours. Ship date, in order of preference:
+      1. the order's own shipDate                         (source 'order')
+      2. Finance's ShipStation export from before the May 2026 update,
+         loaded once into kpi_ship_date_overrides         (source 'export')
+      3. the earliest label for the order                 (source 'label')
+    Labels and the export are matched by order ID, else by ORDER NUMBER:
+    orders were re-imported on 2026-03-25 with new IDs, but order numbers
+    carried over. Also gives each label its order's Warehouse/Freight
+    queue, since pre-2026 labels came from a ship-from that no longer exists."""
     since = (start - timedelta(days=45)).isoformat()
     labels = fetch_all(sb, "kpi_shipments", "shipment_id,order_number,ship_date,create_dt,voided,queue",
                        lambda q: q.gte("ship_date", since).eq("voided", False))
@@ -420,10 +467,19 @@ def reconcile_ship_times(sb, start: date, end: date) -> str:
         if num not in first_label or key < (first_label[num].get("create_dt") or first_label[num]["ship_date"]):
             first_label[num] = l
 
-    orders = fetch_all(sb, "kpi_orders", "order_id,order_number,status,order_dt,ship_date,ship_dt_source,queue",
+    overrides = fetch_all(sb, "kpi_ship_date_overrides", "order_id,order_number,ship_date", lambda q: q)
+    ov_by_id = {o["order_id"]: o["ship_date"] for o in overrides if o.get("ship_date")}
+    num_counts: dict[str, int] = {}
+    for o in overrides:
+        num_counts[str(o.get("order_number") or "")] = num_counts.get(str(o.get("order_number") or ""), 0) + 1
+    ov_by_num = {str(o["order_number"]): o["ship_date"] for o in overrides
+                 if o.get("ship_date") and num_counts.get(str(o.get("order_number") or "")) == 1}
+
+    orders = fetch_all(sb, "kpi_orders",
+                       "order_id,order_number,status,order_dt,ship_date,ship_date_source,fin_bhours,queue",
                        lambda q: q.gte("order_date", since).lte("order_date", end.isoformat()))
     queue_by_number = {}
-    updates = []
+    updates, by_source = [], {"export": 0, "label": 0}
     for o in orders:
         num = str(o.get("order_number") or "").strip()
         if num and o.get("queue"):
@@ -431,23 +487,36 @@ def reconcile_ship_times(sb, start: date, end: date) -> str:
         if o.get("status") != "shipped":
             continue
         lab = first_label.get(num)
-        if not lab:
-            continue
-        ship_date = o.get("ship_date") or lab["ship_date"]
-        if lab.get("create_dt"):
-            ship_dt, source = datetime.fromisoformat(lab["create_dt"]), "label"
+        if o.get("ship_date_source") == "order" and o.get("ship_date"):
+            ship_date, src = o["ship_date"], "order"
         else:
-            ship_dt, source = end_of_shift_instant(parse_any_date(ship_date)), "end_of_shift"
-        if o.get("ship_dt_source") == source and o.get("ship_date") == ship_date and source == "label":
-            continue
+            ov = ov_by_id.get(o["order_id"]) or ov_by_num.get(num)
+            if ov:
+                ship_date, src = ov, "export"
+            elif lab:
+                ship_date, src = lab["ship_date"], "label"
+            else:
+                continue
         order_dt = datetime.fromisoformat(o["order_dt"]) if o.get("order_dt") else None
+        bh = finance_hours_for(order_dt, parse_any_date(ship_date))
+        if (src == o.get("ship_date_source") and ship_date == o.get("ship_date")
+                and o.get("fin_bhours") is not None and bh is not None
+                and abs(float(o["fin_bhours"]) - bh) < 0.005):
+            continue
+        if lab and lab.get("create_dt"):
+            ship_dt, dt_src = datetime.fromisoformat(lab["create_dt"]), "label"
+        else:
+            ship_dt, dt_src = end_of_shift_instant(parse_any_date(ship_date)), "end_of_shift"
+        if src in by_source:
+            by_source[src] += 1
         updates.append({
             "order_id": o["order_id"],
             "ship_date": ship_date,
+            "ship_date_source": src,
             "ship_dt": ship_dt.isoformat(),
-            "ship_dt_source": source,
-            "queue_bhours": round(business_hours_elapsed(order_dt, ship_dt), 2) if order_dt else None,
-            "fin_bhours": finance_hours_for(order_dt, parse_any_date(ship_date)),
+            "ship_dt_source": dt_src,
+            "queue_bhours": bh,
+            "fin_bhours": bh,
         })
     if updates:
         upsert(sb, "kpi_orders", updates, "order_id")
@@ -457,7 +526,8 @@ def reconcile_ship_times(sb, start: date, end: date) -> str:
                    if not l.get("queue") and l.get("order_number") in queue_by_number]
     if label_queue:
         upsert(sb, "kpi_shipments", label_queue, "shipment_id")
-    return f"ship dates/times from labels on {len(updates)} orders; queue set on {len(label_queue)} labels"
+    return (f"ship dates filled from Finance export on {by_source['export']} orders, from labels on "
+            f"{by_source['label']}; {len(updates)} orders updated; queue set on {len(label_queue)} labels")
 
 
 def finance_warehouse_ids(ss, warehouse_id) -> set:
@@ -473,17 +543,30 @@ def finance_warehouse_ids(ss, warehouse_id) -> set:
     return ids
 
 
+def legacy_location_ids(ss, warehouse_id, sla_wh_ids: set) -> dict:
+    """IDs of the deleted Austin location and of 'Unassigned'."""
+    unassigned = set()
+    try:
+        for w in ss._get("/warehouses") or []:
+            if (w.get("warehouseName") or "").strip().lower() == "unassigned":
+                unassigned.add(w["warehouseId"])
+    except Exception as e:
+        print(f"  could not list warehouses: {e}")
+    return {"austin": {i for i in sla_wh_ids if i != warehouse_id}, "unassigned": unassigned}
+
+
 def section_shipstation(sb, start: date, end: date) -> str:
     ss = ShipStationClient()
     wh_id = ss.get_warehouse_id(WAREHOUSE_LOCATION_NAME)
     fr_id = ss.get_warehouse_id(FREIGHT_LOCATION_NAME)
     tag_names = ss.list_tags()
     sla_wh_ids = finance_warehouse_ids(ss, wh_id)
-    print(f"  on-time KPI ship-from IDs: {sorted(sla_wh_ids)}")
+    legacy_ids = legacy_location_ids(ss, wh_id, sla_wh_ids)
+    print(f"  on-time KPI ship-from IDs: {sorted(sla_wh_ids)}; legacy: {dict((k, sorted(v)) for k, v in legacy_ids.items())}")
     chunk_start = start
     while chunk_start <= end:      # weekly chunks keep each request set small on backfills
         chunk_end = min(chunk_start + timedelta(days=6), end)
-        sync_shipstation_window(ss, sb, chunk_start, chunk_end, wh_id, fr_id, tag_names, sla_wh_ids)
+        sync_shipstation_window(ss, sb, chunk_start, chunk_end, wh_id, fr_id, tag_names, sla_wh_ids, legacy_ids)
         chunk_start = chunk_end + timedelta(days=1)
     detail = reconcile_ship_times(sb, start, end)
     print(f"  {detail}")
@@ -500,7 +583,7 @@ def section_queue(sb) -> str:
     queued = ss_paged(ss, "/orders", {"orderStatus": "awaiting_shipment"}, "orders")
     units: dict[str, float] = {}
     for o in queued:
-        if queue_name(o, wh_id, fr_id, tag_names) not in ("Warehouse", "Freight"):
+        if queue_name(o, wh_id, fr_id, tag_names, {"austin": set(), "unassigned": set()}) not in ("Warehouse", "Freight"):
             continue
         for it in items_of(o):
             units[it["sku"]] = units.get(it["sku"], 0) + it["qty"]
@@ -536,32 +619,6 @@ def section_attrs(sb) -> str:
             **a, "updated_at": now} for a in attrs.values()]
     upsert(sb, "kpi_product_attrs", out, "product_id")
     return f"{len(out)} products"
-
-
-def section_sales(sb, start: date, end: date) -> str:
-    """Daily sales totals for turnover, from Finale's Product sales history
-    report (one fetch for the whole range). Only days that have an
-    inventory snapshot matter, since turnover needs both."""
-    first = sb.table("kpi_inventory_daily").select("snap_date").order("snap_date").limit(1).execute().data
-    if not first:
-        return "skipped: no inventory snapshots yet"
-    s_day = max(start, parse_any_date(first[0]["snap_date"]))
-    e_day = min(end, central_today())
-    if s_day > e_day:
-        return "nothing to do"
-    if hasattr(ops_common, "fetch_product_sales_by_date"):
-        by_product = ops_common.fetch_product_sales_by_date(s_day.isoformat(), e_day.isoformat())
-    else:
-        raise RuntimeError("ops_common.fetch_product_sales_by_date no longer exists; the sales step needs updating.")
-    totals = {d.isoformat(): {"units": 0.0, "dollars": 0.0} for d in daterange(s_day, e_day)}
-    for dates in by_product.values():
-        for d, v in dates.items():
-            if d in totals:
-                totals[d]["units"] += float(v.get("units_sold") or 0)
-                totals[d]["dollars"] += float(v.get("dollars_sold") or 0)
-    rows = [{"sale_date": d, **t} for d, t in totals.items()]
-    upsert(sb, "kpi_sales_daily", rows, "sale_date")
-    return f"{len(rows)} days"
 
 
 def norm_key(k) -> str:
@@ -948,9 +1005,11 @@ def main() -> int:
     end = parse_any_date(args.end) if args.end else today
     start = parse_any_date(args.start) if args.start else end - timedelta(days=3)
 
-    sections = ["shipstation", "queue", "sales", "sheets"]
+    # Daily sales and COGS are written by Ops Live's turnover job
+    # (product_sales_daily), the single source for turnover in both tools.
+    sections = ["shipstation", "queue", "sheets"]
     if args.nightly or args.start:
-        sections = ["attrs", "shipstation", "queue", "sales", "builds", "pos", "receipts", "sheets"]
+        sections = ["attrs", "shipstation", "queue", "builds", "pos", "receipts", "sheets"]
     if args.only:
         sections = [s.strip() for s in args.only.split(",") if s.strip()]
 
@@ -964,7 +1023,6 @@ def main() -> int:
         "shipstation": lambda: section_shipstation(sb, start, end),
         "queue": lambda: section_queue(sb),
         "attrs": lambda: section_attrs(sb),
-        "sales": lambda: section_sales(sb, start, end),
         "builds": lambda: section_builds(sb),
         "pos": lambda: section_pos(sb),
         "receipts": lambda: section_receipts(sb),
