@@ -1272,7 +1272,7 @@
     <div class="history-divider"></div>
 
     <h3 class="history-section-title">Orders In / Orders Out</h3>
-    <div class="history-note">Live lookup direct from ShipStation, for any date range — not logged history, so this always reflects current reality (e.g. an order cancelled after the fact is excluded even if it was placed days ago). Warehouse/Freight only, same scoping as the rest of this dashboard.</div>
+    <div class="history-note">Same numbers as the KPI Summary page, from the shared order history (synced from ShipStation hourly during the shift, plus nightly). Orders In: placed in the range, Warehouse/Freight, not cancelled. Orders Out: ship date in the range, Warehouse/Freight. Ship dates ShipStation no longer has on older orders are recovered from Finance's export and labels. <span id="orderflow-asof"></span></div>
     <div class="history-range-controls">
       <button class="toggle-btn" id="orderflow-prev-day" onclick="shiftOrderFlowDay(-1)" style="display:none;">&#9664;</button>
       <label class="history-picker-label">From <input type="date" id="orderflow-start"></label>
@@ -1312,7 +1312,7 @@
 
   <div id="tab-turnover" class="tab-panel" style="display:none;">
     <h3 class="history-section-title">Inventory Turnover</h3>
-    <div class="history-note">How efficiently stock is moving — (units or dollars sold over a period) &divide; (average inventory held over that period). Logged once daily, starting 2026-10-01; needs real history to be meaningful before showing live numbers, the same honesty rule already used for Aging/Volume on the Queue Breakdown health dial.</div>
+    <div class="history-note">How efficiently stock is moving, using the same definition as the KPI Summary page. By dollar value: cost of goods sold &divide; average inventory at cost. By units: units sold &divide; average units on hand. Both annualized (turns per year), counting inventory at every location. Each SKU belongs to one group: Amazon FBA if its SKU contains "FBA", otherwise Dripping Springs. Logged once daily, starting 2026-10-01, so early figures are noisy until more history builds up.</div>
     <div class="history-note" id="turnover-computed-at" style="margin-top:-6px;"></div>
 
     <div id="turnover-gathering-banner" class="turnover-gathering-banner" style="display:none;">
@@ -3168,45 +3168,51 @@ function setTurnoverWindow(window) {
   renderTurnoverTab();
 }
 
-function renderTurnoverKpis() {
-  const computed = turnoverComputedForWindow();
-  const haveComputed = computed.length > 0;
+// Same rule as is_fba_sku() in ops_common.py and the SQL in kpi_schema.sql.
+function isFbaSku(pid) { return /\bFBA\b/i.test(pid || ""); }
 
-  if (haveComputed) {
-    // Overall ratio = total sold / total average on hand, across every
-    // product with a defined ratio — a weighted average, not an
-    // average-of-ratios (which would let a tiny, fast-turning SKU skew
-    // the headline number as much as your highest-volume product).
-    let mainSold = 0, mainAvg = 0, fbaSold = 0, fbaAvg = 0;
-    for (const row of computed) {
-      const sold = turnoverMode === "units" ? row.units_sold : row.dollars_sold;
-      const avgMain = turnoverMode === "units" ? row.avg_units_on_hand : row.avg_value_on_hand;
-      const avgFba = turnoverMode === "units" ? row.avg_fba_units_on_hand : row.avg_fba_value_on_hand;
-      mainSold += sold || 0;
-      mainAvg += avgMain || 0;
-      // FBA-held products' sales are already counted once in `sold`
-      // above (sales are summed by the product's OWN SKU — a product
-      // held at FBA, like "EAP190-1L- FBA", has its sales counted
-      // there, not double-counted here) — this only needs the FBA
-      // average-on-hand side for its own ratio.
-      fbaAvg += avgFba || 0;
-      if (avgFba > 0) fbaSold += sold || 0;
-    }
-    const days = turnoverDaysCollected();
-    const annualize = 365.0 / Math.max(1, days);
-    const mainRatio = mainAvg > 0 ? (mainSold / mainAvg * annualize) : null;
-    const fbaRatio = fbaAvg > 0 ? (fbaSold / fbaAvg * annualize) : null;
-    document.getElementById("turnover-kpi-main").innerHTML = mainRatio !== null
-      ? `${mainRatio.toFixed(1)}x<span style="font-size:13px;color:var(--text-muted);font-weight:400;">/yr</span>`
-      : "—";
-    document.getElementById("turnover-kpi-fba").innerHTML = fbaRatio !== null
-      ? `${fbaRatio.toFixed(1)}x<span style="font-size:13px;color:var(--text-muted);font-weight:400;">/yr</span>`
-      : "—";
+// Card totals come from the database function turnover_totals(), the
+// exact one the KPI Summary page uses, over this window's dates.
+const turnoverTotalsCache = {};
+async function loadTurnoverTotals() {
+  const key = turnoverWindow;
+  if (turnoverTotalsCache[key] !== undefined) return;
+  const latestDay = currentTurnoverSnapshots.length
+    ? currentTurnoverSnapshots.reduce((m, r) => (r.pulled_at > m ? r.pulled_at : m), "")
+    : null;
+  if (!latestDay) return;
+  const days = { week: 7, month: 30, quarter: 90, year: 365 }[key] || 365;
+  const end = new Date(latestDay + "T00:00:00Z");
+  const start = new Date(end); start.setUTCDate(start.getUTCDate() - (days - 1));
+  turnoverTotalsCache[key] = null;   // in flight
+  const { data, error } = await client.rpc("turnover_totals", {
+    p_start: start.toISOString().slice(0, 10), p_end: latestDay,
+  });
+  turnoverTotalsCache[key] = error ? { error: error.message } : data;
+  if (key === turnoverWindow) renderTurnoverKpis();
+}
+
+function renderTurnoverKpis() {
+  const totals = turnoverTotalsCache[turnoverWindow];
+  if (totals && totals.groups) {
+    const fmt = g => {
+      const grp = totals.groups[g] || {};
+      const v = turnoverMode === "units" ? grp.turns_units : grp.turns_dollars;
+      return v == null ? "—"
+        : `${(+v).toFixed(1)}x<span style="font-size:13px;color:var(--text-muted);font-weight:400;">/yr</span>`;
+    };
+    document.getElementById("turnover-kpi-main").innerHTML = fmt("main");
+    document.getElementById("turnover-kpi-fba").innerHTML = fmt("fba");
     document.getElementById("turnover-kpi-main-label").textContent = "Turnover — Dripping Springs";
     document.getElementById("turnover-kpi-fba-label").textContent = "Turnover — Amazon FBA";
     return;
   }
+  if (totals === undefined) loadTurnoverTotals();
+  renderTurnoverKpisFallback();
+}
 
+function renderTurnoverKpisFallback() {
+  // Until turnover_totals() answers (or if it fails): current position.
   document.getElementById("turnover-kpi-main-label").textContent = "Current inventory position — Dripping Springs";
   document.getElementById("turnover-kpi-fba-label").textContent = "Current inventory position — Amazon FBA";
 
@@ -3292,39 +3298,23 @@ function renderTurnoverTable() {
   const category = document.getElementById("turnover-category-select").value;
   const showNoData = document.getElementById("turnover-show-nodata-checkbox").checked;
 
-  // One display row per (product, LOCATION), each judged on its OWN
-  // turnover. CONFIRMED BUG, FIXED (2026-10-06): the FBA row used to be
-  // tacked onto its product's Dripping Springs row, and the "hide SKUs
-  // with no data" filter looked only at the Dripping Springs figure —
-  // so any product held ONLY at Amazon FBA (the normal case for the
-  // "- FBA" SKUs, which have no Dripping Springs stock to divide by)
-  // was hidden by default, even though its FBA turnover was real.
+  // One row per product, in its turnover group (2026-10-08, shared with
+  // the KPI Summary page): Amazon FBA if the SKU contains the word FBA,
+  // otherwise Dripping Springs. Inventory counts every location, and the
+  // turnover is compute_turnover()'s figure -- dollar turnover is cost of
+  // goods sold / average inventory at cost. These rows add up exactly to
+  // the cards above, which come from the database's turnover_totals().
   let rows = [];
-  for (const [pid, r] of latest) {
+  const pids = new Set([...latest.keys(), ...computedByProduct.keys()]);
+  for (const pid of pids) {
+    const r = latest.get(pid) || {};
     const c = computedByProduct.get(pid);
     const cat = categoryLookup.get(pid) || "Uncategorized";
-    const units = r.units_on_hand || 0, value = r.total_value || 0;
-    const fbaUnits = r.fba_units_on_hand || 0, fbaValue = r.fba_total_value || 0;
-    const hasMain = units > 0 || value > 0;
-    const hasFba = fbaUnits > 0 || fbaValue > 0;
-
-    const turnoverMain = c ? (turnoverMode === "units" ? c.turnover_units : c.turnover_dollars) : null;
-    const turnoverFba = c && (c.avg_fba_units_on_hand > 0 || c.avg_fba_value_on_hand > 0)
-      ? (turnoverMode === "units"
-          ? (c.avg_fba_units_on_hand > 0 ? (c.units_sold / c.avg_fba_units_on_hand) * (365 / c.days_elapsed) : null)
-          : (c.avg_fba_value_on_hand > 0 ? (c.dollars_sold / c.avg_fba_value_on_hand) * (365 / c.days_elapsed) : null))
-      : null;
-
-    // Dripping Springs row: whenever there's stock there, a defined
-    // turnover from earlier in the window, or no FBA presence at all
-    // (so a dead SKU still shows up once, under the toggle). An
-    // FBA-only product does NOT also get an empty Dripping Springs row.
-    if (hasMain || !hasFba || turnoverMain !== null) {
-      rows.push({ sku: pid, category: cat, location: "main", amount: turnoverMode === "units" ? units : value, turnover: turnoverMain });
-    }
-    if (hasFba) {
-      rows.push({ sku: pid, category: cat, location: "fba", amount: turnoverMode === "units" ? fbaUnits : fbaValue, turnover: turnoverFba });
-    }
+    const units = (r.units_on_hand || 0) + (r.fba_units_on_hand || 0);
+    const value = (r.total_value || 0) + (r.fba_total_value || 0);
+    const turnover = c ? (turnoverMode === "units" ? c.turnover_units : c.turnover_dollars) : null;
+    const group = c && c.group_name ? c.group_name : (isFbaSku(pid) ? "fba" : "main");
+    rows.push({ sku: pid, category: cat, location: group, amount: turnoverMode === "units" ? units : value, turnover });
   }
 
   if (query) rows = rows.filter(r => r.sku.toLowerCase().includes(query));
@@ -3464,24 +3454,29 @@ function daysInRange(startDate, endDate) {
 // and that piece retried, down to a single day) and the pieces are added
 // up. The addition is exact: Orders In is counted by order date and
 // Orders Out by ship date, so every order falls in exactly one piece.
-let ORDERFLOW_PAUSE_MS = 3000; // breathing room between pieces for ShipStation's rate limit
+let ORDERFLOW_PAUSE_MS = 0; // reads the database now (order_flow), no rate limit to respect
 
 class OrderFlowTimeout extends Error {}
 
+// Orders In / Out come from the database function order_flow(), which
+// uses exactly the same definitions and data as the KPI Summary page
+// (2026-10-08). This replaced a live ShipStation lookup that found
+// shipped orders by "last modified" date and undercounted any range
+// more than a few days back.
 async function fetchOrderFlowPiece(startDate, endDate) {
-  const res = await fetch(`/.netlify/functions/order-flow?startDate=${startDate}&endDate=${endDate}`);
-  const text = await res.text();
-  let data;
-  try { data = JSON.parse(text); }
-  catch (_) { throw new OrderFlowTimeout(`No data came back for ${startDate} to ${endDate} (HTTP ${res.status}) -- the lookup most likely timed out.`); }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  const { data, error } = await client.rpc("order_flow", { p_start: startDate, p_end: endDate });
+  if (error) throw new Error(error.message);
+  if (data && data.dataAsOf) {
+    const el = document.getElementById("orderflow-asof");
+    if (el) el.textContent = "Data as of " + new Date(data.dataAsOf).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + " CT.";
+  }
   return data;
 }
 
 async function fetchOrderFlowRange(startDate, endDate, onProgress) {
   const totalDays = daysInRange(startDate, endDate);
   const combined = { startDate, endDate, dayCount: 0, ordersIn: 0, ordersOut: 0, hourlyIn: new Array(24).fill(0), dailyLabels: [], dailyIn: [], dailyOut: [] };
-  let pieceDays = 7;
+  let pieceDays = 92; // database lookups are fast; pieces just keep each request small
   let cursor = startDate;
   while (cursor <= endDate) {
     let data, pieceEnd, errorAttempts = 0;
@@ -3541,8 +3536,8 @@ async function fetchOrderFlow() {
   btn.disabled = true;
   const showProgress = (daysDone, totalDays) => {
     const msg = totalDays > 7
-      ? `Fetching live from ShipStation — ${daysDone} of ${totalDays} days done (wide ranges are fetched in pieces and can take a few minutes)...`
-      : "Fetching live from ShipStation — this can take a few seconds...";
+      ? `Loading — ${daysDone} of ${totalDays} days done...`
+      : "Loading...";
     resultEl.innerHTML = `<div class="health-card"><div class="bar-empty">${msg}</div></div>`;
   };
   showProgress(0, daysInRange(startDate, endDate));
