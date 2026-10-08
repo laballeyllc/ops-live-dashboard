@@ -755,23 +755,75 @@ def fetch_product_sales_by_date(start_date: str, end_date: str) -> dict[str, dic
 TURNOVER_WINDOWS = {"week": 7, "month": 30, "quarter": 90, "year": 365}  # each builds up to its own max, then rolls forward
 
 
-def compute_turnover(pulled_at: str) -> list[dict]:
-    """Computes the real turnover ratio per product, for FOUR separate
-    windows (week/month/quarter/year — TURNOVER_WINDOWS), each one:
-    (units/dollars sold over that window) / (average units/value held
-    over that same window), annualized (turns per year, industry-
-    standard convention). Each window independently builds up day by
-    day toward its own max, then rolls forward — confirmed with Casey
-    directly (2026-10-03) rather than assumed: a brand-new SKU with only
-    10 real days of history shows the same figure across week/month/
-    quarter/year options until it actually has enough days behind it
-    for each one specifically, rather than guessing.
+FBA_SKU_PATTERN = re.compile(r"\bFBA\b", re.IGNORECASE)
 
-    Deliberately fetches snapshots AND sales ONCE, over the WIDEST
-    window (year) — every smaller window's data is a real subset of
-    this same fetch, summed over a narrower date range, so computing
-    four windows costs no more Finale API calls than computing one
-    did."""
+
+def is_fba_sku(product_id: str) -> bool:
+    """Amazon FBA products have their own SKUs ("EAP190-1L- FBA"). Every
+    SKU belongs to exactly one turnover group: Amazon FBA (these) or
+    Dripping Springs (everything else). Mirrored in SQL as a whole-word,
+    case-insensitive match on FBA (turnover_totals, kpi_summary) -- keep
+    the two in step."""
+    return bool(FBA_SKU_PATTERN.search(product_id or ""))
+
+
+def _unit_costs_by_product(snapshots: list[dict]) -> dict[str, list[tuple[str, float]]]:
+    """Per product, the (date, unit cost) of every snapshot day it had
+    stock: (total_value + fba_total_value) / (units + fba_units)."""
+    out: dict[str, list[tuple[str, float]]] = {}
+    for r in snapshots:
+        units = (r.get("units_on_hand") or 0) + (r.get("fba_units_on_hand") or 0)
+        value = (r.get("total_value") or 0) + (r.get("fba_total_value") or 0)
+        if units > 0 and value > 0:
+            out.setdefault(r["product_id"], []).append((r["pulled_at"], value / units))
+    for v in out.values():
+        v.sort()
+    return out
+
+
+def _cost_on(costs: list[tuple[str, float]], day: str):
+    """Unit cost on `day`: that day's snapshot, else the most recent one
+    before it, else the earliest one after it. None if never stocked."""
+    if not costs:
+        return None
+    before = [c for d, c in costs if d <= day]
+    return before[-1] if before else costs[0][1]
+
+
+def write_product_sales_daily(client, rows: list[dict]) -> None:
+    for i in range(0, len(rows), SUPABASE_BATCH_SIZE):
+        client.table("product_sales_daily").upsert(rows[i:i + SUPABASE_BATCH_SIZE],
+                                                   on_conflict="sale_date,product_id").execute()
+    print(f"Wrote {len(rows)} product-day sales rows (units, dollars, COGS) to product_sales_daily.")
+
+
+def compute_turnover(pulled_at: str) -> list[dict]:
+    """Inventory turnover per product for four rolling windows (week /
+    month / quarter / year, TURNOVER_WINDOWS), each building up from the
+    first snapshot day until it reaches its full length.
+
+    ONE definition, shared with the KPI Summary page (2026-10-08, agreed
+    with Casey): this job is the only writer of daily sales and COGS
+    (product_sales_daily), and the database function turnover_totals()
+    computes group totals from the same data with the same math, so
+    Ops Live's cards, its per-product table, and the KPI page agree.
+
+      dollar turnover = COGS / average inventory value at cost, annualized
+      unit turnover   = units sold / average units on hand, annualized
+      COGS            = units sold x that day's unit cost (snapshot value
+                        / units; nearest earlier snapshot if none that day)
+      average         = sum over the window's snapshot days / number of
+                        snapshot days (a product absent on a day counts
+                        as zero that day, not skipped)
+      annualized      = x 365 / calendar days in the window
+      inventory       = all locations (Dripping Springs + Amazon)
+      group           = Amazon FBA if the SKU contains "FBA", else
+                        Dripping Springs (is_fba_sku)
+
+    Previously dollar turnover divided SELLING price by inventory at
+    COST, which overstated it, and averages divided by the number of
+    days a product appeared, which overstated inventory for products
+    that were out of stock part of the window."""
     client = get_supabase_client()
     snapshots = select_all_rows(client, "turnover_snapshots")
     if not snapshots:
@@ -781,9 +833,10 @@ def compute_turnover(pulled_at: str) -> list[dict]:
     all_dates = sorted(set(r["pulled_at"] for r in snapshots))
     end_date = all_dates[-1]
     earliest_date = all_dates[0]
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
     widest_days = max(TURNOVER_WINDOWS.values())
-    widest_cutoff = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=widest_days - 1)).strftime("%Y-%m-%d")
+    widest_cutoff = (end_dt - timedelta(days=widest_days - 1)).strftime("%Y-%m-%d")
     widest_start = max(earliest_date, widest_cutoff)
     widest_snapshots = [r for r in snapshots if r["pulled_at"] >= widest_start]
 
@@ -795,58 +848,76 @@ def compute_turnover(pulled_at: str) -> list[dict]:
     sales_by_date = fetch_product_sales_by_date(widest_start, end_date)
     print(f"  {len(sales_by_date)} products with sales in this period")
 
+    # Daily sales with COGS, written once for every consumer.
+    costs = _unit_costs_by_product(snapshots)
+    daily_rows = []
+    cogs_by_product_date: dict[str, dict[str, float]] = {}
+    for pid, dates in sales_by_date.items():
+        for day, v in dates.items():
+            if day < widest_start or day > end_date:
+                continue
+            units = float(v.get("units_sold") or 0)
+            cost = _cost_on(costs.get(pid, []), day)
+            cogs = units * cost if cost is not None else 0.0
+            cogs_by_product_date.setdefault(pid, {})[day] = cogs
+            daily_rows.append({
+                "sale_date": day, "product_id": pid, "is_fba": is_fba_sku(pid),
+                "units_sold": units, "dollars_sold": float(v.get("dollars_sold") or 0),
+                "unit_cost": cost, "cogs": cogs, "cost_known": cost is not None,
+            })
+    if daily_rows:
+        # The whole window is rewritten every day on purpose: the KPI page
+        # reads these stored rows while this job uses the fresh pull, and
+        # both must see the same sales for the numbers to match exactly.
+        write_product_sales_daily(client, daily_rows)
+
     print("Pulling product categories from Finale (Master product list)...")
     categories = fetch_product_categories()
     print(f"  {len(categories)} products with a category on file")
 
     results = []
+    all_pids = set(by_product) | set(sales_by_date)
     for window_name, window_days in TURNOVER_WINDOWS.items():
-        cutoff = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=window_days - 1)).strftime("%Y-%m-%d")
+        cutoff = (end_dt - timedelta(days=window_days - 1)).strftime("%Y-%m-%d")
         window_start = max(earliest_date, cutoff)
-        days_elapsed = len([d for d in all_dates if d >= window_start])
-        annualize = 365.0 / days_elapsed if days_elapsed > 0 else 0
-        window_desc = "still building up" if window_start == earliest_date and days_elapsed < window_days else "full window"
-        print(f"  [{window_name}] {window_start} to {end_date} ({days_elapsed} days, {window_desc})")
+        snap_days = len([d for d in all_dates if window_start <= d <= end_date])
+        cal_days = (end_dt - datetime.strptime(window_start, "%Y-%m-%d")).days + 1
+        annualize = 365.0 / cal_days if cal_days > 0 else 0
+        window_desc = "still building up" if window_start == earliest_date and cal_days < window_days else "full window"
+        print(f"  [{window_name}] {window_start} to {end_date} ({snap_days} snapshot days, {cal_days} calendar days, {window_desc})")
 
-        for pid, product_snapshots in by_product.items():
-            window_snapshots = [r for r in product_snapshots if r["pulled_at"] >= window_start]
-            if not window_snapshots:
+        for pid in all_pids:
+            window_snapshots = [r for r in by_product.get(pid, []) if r["pulled_at"] >= window_start]
+            sold = {d: v for d, v in sales_by_date.get(pid, {}).items() if window_start <= d <= end_date}
+            if not window_snapshots and not sold:
                 continue
-            avg_units = sum(r["units_on_hand"] for r in window_snapshots) / len(window_snapshots)
-            avg_value = sum(r["total_value"] for r in window_snapshots) / len(window_snapshots)
-            avg_fba_units = sum(r["fba_units_on_hand"] for r in window_snapshots) / len(window_snapshots)
-            avg_fba_value = sum(r["fba_total_value"] for r in window_snapshots) / len(window_snapshots)
-
-            product_sales_by_date = sales_by_date.get(pid, {})
-            units_sold = sum(v["units_sold"] for d, v in product_sales_by_date.items() if d >= window_start)
-            dollars_sold = sum(v["dollars_sold"] for d, v in product_sales_by_date.items() if d >= window_start)
-
-            # Annualized (turns per year), matching the industry-standard
-            # convention and the approved mockup's "X.Xx/yr" framing —
-            # otherwise the raw ratio's scale would shift as days_elapsed
-            # grows, making it impossible to compare day to day. Early
-            # on, with few real days behind it, this estimate is
-            # inherently noisy — that's exactly what the "gathering
-            # baseline data" banner already warns about, not a new
-            # concern introduced by annualizing.
+            n = max(1, snap_days)
+            avg_units = sum(r["units_on_hand"] or 0 for r in window_snapshots) / n
+            avg_value = sum(r["total_value"] or 0 for r in window_snapshots) / n
+            avg_fba_units = sum(r["fba_units_on_hand"] or 0 for r in window_snapshots) / n
+            avg_fba_value = sum(r["fba_total_value"] or 0 for r in window_snapshots) / n
+            units_sold = sum(float(v["units_sold"] or 0) for v in sold.values())
+            dollars_sold = sum(float(v["dollars_sold"] or 0) for v in sold.values())
+            cogs = sum(c for d, c in cogs_by_product_date.get(pid, {}).items() if window_start <= d <= end_date)
+            total_units, total_value = avg_units + avg_fba_units, avg_value + avg_fba_value
             results.append({
                 "computed_at": pulled_at,
                 "product_id": pid,
-                "category": categories.get(pid),  # None when Finale has no category on file -- surfaced honestly as "Uncategorized" in the frontend, not guessed at
-                "window_name": window_name,  # NOT "window": that is a reserved word in PostgreSQL (unquoted, it is a syntax error in any raw SQL)
-                "days_elapsed": days_elapsed,
+                "category": categories.get(pid),  # None when Finale has no category on file -- shown as "Uncategorized"
+                "window_name": window_name,  # NOT "window": reserved word in PostgreSQL
+                "days_elapsed": snap_days,
+                "calendar_days": cal_days,
+                "group_name": "fba" if is_fba_sku(pid) else "main",
                 "avg_units_on_hand": avg_units,
                 "avg_value_on_hand": avg_value,
                 "avg_fba_units_on_hand": avg_fba_units,
                 "avg_fba_value_on_hand": avg_fba_value,
                 "units_sold": units_sold,
                 "dollars_sold": dollars_sold,
-                # None (not 0) when the average is zero -- a turnover ratio
-                # is undefined without any inventory to divide by, not
-                # correctly zero. Surfaced honestly in the frontend rather
-                # than showing a misleading 0.0x.
-                "turnover_units": (units_sold / avg_units * annualize) if avg_units > 0 else None,
-                "turnover_dollars": (dollars_sold / avg_value * annualize) if avg_value > 0 else None,
+                "cogs": cogs,
+                # None (not 0) when there's no inventory to divide by -- undefined, not zero.
+                "turnover_units": (units_sold * annualize / total_units) if total_units > 0 else None,
+                "turnover_dollars": (cogs * annualize / total_value) if total_value > 0 else None,
             })
     return results
 
