@@ -37,6 +37,30 @@ create table if not exists kpi_shipments (
 );
 create index if not exists kpi_shipments_ship_date_idx on kpi_shipments (ship_date);
 create index if not exists kpi_shipments_order_idx     on kpi_shipments (order_id);
+alter table kpi_shipments add column if not exists order_number text;
+create index if not exists kpi_shipments_order_number_idx on kpi_shipments (order_number);
+create index if not exists kpi_orders_order_number_idx    on kpi_orders (order_number);
+-- Finance's on-time KPI (see pull_kpi_data.py): business hours by Finance's
+-- rules, and how many of the order's lines the KPI counts.
+alter table kpi_orders add column if not exists ship_from_id bigint;
+alter table kpi_orders add column if not exists fin_bhours numeric;
+alter table kpi_orders add column if not exists fin_lines integer default 0;
+-- Where ship_date came from: 'order' (ShipStation), 'export' (Finance's
+-- pre-May-2026 export), 'label' (earliest label). cf2_frt: Custom Field 2
+-- was 'frt' (freight marker, Jan-Jul 2026).
+alter table kpi_orders add column if not exists ship_date_source text;
+alter table kpi_orders add column if not exists cf2_frt boolean default false;
+alter table kpi_orders add column if not exists tag_queue text;   -- what the tags alone say, for testing
+
+-- Ship dates recovered from Finance's ShipStation export (loaded once from
+-- kpi_ship_date_overrides.csv via the Table Editor's CSV import).
+create table if not exists kpi_ship_date_overrides (
+  order_id      bigint primary key,
+  order_number  text,
+  ship_date     date,
+  source        text
+);
+create index if not exists kpi_ship_date_overrides_num_idx on kpi_ship_date_overrides (order_number);
 
 -- One row per product per day: units sitting in the Warehouse/Freight
 -- queue at the day's last sync. Averaged across a range for "queue mix".
@@ -156,7 +180,8 @@ declare t text;
 begin
   foreach t in array array['kpi_orders','kpi_shipments','kpi_queue_daily','kpi_product_attrs',
                            'kpi_sales_daily','kpi_builds','kpi_purchase_orders','kpi_receipts',
-                           'kpi_supplier_origin','kpi_cycle_counts','kpi_products_added','kpi_sync_log']
+                           'kpi_supplier_origin','kpi_cycle_counts','kpi_products_added','kpi_sync_log',
+                           'kpi_ship_date_overrides']
   loop
     execute format('alter table %I enable row level security', t);
     if not exists (select 1 from pg_policies where tablename = t and policyname = 'kpi public read') then
@@ -175,10 +200,151 @@ begin
   end if;
 end $$;
 
+
+-- =====================================================================
+-- SHARED DEFINITIONS (KPI Summary page AND Ops Live read these)
+-- =====================================================================
+-- Inventory turnover, one definition for every tool (2026-10-08):
+--   dollar turnover = COGS / average inventory value at cost, annualized
+--   unit turnover   = units sold / average units on hand, annualized
+--   days on hand    = 365 / dollar turnover
+--   groups          = Amazon FBA (SKU contains the word FBA) or Dripping
+--                     Springs (every other SKU); inventory at all locations
+-- product_sales_daily is written ONLY by Ops Live's daily turnover job
+-- (ops_common.compute_turnover), which applies the same math per product.
+create table if not exists product_sales_daily (
+  sale_date     date,
+  product_id    text,
+  is_fba        boolean,
+  units_sold    numeric,
+  dollars_sold  numeric,
+  unit_cost     numeric,
+  cogs          numeric,
+  cost_known    boolean,
+  primary key (sale_date, product_id)
+);
+alter table product_sales_daily enable row level security;
+do $$ begin
+  if not exists (select 1 from pg_policies where tablename = 'product_sales_daily' and policyname = 'public read') then
+    create policy "public read" on product_sales_daily for select using (true);
+  end if;
+end $$;
+
+alter table turnover_computed add column if not exists cogs numeric;
+alter table turnover_computed add column if not exists group_name text;
+alter table turnover_computed add column if not exists calendar_days integer;
+
+create or replace function turnover_totals(p_start date, p_end date)
+returns jsonb
+language sql
+stable
+as $$
+with snap as (
+  select left(pulled_at::text, 10)::date as d,
+         product_id ~* '\mFBA\M' as fba,
+         coalesce(units_on_hand, 0) + coalesce(fba_units_on_hand, 0) as u,
+         coalesce(total_value, 0) + coalesce(fba_total_value, 0) as v
+  from turnover_snapshots
+),
+b as (
+  select greatest(p_start, min(d)) as s, least(p_end, max(d)) as e from snap
+),
+n as (
+  select count(distinct d) as days from snap, b where d between b.s and b.e
+),
+inv as (
+  select fba, sum(u) as su, sum(v) as sv from snap, b where d between b.s and b.e group by fba
+),
+sales as (
+  select is_fba as fba, sum(units_sold) as units, sum(dollars_sold) as dollars, sum(cogs) as cogs,
+         coalesce(sum(units_sold) filter (where cost_known), 0) as units_costed
+  from product_sales_daily, b where sale_date between b.s and b.e group by is_fba
+),
+g as (
+  select x.fba,
+         coalesce(i.su, 0) / nullif((select days from n), 0) as avg_units,
+         coalesce(i.sv, 0) / nullif((select days from n), 0) as avg_value,
+         coalesce(s.units, 0) as units, coalesce(s.dollars, 0) as dollars,
+         coalesce(s.cogs, 0) as cogs, coalesce(s.units_costed, 0) as units_costed
+  from (values (false), (true)) x(fba)
+  left join inv i on i.fba = x.fba
+  left join sales s on s.fba = x.fba
+),
+cal as (select case when b.e >= b.s then b.e - b.s + 1 else 0 end as days from b),
+parts as (
+  select 'main' as k, avg_units, avg_value, units, dollars, cogs, units_costed from g where not fba
+  union all
+  select 'fba', avg_units, avg_value, units, dollars, cogs, units_costed from g where fba
+  union all
+  select 'all', sum(avg_units), sum(avg_value), sum(units), sum(dollars), sum(cogs), sum(units_costed) from g
+)
+select jsonb_build_object(
+  'start', (select s from b), 'end', (select e from b),
+  'snapshot_days', (select days from n), 'calendar_days', (select days from cal),
+  'groups', (select jsonb_object_agg(k, jsonb_build_object(
+      'avg_units', avg_units, 'avg_value', avg_value,
+      'units_sold', units, 'dollars_sold', dollars, 'cogs', cogs,
+      'cost_coverage', case when units > 0 then units_costed / units end,
+      'turns_units', case when avg_units > 0 and (select days from cal) > 0
+                          then units * 365.0 / (select days from cal) / avg_units end,
+      'turns_dollars', case when avg_value > 0 and (select days from cal) > 0
+                            then cogs * 365.0 / (select days from cal) / avg_value end,
+      'days_on_hand', case when cogs > 0 and (select days from cal) > 0
+                           then avg_value / (cogs / (select days from cal)) end))
+    from parts)
+);
+$$;
+grant execute on function turnover_totals(date, date) to anon, authenticated;
+
+
+-- Orders In / Orders Out for Ops Live's Historical tab: SAME definitions
+-- as kpi_summary's orders_in / orders_out, from the same table, so the
+-- two pages always agree. Returns the shape the old order-flow Netlify
+-- function did, so Ops Live's charts work unchanged. (The old function
+-- found shipped orders by "last modified" date, which undercounted any
+-- range more than a few days back.)
+create or replace function order_flow(p_start date, p_end date)
+returns jsonb
+language sql
+stable
+as $$
+with days as (
+  select generate_series(p_start, p_end, interval '1 day')::date as d
+),
+o_in as (
+  select order_date, extract(hour from order_dt at time zone 'America/Chicago')::int as h
+  from kpi_orders
+  where order_date between p_start and p_end
+    and queue in ('Warehouse', 'Freight')
+    and coalesce(status, '') <> 'cancelled'
+),
+o_out as (
+  select ship_date from kpi_orders
+  where ship_date between p_start and p_end
+    and queue in ('Warehouse', 'Freight')
+    and status = 'shipped'
+),
+hours as (select generate_series(0, 23) as h)
+select jsonb_build_object(
+  'startDate', p_start,
+  'endDate', p_end,
+  'dayCount', (select count(*) from days),
+  'ordersIn', (select count(*) from o_in),
+  'ordersOut', (select count(*) from o_out),
+  'hourlyIn', (select jsonb_agg((select count(*) from o_in where o_in.h = hours.h) order by hours.h) from hours),
+  'dailyLabels', (select jsonb_agg(to_char(d, 'YYYY-MM-DD') order by d) from days),
+  'dailyIn', (select jsonb_agg((select count(*) from o_in where order_date = days.d) order by days.d) from days),
+  'dailyOut', (select jsonb_agg((select count(*) from o_out where ship_date = days.d) order by days.d) from days),
+  'dataAsOf', (select max(run_at) from kpi_sync_log where ok and section = 'shipstation')
+);
+$$;
+grant execute on function order_flow(date, date) to anon, authenticated;
+
 -- ---------------------------------------------------------------------
 -- kpi_summary(start, end): every KPI for one inclusive date range.
 -- ---------------------------------------------------------------------
-create or replace function kpi_summary(p_start date, p_end date)
+drop function if exists kpi_summary(date, date);
+create or replace function kpi_summary(p_start date, p_end date, p_include_fba boolean default true)
 returns jsonb
 language sql
 stable
@@ -209,7 +375,20 @@ pkgs as (
 ),
 ext as (
   select count(*) as n from o_out o
-  where not exists (select 1 from kpi_shipments s where s.order_id = o.order_id and not s.voided)
+  where not exists (select 1 from kpi_shipments s
+                    where (s.order_id = o.order_id or s.order_number = o.order_number) and not s.voided)
+),
+coverage as (
+  select count(*) filter (where ship_date is not null) as known, count(*) as total
+  from o_in where status = 'shipped'
+),
+fin as (
+  select coalesce(sum(fin_lines), 0) as lines,
+         coalesce(sum(fin_lines) filter (where fin_bhours <= 24), 0) as passed,
+         count(*) as orders
+  from kpi_orders
+  where ship_date between p_start and p_end
+    and status = 'shipped' and fin_lines > 0 and fin_bhours is not null
 ),
 sla as (
   select count(*) filter (where queue_bhours <= 48) as on_time,
@@ -226,6 +405,13 @@ qtime as (
 builds as (
   select count(*) as n, coalesce(sum(quantity), 0) as units, count(distinct product_id) as skus
   from kpi_builds where complete_date between p_start and p_end
+    and (p_include_fba or product_id !~* '\mFBA\M')
+),
+turn as (
+  select turnover_totals(p_start, p_end) as t
+),
+tg as (
+  select (select t from turn) -> 'groups' -> (case when p_include_fba then 'all' else 'main' end) as g
 ),
 pos as (
   select count(*) as n, coalesce(sum(value), 0) as value
@@ -254,14 +440,7 @@ acc as (
   where count_week <= p_end and accuracy is not null
   order by location, count_week desc
 ),
-inv as (
-  select avg(total_value) as v, count(*) as d
-  from kpi_inventory_daily where snap_date between p_start and p_end
-),
-sales as (
-  select sum(dollars) as dl, count(*) as d
-  from kpi_sales_daily where sale_date between p_start and p_end
-),
+
 queue_days as (
   select count(distinct snap_date) as n from kpi_queue_daily where snap_date between p_start and p_end
 ),
@@ -307,6 +486,7 @@ select jsonb_build_object(
   'end', p_end,
   'last_sync', (select t from last_sync),
   'orders_since', (select min(order_date) from kpi_orders),
+  'ship_date_coverage', (select case when total > 0 then known::numeric / total end from coverage),
   'has', jsonb_build_object(
     'orders',   exists(select 1 from kpi_orders),
     'builds',   exists(select 1 from kpi_builds),
@@ -322,6 +502,10 @@ select jsonb_build_object(
   'warehouse_orders', (select count(*) from o_in where queue = 'Warehouse'),
   'freight_orders',   (select count(*) from o_in where queue = 'Freight'),
   'packages_shipped', (select labels from pkgs) + (select n from ext),
+  'ontime_pct',       (select case when lines > 0 then passed::numeric / lines end from fin),
+  'ontime_lines',     (select lines from fin),
+  'ontime_passed',    (select passed from fin),
+  'ontime_orders',    (select orders from fin),
   'sla_48_pct',       (select case when total > 0 then on_time::numeric / total end from sla),
   'sla_48_sample',    (select total from sla),
   'queue_hours',      (select all_q from qtime),
@@ -342,14 +526,44 @@ select jsonb_build_object(
   'accuracy_by_location', (select coalesce(jsonb_agg(jsonb_build_object(
                               'location', location, 'week', count_week, 'accuracy', accuracy)
                               order by location), '[]'::jsonb) from acc),
-  'turnover',         (select case when inv.v > 0 and sales.d > 0
-                                   then sales.dl / inv.v * 365.0 / (select days from span) end
-                       from inv, sales),
-  'turnover_days_covered', (select d from inv),
+  'include_fba',      p_include_fba,
+  'turnover',         (select (g ->> 'turns_dollars')::numeric from tg),
+  'turnover_units',   (select (g ->> 'turns_units')::numeric from tg),
+  'days_on_hand',     (select (g ->> 'days_on_hand')::numeric from tg),
+  'turnover_cost_coverage', (select (g ->> 'cost_coverage')::numeric from tg),
+  'turnover_days_covered', (select ((select t from turn) ->> 'snapshot_days')::int),
   'queue_snapshot_days', (select n from queue_days),
   'mix', coalesce((select jsonb_object_agg(dim, srcs) from by_dim), '{}'::jsonb)
 );
 $$;
 
-grant execute on function kpi_summary(date, date) to anon, authenticated;
+grant execute on function kpi_summary(date, date, boolean) to anon, authenticated;
+
+-- On-time rate per day, week (Monday start) or month, for the trend chart.
+create or replace function kpi_ontime_series(p_start date, p_end date, p_grain text)
+returns jsonb
+language sql
+stable
+as $$
+  with b as (
+    select (case p_grain
+              when 'day'   then ship_date
+              when 'month' then date_trunc('month', ship_date)::date
+              else date_trunc('week', ship_date)::date end) as bucket,
+           fin_lines, fin_bhours
+    from kpi_orders
+    where ship_date between p_start and p_end
+      and status = 'shipped' and fin_lines > 0 and fin_bhours is not null
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'bucket', bucket, 'lines', lines, 'passed', passed,
+           'pct', case when lines > 0 then passed::numeric / lines end) order by bucket), '[]'::jsonb)
+  from (
+    select bucket, sum(fin_lines) as lines,
+           sum(fin_lines) filter (where fin_bhours <= 24) as passed
+    from b group by bucket
+  ) x;
+$$;
+
+grant execute on function kpi_ontime_series(date, date, text) to anon, authenticated;
 grant select on kpi_inventory_daily, kpi_supplier_list to anon, authenticated;
