@@ -499,7 +499,7 @@ def to_db_rows(rows: list[dict], pulled_at: str) -> list[dict]:
     return db_rows
 
 
-def select_all_rows(client, table: str) -> list[dict]:
+def select_all_rows(client, table: str, filter_fn=None, order_col: str = "id") -> list[dict]:
     """Reads an ENTIRE table, paginating past Supabase's default
     1000-row-per-request cap via .range(). CONFIRMED BUG, FIXED
     (2026-10-03): compute_turnover()'s read of turnover_snapshots used
@@ -508,12 +508,19 @@ def select_all_rows(client, table: str) -> list[dict]:
     shown instead of 1083 on day one) and set to get WORSE every day,
     since this table grows by roughly one row per product per day
     forever. Any future read of a table that could plausibly exceed
-    1000 rows should go through this, not a bare .select("*")."""
+    1000 rows should go through this, not a bare .select("*").
+
+    Pages are ordered by a unique column (id) so they can never overlap
+    or skip, and `filter_fn` (e.g. lambda q: q.is_("resolved_at", "null"))
+    narrows the read before paging."""
     all_rows: list[dict] = []
     page_size = 1000
     start = 0
     while True:
-        result = client.table(table).select("*").range(start, start + page_size - 1).execute()
+        q = client.table(table).select("*")
+        if filter_fn is not None:
+            q = filter_fn(q)
+        result = q.order(order_col).range(start, start + page_size - 1).execute()
         batch = result.data or []
         all_rows.extend(batch)
         if len(batch) < page_size:
@@ -1154,7 +1161,7 @@ def _claim_stock(sku: str, needed: float, working: dict[str, dict]) -> tuple[flo
     return total_usable, False
 
 
-def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
+def compute_health_snapshot(rows: list[dict], stock: dict[str, dict], blocked_out: list | None = None) -> dict:
     """Server-side port of the frontend's buildShippingList() /
     buildProductionList() logic (site/index.html) for a periodic history
     snapshot. The Supabase publishable key is deliberately read-only, so
@@ -1184,6 +1191,12 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
     pre-to_db_rows). `stock` is {product_id: {usable_stock,
     reorder_point_max, units_backorder, lots}} as returned by
     build_stock_levels(), keyed by product_id.
+
+    `blocked_out`: if a list is passed, one dict per (order, SKU) that is
+    currently blocked by a shortage is appended to it, straight from the
+    SAME decision that drives Build % -- so the production lead-time log
+    (update_blocked_events) can never disagree with Build % about what
+    "blocked" means. Passing nothing changes no behavior.
     """
     scoped = [
         r for r in rows
@@ -1275,6 +1288,14 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
                 order_is_blocked = True
                 entry = blocked_by_sku.setdefault(sku, {"needed_total": 0.0})
                 entry["needed_total"] += max(0.0, needed - usable)
+                if blocked_out is not None:
+                    blocked_out.append({
+                        "order_id": oid,
+                        "product_id": sku,
+                        "order_datetime": first.get("Order datetime"),
+                        "units_short": max(0.0, needed - usable),
+                        "is_built": (stock.get(sku) or {}).get("is_built"),
+                    })
 
         if is_overdue and order_is_blocked:
             shortage_overdue_count += 1
@@ -1338,12 +1359,125 @@ def compute_health_snapshot(rows: list[dict], stock: dict[str, dict]) -> dict:
 
 def log_health_snapshot(rows: list[dict], stock: dict[str, dict], pulled_at: str) -> None:
     """Appends one row to health_snapshots — unlike live_queue/
-    stock_levels, this is a history log, not a "right now" replace."""
-    snapshot = compute_health_snapshot(rows, stock)
+    stock_levels, this is a history log, not a "right now" replace.
+    Also feeds the production lead-time log from the same blocked-order
+    decision (see update_blocked_events)."""
+    blocked: list[dict] = []
+    snapshot = compute_health_snapshot(rows, stock, blocked_out=blocked)
     snapshot["pulled_at"] = pulled_at
     client = get_supabase_client()
     client.table("health_snapshots").insert(snapshot).execute()
     print(f"Logged health snapshot: {snapshot}")
+    # The lead-time log must never be able to take down the snapshot above
+    # (or the live queue pull around it) -- but a failure must not be quiet.
+    try:
+        update_blocked_events(client, blocked, rows, stock, pulled_at)
+    except Exception as e:
+        print(f"WARNING: blocked-order event logging FAILED (the health snapshot above was still saved): {e}")
+
+
+BLOCKED_EVENTS_TABLE = "blocked_order_events"
+BLOCKED_EVENTS_MIN_PLAUSIBLE = 100   # see the spike guard in update_blocked_events
+
+
+def update_blocked_events(client, blocked: list[dict], rows: list[dict], stock: dict[str, dict], pulled_at: str) -> dict:
+    """Production lead time, recorded as raw timestamps.
+
+    One row per (order, SKU) wait, in blocked_order_events:
+      order_placed_at  -- ShipStation's Order Date (converted from its raw
+                          Pacific string to a true UTC instant)
+      first_blocked_at -- the first 30-min pull that saw the order blocked
+                          on that SKU by a shortage
+      resolved_at      -- the first pull that no longer saw it blocked
+                          (so every time is accurate to about 30 minutes)
+      resolved_reason  -- 'unblocked' : still in the queue and no longer
+                                         short on that SKU (stock arrived)
+                          'held'      : the order went on hold
+                          'left_queue': the order is gone or out of scope
+                                         (shipped, cancelled, re-routed) --
+                                         it can't be told apart from here,
+                                         so these are NOT counted as waits
+                                         that a build ended
+      is_built         -- whether the SKU is built in-house, as classified
+                          at the time (so purchased-SKU waits, which are
+                          supplier lead time, can be left out)
+
+    Only RAW timestamps are stored. Calendar time, weekdays-only and shift
+    hours are all calculated when the report is viewed, so the definition
+    can change without touching history -- storing one finished number is
+    how the order-age switch left a seam in Build % history.
+
+    Called from log_health_snapshot() with the exact blocked decision that
+    drives Build %. Safe to run twice in a row (a second run changes
+    nothing)."""
+    queue_ids = {r.get("Order ID") for r in rows if r.get("Order ID")}
+    held_ids = {r["Order ID"] for r in rows if r.get("Order ID") and r.get("Shipment status") == "on_hold"}
+    scoped_ids = {
+        r["Order ID"] for r in rows
+        if r.get("Order ID") and r.get("Core Queue") in ("Warehouse", "Freight", "Both") and r.get("Shipment status") != "on_hold"
+    }
+
+    # Guards: opening or closing events off bad data would write false
+    # waits that can't be undone. Missing stock reads as "everything is
+    # blocked", an empty queue reads as "everything left" -- and a plain
+    # outage of either has happened before in this project.
+    if not rows or not stock:
+        print("Blocked-event log: SKIPPED this pull (empty queue or stock data -- not safe to open or close events).")
+        return {"skipped": True}
+    plausible_max = max(BLOCKED_EVENTS_MIN_PLAUSIBLE, int(0.6 * len(queue_ids)))
+    if len(blocked) > plausible_max:
+        print(f"Blocked-event log: SKIPPED this pull -- {len(blocked)} blocked order/SKU pairs out of {len(queue_ids)} orders "
+              f"looks like bad stock data, not real shortages (limit {plausible_max}). Existing events left as they are.")
+        return {"skipped": True}
+
+    open_rows = select_all_rows(client, BLOCKED_EVENTS_TABLE, filter_fn=lambda q: q.is_("resolved_at", "null"))
+    open_by_key = {(r["order_id"], r["product_id"]): r for r in open_rows}
+    current = {(b["order_id"], b["product_id"]): b for b in blocked}
+
+    to_open = []
+    for key, b in current.items():
+        if key in open_by_key:
+            continue
+        placed = parse_shipstation_naive(b.get("order_datetime"))
+        to_open.append({
+            "order_id": key[0],
+            "product_id": key[1],
+            "order_placed_at": placed.isoformat() if placed else None,
+            "first_blocked_at": pulled_at,
+            "is_built": b.get("is_built"),
+            "units_short": b.get("units_short"),
+        })
+
+    closes: dict[str, list] = {"unblocked": [], "held": [], "left_queue": []}
+    for key, r in open_by_key.items():
+        if key in current:
+            continue
+        oid = key[0]
+        if oid in held_ids:
+            reason = "held"
+        elif oid in scoped_ids:
+            reason = "unblocked"
+        else:
+            reason = "left_queue"
+        closes[reason].append(r["id"])
+
+    if to_open:
+        insert_in_batches(client, BLOCKED_EVENTS_TABLE, to_open)
+    for reason, ids in closes.items():
+        for i in range(0, len(ids), 200):
+            client.table(BLOCKED_EVENTS_TABLE).update({"resolved_at": pulled_at, "resolved_reason": reason}) \
+                .in_("id", ids[i:i + 200]).execute()
+
+    summary = {
+        "opened": len(to_open),
+        "closed_unblocked": len(closes["unblocked"]),
+        "closed_held": len(closes["held"]),
+        "closed_left_queue": len(closes["left_queue"]),
+        "open_now": len(current),
+    }
+    print(f"Blocked-event log: opened {summary['opened']}, closed {summary['closed_unblocked']} unblocked / "
+          f"{summary['closed_held']} held / {summary['closed_left_queue']} left queue; {summary['open_now']} orders waiting now.")
+    return summary
 
 
 def log_turnover_snapshot(pulled_at: str) -> None:
@@ -1395,9 +1529,16 @@ def read_stock_levels() -> dict[str, dict]:
     avoids a second, redundant hit against the same slow/heavy Finale
     reports pull_stock_levels.py already pulls on its own schedule."""
     client = get_supabase_client()
-    result = client.table("stock_levels").select("*").execute()
+    # CONFIRMED BUG, FIXED (2026-10-07): this used to be a bare
+    # .select("*"), which Supabase silently cuts off at 1000 rows -- but
+    # stock_levels has 1100+ rows. Every 30-minute pull therefore saw
+    # stock for only ~1000 products (a different random ~13% missing each
+    # time), and compute_health_snapshot() treats a product with no stock
+    # entry as OUT of stock. Result: phantom shortages in the logged
+    # Build % history, and (now that blocked orders are logged as events)
+    # random false "waiting on a build" entries. Reads every page now.
     stock: dict[str, dict] = {}
-    for row in result.data or []:
+    for row in select_all_rows(client, "stock_levels"):
         pid = row.get("product_id")
         if not pid:
             continue
@@ -1405,5 +1546,6 @@ def read_stock_levels() -> dict[str, dict]:
             "usable_stock": row.get("usable_stock") or 0.0,
             "reorder_point_max": row.get("reorder_point_max"),
             "units_backorder": row.get("units_backorder") or 0.0,
+            "is_built": row.get("is_built"),
         }
     return stock

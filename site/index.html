@@ -1025,6 +1025,7 @@
   <button class="tab-btn" id="tab-btn-strategy" onclick="switchTab('strategy')">Queue Strategy Tools</button>
   <button class="tab-btn" id="tab-btn-history" onclick="switchTab('history')">Historical Analysis</button>
   <button class="tab-btn" id="tab-btn-turnover" onclick="switchTab('turnover')">Inventory Turnover</button>
+  <button class="tab-btn" id="tab-btn-leadtime" onclick="switchTab('leadtime')">Production Lead Time</button>
 </div>
 
 <main>
@@ -1378,6 +1379,58 @@
         </table>
       </div>
     </div>
+  </div>
+
+  <div id="tab-leadtime" class="tab-panel" style="display:none;">
+    <h3 class="history-section-title">Production Lead Time</h3>
+    <div class="history-note">How long an order waits on a SKU that has to be built: from the moment the order is placed to the moment it stops being short on that SKU (the build landed). Only waits that a build ended are measured &mdash; waits that ended because the order shipped, was cancelled, re-routed or put on hold aren't. Recorded by the 30-minute pulls, so every time is accurate to about 30 minutes.</div>
+    <div class="history-note" id="leadtime-status" style="margin-top:-6px;"></div>
+
+    <div class="list-controls">
+      <button class="toggle-btn" id="leadtime-clock-calendar" onclick="setLeadTimeClock('calendar')">Calendar time</button>
+      <button class="toggle-btn" id="leadtime-clock-weekdays" onclick="setLeadTimeClock('weekdays')">Weekdays only</button>
+      <button class="toggle-btn active" id="leadtime-clock-shift" onclick="setLeadTimeClock('shift')">Shift hours (Mon&ndash;Fri 8am&ndash;4pm)</button>
+    </div>
+    <div class="history-note" id="leadtime-clock-blurb" style="margin-top:-2px;"></div>
+
+    <div class="list-controls">
+      <input type="text" class="sku-search-input" id="leadtime-search" placeholder="Search SKU..." oninput="renderLeadTimeTab()">
+      <select id="leadtime-range" class="sku-search-input" onchange="renderLeadTimeTab()" style="width:190px;">
+        <option value="all" selected>Waits ended: all time</option>
+        <option value="30">Waits ended: last 30 days</option>
+        <option value="90">Waits ended: last 90 days</option>
+        <option value="365">Waits ended: last 365 days</option>
+      </select>
+      <label class="toggle-label">
+        <input type="checkbox" id="leadtime-include-unbuilt" onchange="renderLeadTimeTab()">
+        Include SKUs that aren't built in-house (supplier lead time)
+      </label>
+    </div>
+
+    <div class="summary-row" style="margin-bottom:16px; grid-template-columns: repeat(5, 1fr);">
+      <div class="summary-card"><div class="value" id="lt-avg">&mdash;</div><div class="label">Average wait</div></div>
+      <div class="summary-card"><div class="value" id="lt-median">&mdash;</div><div class="label">Median wait</div></div>
+      <div class="summary-card"><div class="value" id="lt-p90">&mdash;</div><div class="label">90th percentile (9 in 10 waits were shorter)</div></div>
+      <div class="summary-card"><div class="value" id="lt-count">&mdash;</div><div class="label">Completed waits measured</div></div>
+      <div class="summary-card"><div class="value" id="lt-waiting">&mdash;</div><div class="label">Waiting on a build now</div></div>
+    </div>
+
+    <div class="health-label" style="margin:4px 0 6px;font-weight:600;">By SKU</div>
+    <div class="table-scroll-wrap">
+      <table class="attack-table sticky-table">
+        <thead><tr><th>SKU</th><th>Waits</th><th>Average</th><th>Median</th><th>90th pct</th><th>Longest</th><th>Waiting now</th></tr></thead>
+        <tbody id="leadtime-tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="health-label" style="margin:20px 0 6px;font-weight:600;">Waiting on a build right now</div>
+    <div class="table-scroll-wrap">
+      <table class="attack-table sticky-table">
+        <thead><tr><th>SKU</th><th>Order</th><th>Placed (Central)</th><th>Waiting so far</th><th>Short by</th></tr></thead>
+        <tbody id="leadtime-open-tbody"></tbody>
+      </table>
+    </div>
+    <div class="history-note" id="leadtime-footnote" style="margin-top:10px;"></div>
   </div>
 </main>
 
@@ -2966,7 +3019,7 @@ let hasData = false;
 let activeTab = "breakdown";
 
 function updateTabVisibility() {
-  const tabs = ["breakdown", "strategy", "history", "turnover"];
+  const tabs = ["breakdown", "strategy", "history", "turnover", "leadtime"];
   for (const t of tabs) {
     const el = document.getElementById(`tab-${t}`);
     if (!hasData) {
@@ -2979,13 +3032,14 @@ function updateTabVisibility() {
 
 function switchTab(tab) {
   activeTab = tab;
-  const tabs = ["breakdown", "strategy", "history", "turnover"];
+  const tabs = ["breakdown", "strategy", "history", "turnover", "leadtime"];
   for (const t of tabs) {
     document.getElementById(`tab-btn-${t}`).classList.toggle("active", t === tab);
   }
   updateTabVisibility();
   if (tab === "history") renderHistoryTab();
   if (tab === "turnover") renderTurnoverTab();
+  if (tab === "leadtime") renderLeadTimeTab();
 }
 
 function toggleSubsection(bodyId, chevronId) {
@@ -3369,6 +3423,178 @@ function renderTurnoverTable() {
       <td>${pill}</td>
     </tr>`;
   }).join("");
+}
+
+// ---------------------------------------------------------------------
+// Production Lead Time tab. Reads blocked_order_events (written by the
+// 30-minute pull: one row per order+SKU wait, RAW timestamps only) and
+// measures each wait on whichever of three clocks is selected, at view
+// time -- so switching clocks never touches stored data, and a change in
+// definition can never leave a seam in history (which is what storing a
+// finished number did to the Build % history when order age changed).
+const LEADTIME_CLOCKS = {
+  calendar: "Real elapsed time, weekends and nights included \u2014 how long the order actually waited.",
+  weekdays: "Skips Saturday and Sunday; every hour Monday\u2013Friday counts, nights included.",
+  shift:    "Counts only Mon\u2013Fri 8am\u20134pm Central \u2014 the hours production can actually work. Holidays aren't excluded.",
+};
+let leadTimeClock = "shift";
+let currentBlockedEvents = [];
+let leadTimeLoadError = null;
+
+function leadTimeElapsedHours(startMs, endMs, clock) {
+  if (!(endMs > startMs)) return 0;
+  if (clock === "calendar") return (endMs - startMs) / 3600000;
+  let dayStart = chicagoMidnightMs(startMs, 0);
+  let weekendMs = 0, shiftMs = 0;
+  while (dayStart < endMs) {
+    const dayEnd = chicagoMidnightMs(dayStart, 1);
+    const wd = chicagoPartsForInstant(dayStart).weekday;
+    if (wd === "Sat" || wd === "Sun") {
+      const lo = Math.max(dayStart, startMs), hi = Math.min(dayEnd, endMs);
+      if (hi > lo) weekendMs += hi - lo;
+    } else {
+      // Mon-Fri 8am-4pm Central. Midnight + whole hours is exact here:
+      // US daylight-saving changes happen on Sundays, never inside a weekday.
+      const lo = Math.max(dayStart + SHIFT_START_HOUR * 3600000, startMs);
+      const hi = Math.min(dayStart + SHIFT_END_HOUR * 3600000, endMs);
+      if (hi > lo) shiftMs += hi - lo;
+    }
+    dayStart = dayEnd;
+  }
+  return (clock === "weekdays" ? (endMs - startMs - weekendMs) : shiftMs) / 3600000;
+}
+
+function leadTimePercentile(sortedAsc, p) {
+  if (!sortedAsc.length) return null;
+  const idx = (sortedAsc.length - 1) * p;
+  const lo = Math.floor(idx), hi = Math.ceil(idx);
+  return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (idx - lo);
+}
+
+function leadTimeStats(hours) {
+  if (!hours.length) return { n: 0, avg: null, median: null, p90: null, max: null };
+  const s = [...hours].sort((a, b) => a - b);
+  return { n: s.length, avg: s.reduce((a, b) => a + b, 0) / s.length, median: leadTimePercentile(s, 0.5), p90: leadTimePercentile(s, 0.9), max: s[s.length - 1] };
+}
+
+function fmtLeadHours(h) {
+  if (h === null || h === undefined) return "\u2014";
+  return (h < 10 ? h.toFixed(1) : Math.round(h).toLocaleString()) + " h";
+}
+
+function leadTimeWaits() {
+  const includeUnbuilt = document.getElementById("leadtime-include-unbuilt").checked;
+  const rangeVal = document.getElementById("leadtime-range").value;
+  const cutoffMs = rangeVal === "all" ? 0 : Date.now() - (+rangeVal) * 86400000;
+  // An order that was unblocked and then blocked again has several rows;
+  // the real answer is the LAST one, and only once none are still open.
+  const pairs = new Map();
+  for (const e of currentBlockedEvents) {
+    const key = `${e.order_id}||${e.product_id}`;
+    if (!pairs.has(key)) pairs.set(key, []);
+    pairs.get(key).push(e);
+  }
+  const completed = [], open = [];
+  let endedOther = 0, untimed = 0;
+  for (const events of pairs.values()) {
+    const latest = events.reduce((a, b) => (b.id > a.id ? b : a));
+    const isBuilt = latest.is_built === true;
+    if (!includeUnbuilt && !isBuilt) continue;
+    const placedTimes = events.filter(e => e.order_placed_at).map(e => new Date(e.order_placed_at).getTime());
+    if (!placedTimes.length) { untimed++; continue; }
+    const placedMs = Math.min(...placedTimes);
+    const sku = events[0].product_id, orderId = events[0].order_id;
+    const openEv = events.find(e => !e.resolved_at);
+    if (openEv) { open.push({ sku, orderId, placedMs, unitsShort: openEv.units_short }); continue; }
+    const last = events.reduce((a, b) => {
+      const ta = new Date(a.resolved_at).getTime(), tb = new Date(b.resolved_at).getTime();
+      return (tb > ta || (tb === ta && b.id > a.id)) ? b : a;
+    });
+    const resolvedMs = new Date(last.resolved_at).getTime();
+    if (resolvedMs < cutoffMs) continue;
+    if (last.resolved_reason !== "unblocked") { endedOther++; continue; }
+    completed.push({ sku, orderId, placedMs, resolvedMs });
+  }
+  return { completed, open, endedOther, untimed };
+}
+
+function setLeadTimeClock(clock) {
+  leadTimeClock = clock;
+  renderLeadTimeTab();
+}
+
+function renderLeadTimeTab() {
+  for (const c of Object.keys(LEADTIME_CLOCKS)) {
+    document.getElementById(`leadtime-clock-${c}`).classList.toggle("active", c === leadTimeClock);
+  }
+  document.getElementById("leadtime-clock-blurb").textContent = LEADTIME_CLOCKS[leadTimeClock];
+
+  const statusEl = document.getElementById("leadtime-status");
+  if (leadTimeLoadError) {
+    statusEl.textContent = `Couldn't read the lead-time log from the database: ${leadTimeLoadError}`;
+  } else if (!currentBlockedEvents.length) {
+    statusEl.textContent = "No blocked-order events logged yet \u2014 logging starts with the first 30-minute pull after this was set up.";
+  } else {
+    const first = currentBlockedEvents.reduce((m, e) => (e.first_blocked_at < m ? e.first_blocked_at : m), currentBlockedEvents[0].first_blocked_at);
+    const since = new Date(first).toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", year: "numeric" });
+    statusEl.textContent = `Logging began ${since} \u00b7 ${currentBlockedEvents.length.toLocaleString()} wait events recorded.`;
+  }
+
+  const query = document.getElementById("leadtime-search").value.trim().toLowerCase();
+  const matches = w => !query || w.sku.toLowerCase().includes(query);
+  const all = leadTimeWaits();
+  const completed = all.completed.filter(matches);
+  const open = all.open.filter(matches);
+  const elapsed = w => leadTimeElapsedHours(w.placedMs, w.resolvedMs, leadTimeClock);
+
+  const overall = leadTimeStats(completed.map(elapsed));
+  document.getElementById("lt-avg").textContent = fmtLeadHours(overall.avg);
+  document.getElementById("lt-median").textContent = fmtLeadHours(overall.median);
+  document.getElementById("lt-p90").textContent = fmtLeadHours(overall.p90);
+  document.getElementById("lt-count").textContent = overall.n.toLocaleString();
+  document.getElementById("lt-waiting").textContent = open.length.toLocaleString();
+
+  // ---- by SKU ----
+  const bySku = new Map();
+  const slot = sku => { if (!bySku.has(sku)) bySku.set(sku, { sku, hours: [], waiting: 0 }); return bySku.get(sku); };
+  for (const w of completed) slot(w.sku).hours.push(elapsed(w));
+  for (const w of open) slot(w.sku).waiting++;
+  const skuRows = [...bySku.values()].map(r => ({ ...r, st: leadTimeStats(r.hours) }));
+  skuRows.sort((a, b) => (b.st.avg ?? -1) - (a.st.avg ?? -1) || b.waiting - a.waiting || a.sku.localeCompare(b.sku));
+  const tbody = document.getElementById("leadtime-tbody");
+  if (!skuRows.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="bar-empty">${query ? "No matching SKUs" : "No waits recorded yet"}</td></tr>`;
+  } else {
+    tbody.innerHTML = skuRows.map(r => {
+      const few = r.st.n > 0 && r.st.n < 3;
+      const mute = few ? ' style="color:var(--text-muted);" title="Only ' + r.st.n + ' completed wait' + (r.st.n === 1 ? '' : 's') + ' \u2014 too few to trust the average"' : "";
+      return `<tr>
+        <td>${r.sku}</td>
+        <td${mute}>${r.st.n}${few ? " (few)" : ""}</td>
+        <td${mute}>${fmtLeadHours(r.st.avg)}</td>
+        <td${mute}>${fmtLeadHours(r.st.median)}</td>
+        <td${mute}>${fmtLeadHours(r.st.p90)}</td>
+        <td${mute}>${fmtLeadHours(r.st.max)}</td>
+        <td>${r.waiting || "\u2014"}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  // ---- waiting now ----
+  const nowMs = Date.now();
+  const openRows = open.map(w => ({ ...w, waited: leadTimeElapsedHours(w.placedMs, nowMs, leadTimeClock) })).sort((a, b) => b.waited - a.waited);
+  const shown = openRows.slice(0, 50);
+  document.getElementById("leadtime-open-tbody").innerHTML = shown.length ? shown.map(w => {
+    const placed = new Date(w.placedMs).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    const short = w.unitsShort === null || w.unitsShort === undefined ? "\u2014" : (+w.unitsShort).toLocaleString(undefined, { maximumFractionDigits: 1 });
+    return `<tr><td>${w.sku}</td><td>${w.orderId}</td><td>${placed}</td><td>${fmtLeadHours(w.waited)}</td><td>${short}</td></tr>`;
+  }).join("") : `<tr><td colspan="5" class="bar-empty">${query ? "No matching SKUs" : "Nothing is waiting on a build right now"}</td></tr>`;
+
+  const notes = [];
+  if (openRows.length > shown.length) notes.push(`Showing the ${shown.length} longest of ${openRows.length} waits in progress.`);
+  if (all.endedOther) notes.push(`${all.endedOther.toLocaleString()} wait${all.endedOther === 1 ? "" : "s"} ended because the order shipped, was cancelled, re-routed or put on hold, so ${all.endedOther === 1 ? "it isn't" : "they aren't"} counted.`);
+  if (all.untimed) notes.push(`${all.untimed.toLocaleString()} wait${all.untimed === 1 ? "" : "s"} had no order time recorded and ${all.untimed === 1 ? "is" : "are"} skipped.`);
+  document.getElementById("leadtime-footnote").textContent = notes.join(" ");
 }
 
 function renderHistoryTab() {
@@ -3950,6 +4176,20 @@ async function refresh() {
       turnoverLoadError = (computedErr && computedErr.message) || String(computedErr);
       currentTurnoverComputed = [];
     }
+
+    // Production lead-time log -- one row per order+SKU wait, raw
+    // timestamps. Same non-fatal pattern; kept separate from the turnover
+    // error so each tab can say exactly what failed.
+    leadTimeLoadError = null;
+    try {
+      const sinceIso = new Date(Date.now() - 400 * 86400000).toISOString();
+      currentBlockedEvents = await fetchAllRows("blocked_order_events", { filter: q => q.gte("first_blocked_at", sinceIso) });
+    } catch (leadErr) {
+      console.error("blocked_order_events fetch failed (non-fatal):", leadErr);
+      leadTimeLoadError = (leadErr && leadErr.message) || String(leadErr);
+      currentBlockedEvents = [];
+    }
+    if (activeTab === "leadtime") renderLeadTimeTab();
 
     const dot = document.getElementById("last-updated-dot");
 
