@@ -41,12 +41,15 @@ import requests
 from dotenv import load_dotenv
 
 from shipstation_client import ShipStationClient
+# Only long-standing basics are borrowed from ops_common. Anything KPI-
+# specific (business hours, daily sales) lives in this file, so changes
+# to Ops Live can't break the KPI sync.
 from ops_common import (
     CHICAGO_TZ,
     WAREHOUSE_LOCATION_NAME, FREIGHT_LOCATION_NAME,
     ORDERS_REPORT_URL,
-    parse_shipstation_naive, business_hours_elapsed,
-    fetch_finale_report, fetch_product_sales_totals,
+    parse_shipstation_naive,
+    fetch_finale_report,
     get_supabase_client,
 )
 
@@ -66,6 +69,115 @@ FIRST_LOCATION_HEADER = "ROW 1"
 # ---------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Finance's on-time shipping KPI (Shipping OKR sheet, "Run Filtered SLA
+# Analysis" Apps Script). Ported line for line and checked against the
+# sheet's own results: Jun 1-Sep 30 2026 gives 13,066 lines analyzed,
+# 12,090 passed (92.53%), with zero row-level differences.
+#
+#   - business hours: Mon-Fri, 8 AM-5 PM Central, no holidays
+#   - clock: order date -> ship DATE at midnight (ShipStation ship dates
+#     have no time, so a ship day counts from its 8 AM start)
+#   - pass: <= 24 business hours
+#   - counted per order LINE, not per order (the export has a row per item)
+#   - eligible: status Shipped; ship-from "Dripping Springs Warehouse" or
+#     "Austin Office & Warehouse"; line extended price >= 0; Custom Field 2
+#     blank (excludes 'frt' freight and custom shipping options)
+# ---------------------------------------------------------------------
+FIN_SLA_HOURS = 24
+FIN_WORK_START = 8
+FIN_WORK_END = 17
+FIN_WAREHOUSE_NAMES = ("Dripping Springs Warehouse", "Austin Office & Warehouse")
+# "Austin Office & Warehouse" was deleted from ShipStation after the move,
+# so /warehouses no longer lists it; orders from that era still carry its
+# ID. 251393 is the deleted location the 2025-26 labels came from.
+AUSTIN_WAREHOUSE_ID_FALLBACK = 251393
+
+
+def _fin_normalize(d: datetime) -> datetime:
+    while True:
+        wd = d.weekday()
+        if wd == 6:
+            return (d + timedelta(days=1)).replace(hour=FIN_WORK_START, minute=0, second=0, microsecond=0)
+        if wd == 5:
+            return (d + timedelta(days=2)).replace(hour=FIN_WORK_START, minute=0, second=0, microsecond=0)
+        if d.hour >= FIN_WORK_END:
+            d = (d + timedelta(days=1)).replace(hour=FIN_WORK_START, minute=0, second=0, microsecond=0)
+            continue
+        if d.hour < FIN_WORK_START:
+            d = d.replace(hour=FIN_WORK_START, minute=0, second=0, microsecond=0)
+        return d
+
+
+def finance_business_hours(order_local: datetime, ship_day: date) -> float:
+    """order_local: naive Central time. ship_day: the ship date."""
+    start = order_local
+    end = datetime(ship_day.year, ship_day.month, ship_day.day)
+    if start >= end:
+        return 0.0
+    start, end = _fin_normalize(start), _fin_normalize(end)
+    if start >= end:
+        return 0.0
+    sd = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    ed = end.replace(hour=0, minute=0, second=0, microsecond=0)
+    if sd == ed:
+        return (end.hour - start.hour) + (end.minute - start.minute) / 60
+    first = (FIN_WORK_END - start.hour) - start.minute / 60
+    last = (end.hour - FIN_WORK_START) + end.minute / 60
+    n, it = 0, sd + timedelta(days=1)
+    while it < ed:
+        if it.weekday() < 5:
+            n += 1
+        it += timedelta(days=1)
+    return n * (FIN_WORK_END - FIN_WORK_START) + first + last
+
+
+def finance_lines(o: dict, sla_wh_ids: set) -> int:
+    """How many of this order's lines Finance's KPI counts (0 if the order
+    itself doesn't qualify)."""
+    adv = o.get("advancedOptions") or {}
+    if o.get("orderStatus") != "shipped" or adv.get("warehouseId") not in sla_wh_ids:
+        return 0
+    if str(adv.get("customField2") or "").strip():
+        return 0
+    n = 0
+    for it in o.get("items") or []:
+        try:
+            ext = float(it.get("unitPrice")) * float(it.get("quantity") or 0)
+        except (TypeError, ValueError):
+            continue
+        if ext >= 0:
+            n += 1
+    return n
+
+
+def finance_hours_for(order_dt_utc: datetime | None, ship_day: date | None):
+    if not order_dt_utc or not ship_day:
+        return None
+    local = order_dt_utc.astimezone(CHICAGO_TZ).replace(tzinfo=None)
+    return round(finance_business_hours(local, ship_day), 2)
+
+
+
+def business_hours_elapsed(start: datetime, end: datetime) -> float:
+    """Hours between start and end with weekends excluded (Saturday 00:00
+    through Monday 00:00, Chicago time): the 48-hour clock pauses over the
+    weekend. Same rule Ops Live used for its SLA clock."""
+    if not start or not end or end <= start:
+        return 0.0
+    total_seconds = (end - start).total_seconds()
+    excluded_seconds = 0.0
+    cursor = start.astimezone(CHICAGO_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    while cursor.astimezone(timezone.utc) < end:
+        day_end = cursor + timedelta(days=1)
+        if cursor.weekday() in (5, 6):
+            overlap_start = max(cursor.astimezone(timezone.utc), start)
+            overlap_end = min(day_end.astimezone(timezone.utc), end)
+            if overlap_end > overlap_start:
+                excluded_seconds += (overlap_end - overlap_start).total_seconds()
+        cursor = day_end
+    return (total_seconds - excluded_seconds) / 3600.0
+
 
 def central_today() -> date:
     return datetime.now(CHICAGO_TZ).date()
@@ -169,16 +281,44 @@ WAREHOUSE_TAG = "austin warehouse"
 FREIGHT_TAG = "atx freight"
 
 
-def queue_name(order_or_shipment: dict, warehouse_id, freight_id, tag_names: dict | None = None) -> str:
-    """Ship From Location when it's set to one of the two Dripping Springs
-    locations (how Ops Live classifies, reliable since mid-2026). Before
-    that, orders were 'Unassigned', so fall back to the tags that were in
-    use throughout: 'Austin Warehouse' and 'ATX Freight'. An order with
-    both tags (a split order) counts as Freight."""
-    wh = (order_or_shipment.get("advancedOptions") or {}).get("warehouseId", order_or_shipment.get("warehouseId"))
+def is_frt(o: dict) -> bool:
+    return str((o.get("advancedOptions") or {}).get("customField2") or "").strip().lower() == "frt"
+
+
+LEGACY_CUTOFF = "2026-06-01"   # Dripping Springs ship-from locations in use from June 2026
+
+
+def queue_name(order_or_shipment: dict, warehouse_id, freight_id, tag_names: dict | None = None,
+               legacy_ids: set | None = None) -> str:
+    """Warehouse / Freight / '' (not ours). Same rule as Ops Live for every
+    order since the Dripping Springs locations went live:
+
+      1. Ship From = Dripping Springs Warehouse / Freight -> that queue.
+         This is the ONLY rule for orders from June 2026 on, so the KPI
+         page and Ops Live classify current orders identically.
+      2. Older orders, where Ship From can't tell (the deleted "Austin
+         Office & Warehouse" location, or Unassigned/blank before June
+         2026): Custom Field 2 = 'frt' -> Freight (tested ~97% against
+         the Freight location in June 2026), else the tags ('ATX Freight'
+         -> Freight, 'Austin Warehouse' -> Warehouse). An Austin-location
+         order with neither counts as Warehouse, since it shipped from us.
+      3. Anything else (vendor/dropship locations such as PA or United
+         Scientific, or Unassigned after June 2026) -> ''.
+    Pass tag_names=None to classify by Ship From alone (labels)."""
+    adv = order_or_shipment.get("advancedOptions") or {}
+    wh = adv.get("warehouseId", order_or_shipment.get("warehouseId"))
     if wh == warehouse_id:
         return "Warehouse"
     if wh == freight_id:
+        return "Freight"
+    legacy_ids = legacy_ids or {}
+    austin = wh in legacy_ids.get("austin", set())
+    unassigned_ids = legacy_ids.get("unassigned", set())
+    order_day = str(order_or_shipment.get("orderDate") or "")[:10]
+    old_unassigned = (wh is None or wh in unassigned_ids) and order_day and order_day < LEGACY_CUTOFF
+    if not (austin or old_unassigned):
+        return ""
+    if is_frt(order_or_shipment):
         return "Freight"
     if tag_names is not None:
         tags = {str(tag_names.get(t, "")).strip().lower() for t in (order_or_shipment.get("tagIds") or [])}
@@ -186,7 +326,17 @@ def queue_name(order_or_shipment: dict, warehouse_id, freight_id, tag_names: dic
             return "Freight"
         if WAREHOUSE_TAG in tags:
             return "Warehouse"
-    return ""
+    return "Warehouse" if austin else ""
+
+
+def tag_only_queue(o: dict, tag_names: dict) -> str | None:
+    """What the tags alone say (stored for testing the 'frt' flag)."""
+    tags = {str(tag_names.get(t, "")).strip().lower() for t in (o.get("tagIds") or [])}
+    if FREIGHT_TAG in tags:
+        return "Freight"
+    if WAREHOUSE_TAG in tags:
+        return "Warehouse"
+    return None
 
 
 def items_of(order: dict) -> list[dict]:
@@ -203,7 +353,7 @@ def end_of_shift_instant(d: date) -> datetime:
     return datetime(d.year, d.month, d.day, END_OF_SHIFT_HOUR, tzinfo=CHICAGO_TZ).astimezone(timezone.utc)
 
 
-def order_row(o: dict, wh_id, fr_id, tag_names: dict) -> dict:
+def order_row(o: dict, wh_id, fr_id, tag_names: dict, sla_wh_ids: set, legacy_ids: dict | None = None) -> dict:
     """Saves what ShipStation has on the order itself. Label-based ship
     dates and times are filled in afterwards by reconcile_ship_times()."""
     oid = o["orderId"]
@@ -213,24 +363,34 @@ def order_row(o: dict, wh_id, fr_id, tag_names: dict) -> dict:
     if ship_date:
         ship_dt, source = end_of_shift_instant(ship_date), "end_of_shift"
     items = items_of(o)
+    bh = finance_hours_for(order_dt, ship_date)
     return {
         "order_id": oid,
         "order_number": o.get("orderNumber"),
-        "queue": queue_name(o, wh_id, fr_id, tag_names),
+        "queue": queue_name(o, wh_id, fr_id, tag_names, legacy_ids),
         "status": o.get("orderStatus"),
         "order_dt": order_dt.isoformat() if order_dt else None,
         "order_date": order_dt.astimezone(CHICAGO_TZ).date().isoformat() if order_dt else None,
         "ship_date": ship_date.isoformat() if ship_date else None,
         "ship_dt": ship_dt.isoformat() if ship_dt else None,
         "ship_dt_source": source,
-        "queue_bhours": round(business_hours_elapsed(order_dt, ship_dt), 2) if (order_dt and ship_dt) else None,
+        # Time in queue uses Finance's clock (Mon-Fri 8-5, order to ship
+        # day): ShipStation has no reliable ship timestamps.
+        "queue_bhours": bh,
+        "ship_date_source": "order" if ship_date else None,
+        "cf2_frt": is_frt(o),
+        "tag_queue": tag_only_queue(o, tag_names),
         "units": sum(i["qty"] for i in items),
         "items": items,
+        "ship_from_id": (o.get("advancedOptions") or {}).get("warehouseId"),
+        "fin_lines": finance_lines(o, sla_wh_ids),
+        "fin_bhours": bh,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
-def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, tag_names: dict) -> None:
+def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, tag_names: dict, sla_wh_ids: set,
+                            legacy_ids: dict | None = None) -> None:
     s_str, e_str = f"{start} 00:00:00", f"{end} 23:59:59"
     print(f"ShipStation {start} to {end}")
 
@@ -268,7 +428,7 @@ def sync_shipstation_window(ss, sb, start: date, end: date, wh_id, fr_id, tag_na
     window_orders: dict[int, dict] = {}
     for o in placed + shipped:          # shipped second: its status wins on overlap
         window_orders[o["orderId"]] = o
-    rows = [order_row(o, wh_id, fr_id, tag_names) for o in window_orders.values()]
+    rows = [order_row(o, wh_id, fr_id, tag_names, sla_wh_ids, legacy_ids) for o in window_orders.values()]
     upsert(sb, "kpi_orders", rows, "order_id")
     upsert(sb, "kpi_shipments", [r for r in shipment_rows if r["shipment_id"]], "shipment_id")
 
@@ -285,13 +445,16 @@ def fetch_all(sb, table: str, columns: str, apply_filters) -> list[dict]:
 
 
 def reconcile_ship_times(sb, start: date, end: date) -> str:
-    """Matches labels to orders by ORDER NUMBER (2025 labels point to
-    order IDs that no longer exist; the orders were re-imported with new
-    IDs, but order numbers carried over). For each shipped order:
-      - ship date: the order's own shipDate, else its earliest label's
-      - ship time: earliest label's creation time, else 4 PM that day
-    Also gives each label its order's Warehouse/Freight queue, since
-    pre-2026 labels came from a ship-from location that no longer exists."""
+    """Fills in ship dates ShipStation no longer has on the order, then
+    recomputes business hours. Ship date, in order of preference:
+      1. the order's own shipDate                         (source 'order')
+      2. Finance's ShipStation export from before the May 2026 update,
+         loaded once into kpi_ship_date_overrides         (source 'export')
+      3. the earliest label for the order                 (source 'label')
+    Labels and the export are matched by order ID, else by ORDER NUMBER:
+    orders were re-imported on 2026-03-25 with new IDs, but order numbers
+    carried over. Also gives each label its order's Warehouse/Freight
+    queue, since pre-2026 labels came from a ship-from that no longer exists."""
     since = (start - timedelta(days=45)).isoformat()
     labels = fetch_all(sb, "kpi_shipments", "shipment_id,order_number,ship_date,create_dt,voided,queue",
                        lambda q: q.gte("ship_date", since).eq("voided", False))
@@ -304,10 +467,19 @@ def reconcile_ship_times(sb, start: date, end: date) -> str:
         if num not in first_label or key < (first_label[num].get("create_dt") or first_label[num]["ship_date"]):
             first_label[num] = l
 
-    orders = fetch_all(sb, "kpi_orders", "order_id,order_number,status,order_dt,ship_date,ship_dt_source,queue",
+    overrides = fetch_all(sb, "kpi_ship_date_overrides", "order_id,order_number,ship_date", lambda q: q)
+    ov_by_id = {o["order_id"]: o["ship_date"] for o in overrides if o.get("ship_date")}
+    num_counts: dict[str, int] = {}
+    for o in overrides:
+        num_counts[str(o.get("order_number") or "")] = num_counts.get(str(o.get("order_number") or ""), 0) + 1
+    ov_by_num = {str(o["order_number"]): o["ship_date"] for o in overrides
+                 if o.get("ship_date") and num_counts.get(str(o.get("order_number") or "")) == 1}
+
+    orders = fetch_all(sb, "kpi_orders",
+                       "order_id,order_number,status,order_dt,ship_date,ship_date_source,fin_bhours,queue",
                        lambda q: q.gte("order_date", since).lte("order_date", end.isoformat()))
     queue_by_number = {}
-    updates = []
+    updates, by_source = [], {"export": 0, "label": 0}
     for o in orders:
         num = str(o.get("order_number") or "").strip()
         if num and o.get("queue"):
@@ -315,22 +487,36 @@ def reconcile_ship_times(sb, start: date, end: date) -> str:
         if o.get("status") != "shipped":
             continue
         lab = first_label.get(num)
-        if not lab:
-            continue
-        ship_date = o.get("ship_date") or lab["ship_date"]
-        if lab.get("create_dt"):
-            ship_dt, source = datetime.fromisoformat(lab["create_dt"]), "label"
+        if o.get("ship_date_source") == "order" and o.get("ship_date"):
+            ship_date, src = o["ship_date"], "order"
         else:
-            ship_dt, source = end_of_shift_instant(parse_any_date(ship_date)), "end_of_shift"
-        if o.get("ship_dt_source") == source and o.get("ship_date") == ship_date and source == "label":
-            continue
+            ov = ov_by_id.get(o["order_id"]) or ov_by_num.get(num)
+            if ov:
+                ship_date, src = ov, "export"
+            elif lab:
+                ship_date, src = lab["ship_date"], "label"
+            else:
+                continue
         order_dt = datetime.fromisoformat(o["order_dt"]) if o.get("order_dt") else None
+        bh = finance_hours_for(order_dt, parse_any_date(ship_date))
+        if (src == o.get("ship_date_source") and ship_date == o.get("ship_date")
+                and o.get("fin_bhours") is not None and bh is not None
+                and abs(float(o["fin_bhours"]) - bh) < 0.005):
+            continue
+        if lab and lab.get("create_dt"):
+            ship_dt, dt_src = datetime.fromisoformat(lab["create_dt"]), "label"
+        else:
+            ship_dt, dt_src = end_of_shift_instant(parse_any_date(ship_date)), "end_of_shift"
+        if src in by_source:
+            by_source[src] += 1
         updates.append({
             "order_id": o["order_id"],
             "ship_date": ship_date,
+            "ship_date_source": src,
             "ship_dt": ship_dt.isoformat(),
-            "ship_dt_source": source,
-            "queue_bhours": round(business_hours_elapsed(order_dt, ship_dt), 2) if order_dt else None,
+            "ship_dt_source": dt_src,
+            "queue_bhours": bh,
+            "fin_bhours": bh,
         })
     if updates:
         upsert(sb, "kpi_orders", updates, "order_id")
@@ -340,7 +526,33 @@ def reconcile_ship_times(sb, start: date, end: date) -> str:
                    if not l.get("queue") and l.get("order_number") in queue_by_number]
     if label_queue:
         upsert(sb, "kpi_shipments", label_queue, "shipment_id")
-    return f"ship dates/times from labels on {len(updates)} orders; queue set on {len(label_queue)} labels"
+    return (f"ship dates filled from Finance export on {by_source['export']} orders, from labels on "
+            f"{by_source['label']}; {len(updates)} orders updated; queue set on {len(label_queue)} labels")
+
+
+def finance_warehouse_ids(ss, warehouse_id) -> set:
+    ids = {warehouse_id}
+    try:
+        for w in ss._get("/warehouses") or []:
+            if (w.get("warehouseName") or "").strip() in FIN_WAREHOUSE_NAMES:
+                ids.add(w["warehouseId"])
+    except Exception as e:
+        print(f"  could not list warehouses: {e}")
+    if not any(i != warehouse_id for i in ids):
+        ids.add(AUSTIN_WAREHOUSE_ID_FALLBACK)
+    return ids
+
+
+def legacy_location_ids(ss, warehouse_id, sla_wh_ids: set) -> dict:
+    """IDs of the deleted Austin location and of 'Unassigned'."""
+    unassigned = set()
+    try:
+        for w in ss._get("/warehouses") or []:
+            if (w.get("warehouseName") or "").strip().lower() == "unassigned":
+                unassigned.add(w["warehouseId"])
+    except Exception as e:
+        print(f"  could not list warehouses: {e}")
+    return {"austin": {i for i in sla_wh_ids if i != warehouse_id}, "unassigned": unassigned}
 
 
 def section_shipstation(sb, start: date, end: date) -> str:
@@ -348,10 +560,13 @@ def section_shipstation(sb, start: date, end: date) -> str:
     wh_id = ss.get_warehouse_id(WAREHOUSE_LOCATION_NAME)
     fr_id = ss.get_warehouse_id(FREIGHT_LOCATION_NAME)
     tag_names = ss.list_tags()
+    sla_wh_ids = finance_warehouse_ids(ss, wh_id)
+    legacy_ids = legacy_location_ids(ss, wh_id, sla_wh_ids)
+    print(f"  on-time KPI ship-from IDs: {sorted(sla_wh_ids)}; legacy: {dict((k, sorted(v)) for k, v in legacy_ids.items())}")
     chunk_start = start
     while chunk_start <= end:      # weekly chunks keep each request set small on backfills
         chunk_end = min(chunk_start + timedelta(days=6), end)
-        sync_shipstation_window(ss, sb, chunk_start, chunk_end, wh_id, fr_id, tag_names)
+        sync_shipstation_window(ss, sb, chunk_start, chunk_end, wh_id, fr_id, tag_names, sla_wh_ids, legacy_ids)
         chunk_start = chunk_end + timedelta(days=1)
     detail = reconcile_ship_times(sb, start, end)
     print(f"  {detail}")
@@ -368,7 +583,7 @@ def section_queue(sb) -> str:
     queued = ss_paged(ss, "/orders", {"orderStatus": "awaiting_shipment"}, "orders")
     units: dict[str, float] = {}
     for o in queued:
-        if queue_name(o, wh_id, fr_id, tag_names) not in ("Warehouse", "Freight"):
+        if queue_name(o, wh_id, fr_id, tag_names, {"austin": set(), "unassigned": set()}) not in ("Warehouse", "Freight"):
             continue
         for it in items_of(o):
             units[it["sku"]] = units.get(it["sku"], 0) + it["qty"]
@@ -406,32 +621,51 @@ def section_attrs(sb) -> str:
     return f"{len(out)} products"
 
 
-def section_sales(sb, start: date, end: date) -> str:
-    """Daily sales totals for turnover. Only for days that have an
-    inventory snapshot, since turnover can't be computed without one."""
-    first = sb.table("kpi_inventory_daily").select("snap_date").order("snap_date").limit(1).execute().data
-    if not first:
-        return "skipped: no inventory snapshots yet"
-    first_day = parse_any_date(first[0]["snap_date"])
-    days = [d for d in daterange(max(start, first_day), min(end, central_today()))]
-    rows = []
-    for d in days:
-        totals = fetch_product_sales_totals(d.isoformat(), d.isoformat())
-        rows.append({
-            "sale_date": d.isoformat(),
-            "units": sum(t["units_sold"] for t in totals.values()),
-            "dollars": sum(t["dollars_sold"] for t in totals.values()),
-        })
-    if rows:
-        upsert(sb, "kpi_sales_daily", rows, "sale_date")
-    return f"{len(rows)} days"
+def norm_key(k) -> str:
+    return re.sub(r"\s+", " ", str(k)).strip().lower()
 
 
-def fill_down(rows: list[dict], keys: list[str]) -> list[dict]:
-    """Finale pivot reports put a group value (Product ID, Supplier...) on
-    a header row and leave it blank on the detail rows below. Carry the
-    last seen value down so every detail row is self-contained."""
-    carried: dict[str, object] = {}
+def resolve_columns(rows: list[dict], spec: dict) -> dict:
+    """Finds each needed column by keywords instead of exact names, since
+    Finale report headers vary ('Qty to produce', 'Product to produce'...).
+    spec: field -> list of alternatives; each alternative is a tuple of
+    words that must all appear in the header (first alternative wins);
+    a word starting with '!' must NOT appear.
+    Returns field -> actual column name (or None)."""
+    columns = []
+    for r in rows[:200]:
+        for k in r.keys():
+            if k not in columns:
+                columns.append(k)
+    out = {}
+    for field, alternatives in spec.items():
+        out[field] = None
+        for words in alternatives:
+            hit = next((c for c in columns
+                        if all((w[1:] not in norm_key(c)) if w.startswith("!") else (w in norm_key(c)) for w in words)),
+                       None)
+            if hit:
+                out[field] = hit
+                break
+    return out
+
+
+def describe(mapping: dict, rows: list[dict]) -> str:
+    cols = []
+    for r in rows[:200]:
+        for k in r.keys():
+            if k not in cols:
+                cols.append(k)
+    found = ", ".join(f"{f}='{c}'" for f, c in mapping.items())
+    return f"columns used: {found} | all columns: {[norm_key(c) for c in cols]}"
+
+
+def fill_down(rows: list[dict], keys: list) -> list[dict]:
+    """Finale pivot reports put a group value (order ID, supplier...) on
+    the first row of a group and leave it blank on the rows below. Carry
+    the last seen value down so every row is self-contained."""
+    keys = [k for k in keys if k]
+    carried: dict = {}
     out = []
     for r in rows:
         r = dict(r)
@@ -444,85 +678,139 @@ def fill_down(rows: list[dict], keys: list[str]) -> list[dict]:
     return out
 
 
-def report_rows(env_name: str, fill_keys: list[str]) -> list[dict] | None:
+def load_report(env_name: str):
     url = os.environ.get(env_name, "").strip()
     if not url:
         return None
-    return fill_down(fetch_finale_report(url), fill_keys)
+    url = url.replace("/pivotTableStream/", "/pivotTable/")   # the Stream form returns a web page, not data
+    return fetch_finale_report(url)
+
+
+def is_total_row(r: dict) -> bool:
+    return any(str(v).strip().upper().startswith("TOTAL") for v in r.values() if isinstance(v, str))
+
+
+def require(mapping: dict, fields: list, rows: list, what: str) -> None:
+    missing = [f for f in fields if not mapping.get(f)]
+    if missing:
+        raise RuntimeError(f"{what}: couldn't find column(s) for {missing}. {describe(mapping, rows)}")
 
 
 def section_builds(sb) -> str:
-    rows = report_rows("FINALE_BUILDS_REPORT_URL", ["Product ID", "Product"])
+    rows = load_report("FINALE_BUILDS_REPORT_URL")
     if rows is None:
         return "skipped: FINALE_BUILDS_REPORT_URL not set"
-    out, seen = [], set()
+    m = resolve_columns(rows, {
+        "build_id": [("build", "id"), ("build",)],
+        "product": [("product", "produce"), ("product", "id"), ("product",)],
+        "qty": [("qty", "produce"), ("quantity", "produce"), ("qty",), ("quantity",)],
+        "done": [("complete", "actual"), ("complete",), ("completed",)],
+    })
+    require(m, ["build_id", "qty", "done"], rows, "Builds report")
+    rows = fill_down(rows, [m["build_id"]])
+    out = {}
     for r in rows:
-        bid = pick(r, ["Build ID", "Build", "Build id"])
-        done = parse_any_date(pick(r, ["Complete date actual", "Complete date", "Completed date"]))
-        qty = to_number(pick(r, ["Quantity to produce", "Quantity", "Quantity produced", "Units"]))
-        pid = pick(r, ["Product ID", "Product"])
-        if not bid or str(bid) == "TOTAL:" or not done or not qty:
+        if is_total_row(r):
             continue
-        key = str(bid)
-        if key in seen:
+        bid, done, qty = r.get(m["build_id"]), parse_any_date(r.get(m["done"])), to_number(r.get(m["qty"]))
+        if not bid or not done or not qty:
             continue
-        seen.add(key)
-        out.append({"build_id": key, "product_id": str(pid or "").strip(), "quantity": qty,
-                    "complete_date": done.isoformat()})
+        key = str(bid).strip()
+        if key not in out:
+            out[key] = {"build_id": key, "product_id": str(r.get(m["product"]) or "").strip() if m["product"] else "",
+                        "quantity": qty, "complete_date": done.isoformat()}
     if not out:
-        raise RuntimeError(f"Builds report returned {len(rows)} rows but none parsed. "
-                           f"Columns seen: {sorted(rows[0].keys()) if rows else 'none'}")
-    upsert(sb, "kpi_builds", out, "build_id")
-    return f"{len(out)} builds"
+        raise RuntimeError(f"Builds report: {len(rows)} rows, none usable. {describe(m, rows)}")
+    upsert(sb, "kpi_builds", list(out.values()), "build_id")
+    return f"{len(out)} builds; {describe(m, rows)}"
+
+
+PO_EXCLUDED_STATUSES = ("draft", "cancel", "created")
 
 
 def section_pos(sb) -> str:
-    rows = report_rows("FINALE_PO_REPORT_URL", ["Supplier"])
+    rows = load_report("FINALE_PO_REPORT_URL")
     if rows is None:
         return "skipped: FINALE_PO_REPORT_URL not set"
-    out: dict[str, dict] = {}
+    m = resolve_columns(rows, {
+        "po_id": [("order", "id"), ("po", "!date", "!status"), ("order", "!date", "!status", "!ship", "!receiv")],
+        "supplier": [("supplier",), ("vendor",)],
+        "date": [("order", "date", "!receiv", "!ship"), ("date", "!receiv", "!eta")],
+        "status": [("order", "status"), ("status",)],
+        "subtotal": [("subtotal",), ("total",)],
+        "item": [("product", "id"), ("item",), ("product",)],
+    })
+    require(m, ["po_id", "date", "subtotal"], rows, "PO report")
+    rows = fill_down(rows, [m["po_id"], m["supplier"], m["date"], m["status"]])
+    pos: dict = {}
     for r in rows:
-        po = pick(r, ["Order ID", "PO ID", "Purchase order ID", "Order"])
-        if not po or str(po) == "TOTAL:":
+        if is_total_row(r):
             continue
-        d = parse_any_date(pick(r, ["Order date", "Order Date", "Date"]))
-        if not d:
+        po = r.get(m["po_id"])
+        d = parse_any_date(r.get(m["date"]))
+        if not po or not d:
             continue
-        val = to_number(pick(r, ["Subtotal sum", "Subtotal", "Total", "Order total"])) or 0.0
+        status = str(r.get(m["status"]) or "").lower() if m["status"] else ""
         key = str(po).strip()
-        entry = out.setdefault(key, {"po_id": key, "supplier": str(pick(r, ["Supplier"]) or "").strip(),
-                                     "order_date": d.isoformat(), "value": 0.0})
-        entry["value"] += val   # one row per PO, or one per line: either way this sums correctly
+        e = pos.setdefault(key, {"po_id": key, "supplier": str(r.get(m["supplier"]) or "").strip() if m["supplier"] else "",
+                                 "order_date": d.isoformat(), "status": status, "line_sum": 0.0, "has_lines": False,
+                                 "header_value": 0.0})
+        val = to_number(r.get(m["subtotal"])) or 0.0
+        if m["item"] and r.get(m["item"]) not in (None, "", "--"):
+            e["line_sum"] += val
+            e["has_lines"] = True
+        else:
+            e["header_value"] = max(e["header_value"], val)   # a group row carrying the PO's total
+    out, skipped_ids = [], []
+    for e in pos.values():
+        if any(x in e["status"] for x in PO_EXCLUDED_STATUSES):
+            skipped_ids.append(e["po_id"])
+            continue
+        out.append({"po_id": e["po_id"], "supplier": e["supplier"], "order_date": e["order_date"],
+                    "value": e["line_sum"] if e["has_lines"] else e["header_value"]})
     if not out:
-        raise RuntimeError(f"PO report returned {len(rows)} rows but none parsed. "
-                           f"Columns seen: {sorted(rows[0].keys()) if rows else 'none'}")
-    upsert(sb, "kpi_purchase_orders", list(out.values()), "po_id")
-    return f"{len(out)} purchase orders"
+        raise RuntimeError(f"PO report: {len(rows)} rows, none usable. {describe(m, rows)}")
+    upsert(sb, "kpi_purchase_orders", out, "po_id")
+    # A PO saved by an earlier run may since have been cancelled: remove it.
+    for i in range(0, len(skipped_ids), 200):
+        sb.table("kpi_purchase_orders").delete().in_("po_id", skipped_ids[i:i + 200]).execute()
+    skipped = len(skipped_ids)
+    statuses = sorted({e["status"] for e in pos.values()})
+    return f"{len(out)} POs ({skipped} draft/cancelled skipped; statuses seen {statuses}); {describe(m, rows)}"
 
 
 def section_receipts(sb) -> str:
-    rows = report_rows("FINALE_RECEIPTS_REPORT_URL", ["Product ID", "Product", "Supplier"])
+    rows = load_report("FINALE_RECEIPTS_REPORT_URL")
     if rows is None:
         return "skipped: FINALE_RECEIPTS_REPORT_URL not set"
-    out: dict[str, dict] = {}
+    m = resolve_columns(rows, {
+        "product": [("product", "id"), ("product",)],
+        "supplier": [("supplier",), ("vendor",), ("origin",)],
+        "ordered": [("order", "date", "!receiv", "!ship"), ("po", "date", "!receiv")],
+        "received": [("receiv", "date"), ("receiv",), ("deliver",), ("shipment", "date")],
+        "ref": [("shipment", "id"), ("receipt",), ("order", "id")],
+    })
+    require(m, ["ordered", "received"], rows, "Receipts report")
+    rows = fill_down(rows, [m["product"], m["supplier"]])
+    out: dict = {}
     for r in rows:
-        ordered = parse_any_date(pick(r, ["Order date", "Order Date", "PO order date"]))
-        received = parse_any_date(pick(r, ["Receive date", "Received date", "Receive date actual",
-                                           "Shipment receive date", "Date received"]))
+        if is_total_row(r):
+            continue
+        ordered, received = parse_any_date(r.get(m["ordered"])), parse_any_date(r.get(m["received"]))
         if not ordered or not received or received < ordered:
             continue
-        pid = str(pick(r, ["Product ID", "Product"]) or "").strip()
-        supplier = str(pick(r, ["Supplier"]) or "").strip()
-        ref = str(pick(r, ["Shipment ID", "Receipt ID", "Order ID"]) or "")
+        pid = str(r.get(m["product"]) or "").strip() if m["product"] else ""
+        supplier = str(r.get(m["supplier"]) or "").strip() if m["supplier"] else ""
+        ref = str(r.get(m["ref"]) or "") if m["ref"] else ""
         key = hashlib.md5(f"{ref}|{pid}|{supplier}|{ordered}|{received}".encode()).hexdigest()
         out[key] = {"receipt_key": key, "product_id": pid, "supplier": supplier,
                     "order_date": ordered.isoformat(), "receive_date": received.isoformat(),
                     "lead_days": (received - ordered).days}
     if not out:
-        raise RuntimeError(f"Receipts report returned {len(rows)} rows but none parsed. "
-                           f"Columns seen: {sorted(rows[0].keys()) if rows else 'none'}")
+        raise RuntimeError(f"Receipts report: {len(rows)} rows, none usable. {describe(m, rows)}")
     upsert(sb, "kpi_receipts", list(out.values()), "receipt_key")
-    return f"{len(out)} receipts"
+    note = "" if m["supplier"] else " WARNING: no supplier column, so lead time can't split domestic/import."
+    return f"{len(out)} receipts;{note} {describe(m, rows)}"
 
 
 # ---------------------------------------------------------------------
@@ -691,6 +979,7 @@ def run_diagnose(start: date | None, end: date | None) -> int:
     store_names = ss.list_stores()
     windows = [(start, end)] if start and end else [
         (date(2025, 3, 5), date(2025, 3, 11)),
+        (date(2026, 2, 9), date(2026, 2, 15)),
         (date(2026, 9, 21), date(2026, 9, 27)),
     ]
     for s, e in windows:
@@ -716,9 +1005,11 @@ def main() -> int:
     end = parse_any_date(args.end) if args.end else today
     start = parse_any_date(args.start) if args.start else end - timedelta(days=3)
 
-    sections = ["shipstation", "queue", "sales", "sheets"]
+    # Daily sales and COGS are written by Ops Live's turnover job
+    # (product_sales_daily), the single source for turnover in both tools.
+    sections = ["shipstation", "queue", "sheets"]
     if args.nightly or args.start:
-        sections = ["attrs", "shipstation", "queue", "sales", "builds", "pos", "receipts", "sheets"]
+        sections = ["attrs", "shipstation", "queue", "builds", "pos", "receipts", "sheets"]
     if args.only:
         sections = [s.strip() for s in args.only.split(",") if s.strip()]
 
@@ -732,7 +1023,6 @@ def main() -> int:
         "shipstation": lambda: section_shipstation(sb, start, end),
         "queue": lambda: section_queue(sb),
         "attrs": lambda: section_attrs(sb),
-        "sales": lambda: section_sales(sb, start, end),
         "builds": lambda: section_builds(sb),
         "pos": lambda: section_pos(sb),
         "receipts": lambda: section_receipts(sb),
