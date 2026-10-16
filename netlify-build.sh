@@ -40,3 +40,6 @@ if grep -q "YOUR_ANON_KEY_HERE" site/index.html site/kpi.html; then
 fi
 
 echo "Supabase key injected into site/index.html successfully."
+
+# Wall displays: same anon key into the TV config
+sed -i "s|SUPABASE_ANON_KEY: \"YOUR_ANON_KEY_HERE\"|SUPABASE_ANON_KEY: \"${SUPABASE_ANON_KEY}\"|" site/tv/tv-config.js
