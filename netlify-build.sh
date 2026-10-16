@@ -41,5 +41,10 @@ fi
 
 echo "Supabase key injected into site/index.html successfully."
 
-# Wall displays: same anon key into the TV config
-sed -i "s|SUPABASE_ANON_KEY: \"YOUR_ANON_KEY_HERE\"|SUPABASE_ANON_KEY: \"${SUPABASE_ANON_KEY}\"|" site/tv/tv-config.js
+# Wall displays: same anon key into the TV config (skipped if the TV pages aren't uploaded yet)
+if [ -f site/tv/tv-config.js ]; then
+  sed -i "s|SUPABASE_ANON_KEY: \"YOUR_ANON_KEY_HERE\"|SUPABASE_ANON_KEY: \"${SUPABASE_ANON_KEY}\"|" site/tv/tv-config.js
+  echo "Supabase key injected into site/tv/tv-config.js."
+else
+  echo "No site/tv/tv-config.js yet; skipping wall display key."
+fi
