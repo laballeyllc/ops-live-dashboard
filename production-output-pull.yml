@@ -1,0 +1,23 @@
+# Copy to .github/workflows/ in the Ops Live repo.
+# Runs every 15 minutes, 8 AM-5 PM Central on weekdays (UTC hours cover both CST and CDT).
+name: Production Output Pull
+on:
+  schedule:
+    - cron: "*/15 13-23 * * 1-5"
+  workflow_dispatch:
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests openpyxl
+      - run: python scripts/production_output_pull.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          FINALE_BUILDS_REPORT_URL: ${{ secrets.FINALE_BUILDS_REPORT_URL }}
+          FINALE_API_KEY: ${{ secrets.FINALE_API_KEY }}
+          FINALE_API_SECRET: ${{ secrets.FINALE_API_SECRET }}
