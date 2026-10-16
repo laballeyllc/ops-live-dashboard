@@ -261,9 +261,7 @@ html, body { background: #000; }
 </style>
 </head>
 <body>
-<iframe class="view" id="v-company" title="Company" src="company.html?embedded=1"></iframe>
-<iframe class="view" id="v-shipping" title="Shipping" src="shipping.html?embedded=1"></iframe>
-<iframe class="view" id="v-production" title="Production" src="production.html?embedded=1"></iframe>
+<div id="views"></div>
 
 <div id="overlay">
   <div id="countdown"><i></i><span></span></div>
@@ -292,7 +290,7 @@ html, body { background: #000; }
 const CFG = window.TV_CONFIG || {};
 const WALL = Object.assign({
   schedule: [
-    { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "06:00", to: "08:30", show: "company" },
+    { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "06:00", to: "08:30", show: "briefing" },
     { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "08:30", to: "20:00", rotate: ["shipping", "production"], seconds: 150 },
   ],
   otherwise: "screensaver",
@@ -302,8 +300,21 @@ const TICKER_SPEED = CFG.TICKER_SPEED || 110;
 const UPDATE_CHECK_MS = CFG.UPDATE_CHECK_MS || 300000;
 const OVERRIDE = new URLSearchParams(location.search).get("screen");
 
-const views = { company: v("v-company"), shipping: v("v-shipping"), production: v("v-production") };
 function v(id) { return document.getElementById(id); }
+// One iframe per screen the schedule (or override) uses. The shipping frame
+// is always loaded: the shared ticker is built from its content.
+const PAGES = ["briefing", "company", "shipping", "production"];
+const wanted = new Set(["shipping"]);
+for (const s of WALL.schedule) for (const n of (s.show ? [s.show] : s.rotate || [])) wanted.add(n);
+if (OVERRIDE) wanted.add(OVERRIDE);
+const views = {};
+for (const name of PAGES) {
+  if (!wanted.has(name)) continue;
+  const f = document.createElement("iframe");
+  f.className = "view"; f.id = "v-" + name; f.title = name;
+  f.src = `${name}.html?embedded=1`;
+  v("views").appendChild(f); views[name] = f;
+}
 const overlay = v("overlay"), saver = v("saver");
 
 // ---- Time in Central ----

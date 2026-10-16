@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Morning briefing wall display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<script src="tv-config.js" onerror="void 0"></script>
+<script src="/ops-logic.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+:root {
+  /* Lab Alley base: navy and logo blue (override in tv-config.js COLORS) */
+  --bg: #081A33;
+  --panel: #0F2747;
+  --panel-2: #183660;
+  --line: #24467A;
+  --text: #F2F5F9;
+  --muted: #9FB2CB;
+  /* Status: only for on-track / watch / off-track */
+  --good: #4CB86A;
+  --warn: #E8AA3A;
+  --bad: #E2564E;
+  /* Sections: one color per thing being measured */
+  --shipped: #3D8FF2;
+  --built: #A47FF2;
+  --orders: #2FC6D4;
+  --ink-on-status: #081A33;
+  --num: "Barlow Condensed", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --body: "Barlow", "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); overflow: hidden; }
+body { font-family: var(--body); color: var(--text); -webkit-font-smoothing: antialiased; cursor: none; }
+
+/* Fixed 1920x1080 stage, scaled to whatever TV it lands on */
+#stage {
+  position: absolute; left: 50%; top: 50%;
+  width: 1920px; height: 1080px;
+  transform-origin: center center;
+  display: grid;
+  grid-template-rows: 132px 1fr 92px;
+  background: var(--bg);
+}
+
+/* ---- Andon band: the one loud thing on each screen ---- */
+.andon {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 40px;
+  padding: 0 56px;
+  background: var(--status, var(--good));
+  color: var(--ink-on-status);
+  transition: background-color .8s ease;
+}
+.andon[data-state="bad"] { --status: var(--bad); }
+.andon[data-state="warn"] { --status: var(--warn); }
+.andon[data-state="good"] { --status: var(--good); }
+.andon[data-state="idle"] { --status: var(--panel-2); color: var(--text); }
+.andon .dept { font-family: var(--num); font-weight: 700; font-size: 64px; letter-spacing: .01em; line-height: 1; }
+.andon .status { font-family: var(--num); font-weight: 600; font-size: 54px; line-height: 1.05; border-left: 4px solid currentColor; padding-left: 40px; opacity: .95; }
+.andon .clock { text-align: right; font-family: var(--num); line-height: 1; }
+.andon .clock .time { font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.andon .clock .date { font-size: 26px; font-weight: 500; margin-top: 4px; }
+@media (prefers-reduced-motion: no-preference) {
+  .andon[data-state="bad"] .status { animation: pulse 2.4s ease-in-out infinite; }
+}
+@keyframes pulse { 50% { opacity: .62; } }
+
+/* ---- Body ---- */
+main { padding: 30px 56px 26px; display: grid; gap: 28px; min-height: 0; }
+
+.tiles { display: grid; gap: 24px; }
+.tile {
+  background: var(--panel); border-radius: 10px; padding: 22px 30px 24px;
+  border-top: 10px solid var(--tile-color, var(--line));
+  display: flex; flex-direction: column; justify-content: space-between; min-height: 0;
+}
+.tile[data-state="bad"] { --tile-color: var(--bad); }
+.tile[data-state="warn"] { --tile-color: var(--warn); }
+.tile[data-state="good"] { --tile-color: var(--good); }
+.tile .label { font-size: 30px; font-weight: 600; color: var(--text); line-height: 1.15; }
+.tile .value { font-family: var(--num); font-weight: 700; font-size: 132px; line-height: .9; font-variant-numeric: tabular-nums; color: var(--tile-color, var(--text)); }
+.tile .value small { font-size: 60px; font-weight: 600; margin-left: 4px; }
+.tile .sub { font-size: 24px; color: var(--muted); line-height: 1.25; }
+
+.panel { background: var(--panel); border-radius: 10px; padding: 26px 32px; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.panel > * { flex-shrink: 0; }
+.panel h2 { font-family: var(--num); font-weight: 600; font-size: 40px; line-height: 1; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: baseline; }
+.panel h2 .aside { font-family: var(--body); font-size: 22px; font-weight: 500; color: var(--muted); }
+
+/* Lists sized for reading at 15 feet */
+table.big { width: 100%; border-collapse: collapse; font-size: 30px; table-layout: fixed; }
+table.big th { text-align: left; font-size: 22px; font-weight: 600; color: var(--muted); padding: 0 12px 10px; border-bottom: 2px solid var(--line); }
+table.big td { padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+table.big tr:last-child td { border-bottom: 0; }
+table.big .num { text-align: right; font-family: var(--num); font-size: 36px; font-weight: 600; font-variant-numeric: tabular-nums; }
+table.big th.num { font-family: var(--body); font-size: 22px; }
+table.big .strong { font-weight: 700; }
+.age-bad { color: var(--bad); font-weight: 700; }
+.age-warn { color: var(--warn); font-weight: 700; }
+.chip { display: inline-block; font-size: 20px; font-weight: 700; padding: 4px 12px; border-radius: 6px; background: var(--warn); color: var(--ink-on-status); vertical-align: middle; }
+.chip.bad { background: var(--bad); }
+.chip.ok { background: var(--good); }
+.empty { font-size: 34px; color: var(--muted); padding: 40px 0; line-height: 1.3; }
+.empty strong { color: var(--good); display: block; font-family: var(--num); font-size: 52px; font-weight: 600; margin-bottom: 8px; }
+
+/* Horizontal stacked bar for age buckets / queue split */
+.stack { display: flex; height: 56px; border-radius: 6px; overflow: hidden; background: var(--panel-2); }
+.stack > div { display: flex; align-items: center; justify-content: center; font-family: var(--num); font-weight: 700; font-size: 30px; color: var(--ink-on-status); min-width: 0; }
+.legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; font-size: 22px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 16px; height: 16px; border-radius: 3px; background: var(--c); margin-right: 8px; vertical-align: -2px; }
+
+.statline { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 30px; }
+.statline:last-child { border-bottom: 0; }
+.statline b { font-family: var(--num); font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.meter { height: 16px; border-radius: 8px; background: var(--panel-2); overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--c, var(--warn)); }
+
+/* ---- Ticker: one message at a time, never a scrolling marquee ---- */
+.ticker {
+  display: grid; grid-template-columns: 220px 1fr auto; align-items: center;
+  background: var(--panel); border-top: 2px solid var(--line);
+  padding: 0 56px 0 0; overflow: hidden;
+}
+.ticker .kind {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  font-family: var(--num); font-weight: 700; font-size: 32px;
+  background: var(--k, var(--panel-2)); color: var(--kc, var(--text));
+}
+.ticker[data-kind="alert"] { --k: var(--bad); --kc: var(--ink-on-status); }
+.ticker[data-kind="watch"] { --k: var(--warn); --kc: var(--ink-on-status); }
+.ticker[data-kind="good"] { --k: var(--good); --kc: var(--ink-on-status); }
+.ticker[data-kind="announcement"] { --k: #E8E6DF; --kc: var(--ink-on-status); }
+.ticker[data-kind="urgent"] { --k: var(--warn); --kc: var(--ink-on-status); }
+.ticker[data-kind="safety"] { --k: #F2C94C; --kc: var(--ink-on-status); }
+.ticker .msg { font-size: 36px; font-weight: 500; padding-left: 36px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity .5s ease; }
+.ticker .msg.fade { opacity: 0; }
+.ticker .meta { font-size: 22px; color: var(--muted); text-align: right; line-height: 1.3; white-space: nowrap; }
+.ticker .meta .demo { color: var(--warn); font-weight: 700; font-size: 24px; }
+.ticker .meta .stale { color: var(--warn); font-weight: 700; }
+.ticker .meta .err { color: var(--bad); font-weight: 700; }
+
+.demo-badge {
+  position: absolute; right: 56px; top: 148px; z-index: 5;
+  background: var(--warn); color: var(--ink-on-status);
+  font-weight: 700; font-size: 22px; padding: 6px 14px; border-radius: 6px;
+}
+
+/* ---- Scoreboard pieces ---- */
+.hero-line { display: flex; align-items: baseline; gap: 22px; margin: 4px 0 18px; }
+.hero { font-family: var(--num); font-weight: 700; font-size: 168px; line-height: .85; font-variant-numeric: tabular-nums; }
+.hero.md { font-size: 120px; }
+.hero.sm { font-size: 84px; }
+.of { font-family: var(--num); font-weight: 600; font-size: 52px; color: var(--muted); }
+.gap { font-family: var(--num); font-weight: 700; font-size: 42px; margin-left: auto; white-space: nowrap; }
+.of { white-space: nowrap; }
+[data-state="good"] > .gap, .gap[data-state="good"] { color: var(--good); }
+.gap[data-state="warn"] { color: var(--warn); }
+.gap[data-state="bad"] { color: var(--bad); }
+.gap[data-state="idle"] { color: var(--muted); }
+.note { font-size: 24px; color: var(--muted); margin-top: auto; padding-top: 14px; line-height: 1.3; }
+.note b { color: var(--text); font-weight: 700; }
+
+.pacebar { position: relative; height: 48px; border-radius: 8px; background: var(--panel-2); margin-top: 34px; }
+.pacebar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; background: var(--muted); }
+.pacebar[data-state="good"] > i { background: var(--good); }
+.pacebar[data-state="warn"] > i { background: var(--warn); }
+.pacebar[data-state="bad"] > i { background: var(--bad); }
+.pacebar .tick { position: absolute; top: -10px; bottom: -10px; width: 5px; margin-left: -2px; background: var(--text); border-radius: 2px; }
+.pacebar .tick em { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-style: normal; font-size: 22px; font-weight: 700; white-space: nowrap; padding-bottom: 4px; color: var(--text); }
+.pacebar .goalmark { position: absolute; top: 0; bottom: 0; width: 4px; background: var(--ink-on-status); opacity: .5; }
+
+.cols { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: 30px; }
+.plot { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 22px; border-bottom: 2px solid var(--line); }
+.labels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 22px; }
+.colbar { position: relative; display: flex; flex-direction: column; justify-content: flex-end; min-height: 0; }
+.colbar i { display: block; background: var(--muted); border-radius: 6px 6px 0 0; }
+.colbar .v { text-align: center; font-family: var(--num); font-weight: 700; font-size: 32px; margin-bottom: 4px; }
+.colbar[data-state="good"] i { background: var(--good); }
+.colbar[data-state="warn"] i { background: var(--warn); }
+.colbar[data-state="bad"] i { background: var(--bad); }
+.colbar[data-state="today"] i { background: var(--text); }
+.wd { text-align: center; font-size: 24px; font-weight: 600; color: var(--muted); padding-top: 8px; line-height: 1.15; }
+.wd[data-state="today"] { color: var(--text); }
+.wd small { display: block; font-size: 20px; font-weight: 500; }
+.targetline { position: absolute; left: 0; right: 0; border-top: 3px dashed var(--text); opacity: .6; z-index: 2; pointer-events: none; }
+.targetline span { position: absolute; right: 0; top: -28px; padding-left: 8px; font-size: 20px; font-weight: 700; background: var(--panel); }
+.measure + .measure { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.mlabel { font-size: 28px; font-weight: 600; color: var(--muted); }
+
+.hero.xs { font-size: 76px; }
+.pacebar.thin { height: 30px; margin-top: 30px; }
+.panel h2 + .hero-line { margin-top: -6px; }
+.pacebar.thin { margin-top: 16px; margin-bottom: 30px; }
+.pacebar.thin .tick em { bottom: auto; top: 100%; padding: 2px 0 0; font-size: 20px; }
+.colbar .v { align-self: center; position: relative; z-index: 3; background: var(--panel); padding: 0 8px; border-radius: 4px; }
+
+/* ---- Section color coding ---- */
+[data-section="shipped"] { --sec: var(--shipped); }
+[data-section="built"]   { --sec: var(--built); }
+[data-section="orders"]  { --sec: var(--orders); }
+.panel[data-section] { border-top: 10px solid var(--sec); }
+.panel[data-section] h2 { color: var(--sec); }
+.tile[data-section] { border-top-color: var(--sec); }
+.tile[data-section] .label { color: var(--sec); }
+.tile[data-section] .value { color: var(--text); }
+[data-section] .pacebar > i { background: var(--sec) !important; }
+[data-section] .colbar i { background: var(--sec) !important; }
+[data-section] .colbar[data-state="warn"] i, [data-section] .colbar[data-state="bad"] i { opacity: .5; }
+[data-section] .colbar[data-state="today"] i { box-shadow: inset 0 4px 0 var(--text); }
+.colbar[data-state="warn"] .v { color: var(--warn); }
+.colbar[data-state="bad"] .v { color: var(--bad); }
+.pill { display: inline-block; font-family: var(--body); font-size: 20px; font-weight: 700; padding: 3px 12px; border-radius: 20px; background: var(--panel-2); color: var(--muted); white-space: nowrap; vertical-align: middle; }
+.pill[data-state="good"] { background: var(--good); color: var(--ink-on-status); }
+.pill[data-state="warn"] { background: var(--warn); color: var(--ink-on-status); }
+.pill[data-state="bad"]  { background: var(--bad);  color: var(--ink-on-status); }
+.pill[data-state="idle"] { display: none; }
+.tile .label { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.legend-strip { position: absolute; right: 56px; top: 0; height: 132px; display: none; }
+
+/* ---- Scrolling safety / best-practice ticker ---- */
+.scroller { display: grid; grid-template-columns: 1fr auto; align-items: stretch; background: #F2C94C; color: var(--ink-on-status); overflow: hidden; border-top: 0; }
+.scroller .lane { position: relative; overflow: hidden; display: flex; align-items: center; }
+.scroller .track { display: inline-flex; white-space: nowrap; will-change: transform; animation: scroll var(--dur, 120s) linear infinite; }
+.scroller .item { font-size: 38px; font-weight: 600; padding-right: 90px; display: inline-flex; align-items: center; gap: 18px; }
+.scroller .tag { font-family: var(--num); font-weight: 700; font-size: 30px; padding: 2px 14px; border-radius: 6px; background: var(--ink-on-status); color: #F2C94C; }
+.scroller .item[data-kind="best_practice"] .tag { background: var(--shipped); color: #fff; }
+.scroller .item[data-kind="announcement"] .tag { background: #fff; color: var(--ink-on-status); }
+.scroller .item[data-kind="urgent"] .tag { background: var(--bad); color: #fff; }
+.scroller .meta { background: var(--panel); color: var(--muted); font-size: 22px; padding: 0 40px; display: flex; flex-direction: column; justify-content: center; text-align: right; line-height: 1.3; white-space: nowrap; }
+.scroller .meta .demo { color: var(--warn); font-weight: 700; }
+.scroller .meta .stale { color: var(--warn); font-weight: 700; }
+.scroller .meta .err { color: var(--bad); font-weight: 700; }
+@keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .scroller .track { animation-duration: calc(var(--dur, 120s) * 2); } }
+.ticker[data-kind="shipped"] { --k: var(--shipped); --kc: #fff; }
+.ticker[data-kind="built"] { --k: var(--built); --kc: #fff; }
+.ticker[data-kind="orders"] { --k: var(--orders); --kc: var(--ink-on-status); }
+</style>
+<script>
+// =====================================================================
+// Lab Alley wall displays: shared runtime
+// Settings live in tv-config.js (same folder) so the key is set once
+// for all three screens. Without a key the screens run on sample data
+// and say so on screen.
+// =====================================================================
+const CFG = Object.assign({
+  SUPABASE_URL: "https://pdflsmequzgpeuodnxyg.supabase.co",
+  SUPABASE_ANON_KEY: "",
+  SHIPPED_48H_URL: "",          // optional: endpoint returning {pct: 92.5} for % shipped <48h
+  REFRESH_MS: 60000,            // queue data
+  ORDER_FLOW_REFRESH_MS: 180000,
+  TICKER_MS: 10000,
+  PANEL_MS: 15000,
+  RELOAD_HOURS: 6,              // full page reload as a safety net
+  UPDATE_CHECK_MS: 300000,      // check for a new deploy every 5 minutes and reload if found
+  STALE_MINUTES: 90,            // warn if the pull hasn't run in this long during shift hours
+  SHIP_SHIFT: [8, 17],          // Central hours used to pace orders shipped through the day
+  BUILD_SHIFT: [8, 16],         // Central hours used to pace production through the day
+  BASELINE_MULT: 1.10,          // target = last week's daily average x this, until a goal is set
+  PACE_WARN: 0.90,              // under 100% of pace = Watch, under this = Behind
+  TICKER_SPEED: 110,            // scrolling ticker speed, pixels per second at 1920 wide
+  COLORS: {},                   // e.g. { shipped: "#1F6FD1", bg: "#061a33" } to match official brand hex
+}, window.TV_CONFIG || {});
+
+const QS = new URLSearchParams(location.search);
+const EMBEDDED = QS.has("embedded");   // running inside wall.html, which draws one shared ticker
+const DEMO = QS.has("demo") || !CFG.SUPABASE_ANON_KEY || CFG.SUPABASE_ANON_KEY === "YOUR_ANON_KEY_HERE" || typeof supabase === "undefined";
+const client = DEMO ? null : supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+
+// Globals the Ops Live logic reads
+let currentRows = [];
+let currentStockLevels = [];
+
+// Queue logic comes from /ops-logic.js, loaded before this script.
+
+// ---------------------------------------------------------------------
+// KPI targets. Rows in Supabase `kpi_targets` override these defaults.
+// lower  = good when value <= target, watch when <= warn, else off track
+// higher = good when value >= target, watch when >= warn, else off track
+// ---------------------------------------------------------------------
+const DEFAULT_TARGETS = {
+  shipped_48h_pct:  { label: "Shipped within 48 hours", target: 90, warn: 85, direction: "higher", unit: "pct", sort: 1 },
+  overdue_orders:   { label: "Orders past 48 hours", target: 0, warn: 5, direction: "lower", unit: "count", sort: 2 },
+  at_risk_orders:   { label: "Orders nearing 48 hours", target: 15, warn: 30, direction: "lower", unit: "count", sort: 3 },
+  build_pct:        { label: "Build % today", target: 95, warn: 85, direction: "higher", unit: "pct", sort: 4 },
+  held_orders:      { label: "Orders on hold", target: 5, warn: 15, direction: "lower", unit: "count", sort: 6 },
+  critical_low:     { label: "Chemicals critically low", target: 0, warn: 5, direction: "lower", unit: "count", sort: 7 },
+  blocking_builds:  { label: "Chemicals to build", target: 0, warn: 5, direction: "lower", unit: "count", sort: 8 },
+  turnover_units:   { label: "Inventory turnover", target: 6, warn: 4, direction: "higher", unit: "x", sort: 9 },
+};
+let TARGETS = JSON.parse(JSON.stringify(DEFAULT_TARGETS));
+
+function kpiState(key, value) {
+  const t = TARGETS[key];
+  if (!t || value == null || isNaN(value)) return "idle";
+  if (t.direction === "lower") {
+    if (value <= t.target) return "good";
+    if (t.warn != null && value <= t.warn) return "warn";
+    return "bad";
+  }
+  if (value >= t.target) return "good";
+  if (t.warn != null && value >= t.warn) return "warn";
+  return "bad";
+}
+function goalText(key) {
+  const t = TARGETS[key];
+  if (!t) return "";
+  const v = t.unit === "pct" ? `${t.target}%` : t.unit === "x" ? `${t.target}x a year` : t.target;
+  if (t.direction === "lower") return t.target === 0 ? "Goal: zero" : `Goal: ${v} or fewer`;
+  return `Goal: ${v} or better`;
+}
+
+// Fallback safety tips if the tv_content table has none yet
+const DEFAULT_SAFETY_TIPS = [
+  "Check the SDS before handling any chemical you haven't worked with this week.",
+  "Ground and bond drums before transferring flammable liquids.",
+  "Goggles, gloves and apron on before opening any corrosive.",
+  "Never mix acids and bases in the same funnel or container.",
+  "Keep aisles and eyewash stations clear at all times.",
+  "Label every secondary container the moment it's filled.",
+  "Lift with your legs. Use the drum dolly for anything over 50 lbs.",
+  "Report every spill, no matter how small, to your lead.",
+  "Close containers when you're not actively pouring from them.",
+  "Know where the nearest spill kit and fire extinguisher are.",
+  "Store oxidizers away from flammables and organics.",
+  "Check gloves for tears before every task.",
+  "HAZMAT labels go on before the box is sealed, not after.",
+  "Wash hands before breaks and at the end of every shift.",
+  "If it doesn't look right, stop and ask. Nobody gets in trouble for asking.",
+];
+const DEFAULT_BEST_PRACTICES = {
+  shipping: [
+    "Scan every item before it goes in the box.",
+    "Match the label to the packing slip before you seal.",
+    "Double-box glass and fill every void so nothing shifts.",
+    "Liner seal and tape on every liquid closure.",
+    "Orientation arrows up on every liquid shipment.",
+    "Weigh every package. A weight that's off means something is off.",
+    "One order on the bench at a time.",
+    "Check the proper shipping name and UN number against the SDS on every HAZMAT box.",
+    "Stage pickups by carrier to keep the dock clear.",
+  ],
+  production: [
+    "Verify the lot number on the bulk container before you fill.",
+    "Label containers before filling, not after.",
+    "Record fill weights as you go, not at the end of the batch.",
+    "Complete each build in Finale as soon as the batch is done.",
+    "Rinse and dry funnels between chemicals.",
+    "Torque caps to spec and check every seal.",
+    "Return bulk containers to their marked spot after use.",
+    "Keep the fill area clear of empties and packaging.",
+  ],
+};
+let CONTENT = [];   // rows from tv_content
+
+function contentFor(screen, kinds) {
+  const now = Date.now();
+  return CONTENT.filter(c => {
+    if (c.active === false) return false;
+    if (kinds && !kinds.includes(c.kind)) return false;
+    if (c.starts_at && new Date(c.starts_at).getTime() > now) return false;
+    if (c.ends_at && new Date(c.ends_at).getTime() < now) return false;
+    const screens = Array.isArray(c.screens) ? c.screens : [c.screens || "all"];
+    return screens.includes("all") || screens.includes(screen);
+  }).sort((a, b) => (a.sort || 0) - (b.sort || 0));
+}
+function bestPractices(screen) {
+  const rows = contentFor(screen, ["best_practice"]).map(r => r.body);
+  return rows.length ? rows : (DEFAULT_BEST_PRACTICES[screen] || []);
+}
+function safetyTips(screen) {
+  const rows = contentFor(screen, ["safety_tip"]).map(r => r.body);
+  return rows.length ? rows : DEFAULT_SAFETY_TIPS;
+}
+
+// ---------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------
+async function fetchAllRows(table, { orderCol = "id", ascending = true, filter = null } = {}) {
+  const pageSize = 1000;
+  const all = [];
+  let start = 0;
+  while (true) {
+    let q = client.from(table).select("*");
+    if (filter) q = filter(q);
+    const { data, error } = await q.order(orderCol, { ascending }).range(start, start + pageSize - 1);
+    if (error) throw error;
+    const batch = data || [];
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+    start += pageSize;
+  }
+  return all;
+}
+async function soft(p, fallback) { try { return await p; } catch (e) { console.warn(e); return fallback; } }
+
+let healthToday = [];
+let productionRows = [];
+let flowRange = null;        // {outByDate, inByDate}
+let shipped48 = null;
+let lastOk = null;
+let lastError = null;
+let GOAL_OVERRIDES = {};     // orders_out_daily, units_built_daily, builds_daily from kpi_targets
+
+// ---- Calendar helpers (Central time, Mon-Fri business weeks) ----
+const WD = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+function chicagoDateStr(ms) { const p = chicagoPartsForInstant(ms); return `${p.year}-${p.month}-${p.day}`; }
+function businessWeek(offsetWeeks) {
+  let d = chicagoMidnightMs(Date.now(), 0);
+  for (let i = 0; i < 7 && chicagoPartsForInstant(d).weekday !== "Mon"; i++) d = chicagoMidnightMs(d, -1);
+  if (offsetWeeks) d = chicagoMidnightMs(d, 7 * offsetWeeks);
+  return WD.map((wd, i) => { const ms = chicagoMidnightMs(d, i); return { date: chicagoDateStr(ms), wd, ms }; });
+}
+function shiftFraction(ms, [startH, endH]) {
+  const p = chicagoPartsForInstant(ms);
+  if (p.weekday === "Sat" || p.weekday === "Sun") return null;
+  const h = +p.hour + (+p.minute) / 60;
+  return Math.max(0, Math.min(1, (h - startH) / (endH - startH)));
+}
+
+// ---- Pace: today and week-to-date against a daily target ----
+// Target = explicit goal from kpi_targets if set, else last week's
+// average business day x BASELINE_MULT (needs 3+ days with activity).
+function paceSeries({ valueByDate, override, shift, requireActivityToday }) {
+  const thisWeek = businessWeek(0), prevWeek = businessWeek(-1);
+  const todayStr = chicagoDateStr(Date.now());
+  const prevVals = prevWeek.map(d => valueByDate[d.date] || 0).filter(v => v > 0);
+  const prevAvg = prevVals.length ? prevVals.reduce((a, b) => a + b, 0) / prevVals.length : null;
+  let daily = null, basis = null;
+  if (override != null) { daily = override; basis = "goal"; }
+  else if (prevVals.length >= 3) { daily = Math.ceil(prevAvg * CFG.BASELINE_MULT); basis = "baseline"; }
+  const days = thisWeek.map(d => ({ ...d, isToday: d.date === todayStr, future: d.date > todayStr, value: d.date <= todayStr ? (valueByDate[d.date] || 0) : null }));
+  const today = days.find(d => d.isToday) || null;
+  const frac = today ? shiftFraction(Date.now(), shift) : null;
+  const pastDays = days.filter(d => d.date < todayStr).length;
+  const todayActive = today && (!requireActivityToday || today.value > 0);
+  const weekValue = days.reduce((s, d) => s + (d.value || 0), 0);
+  return {
+    daily, basis, prevAvg, prevDays: prevVals.length, days,
+    weekTarget: daily != null ? daily * 5 : null,
+    today: today ? { value: today.value, frac, active: todayActive, expected: daily != null ? daily * frac : null } : null,
+    week: { value: weekValue, expected: daily != null ? daily * (pastDays + (todayActive ? frac : 0)) : null },
+  };
+}
+function paceState(value, expected) {
+  if (expected == null || expected < 1) return "idle";
+  const r = value / expected;
+  return r >= 1 ? "good" : r >= CFG.PACE_WARN ? "warn" : "bad";
+}
+function paceGap(value, expected) {
+  if (expected == null || expected < 1) return "";
+  const d = Math.round(value - expected);
+  return d >= 0 ? `${d.toLocaleString()} ahead of pace` : `${(-d).toLocaleString()} behind pace`;
+}
+function targetNote(series) {
+  if (series.basis === "goal") return `Goal: ${series.daily.toLocaleString()} a day`;
+  if (series.basis === "baseline") return `Target: ${series.daily.toLocaleString()} a day (last week +${Math.round((CFG.BASELINE_MULT - 1) * 100)}%)`;
+  return "Setting baseline: target starts after one full week of data";
+}
+
+async function loadCore(opts) {
+  currentRows = await fetchAllRows("live_queue");
+  currentStockLevels = await soft(fetchAllRows("stock_levels"), []);
+  const todayIso = new Date(chicagoMidnightMs(Date.now(), 0)).toISOString();
+  healthToday = await soft(fetchAllRows("health_snapshots", { filter: q => q.gte("pulled_at", todayIso) }), []);
+  if (opts.turnover) await loadTurnover();
+  if (opts.kpi) await loadKpis();
+  if (opts.production) {
+    const since = new Date(businessWeek(-1)[0].ms).toISOString();
+    productionRows = await soft(fetchAllRows("production_output", { orderCol: "occurred_at", filter: q => q.gte("occurred_at", since) }), []);
+  }
+  const content = await soft(fetchAllRows("tv_content"), null);
+  if (content) CONTENT = content;
+  const targets = await soft(fetchAllRows("kpi_targets", { orderCol: "kpi_key" }), []);
+  TARGETS = JSON.parse(JSON.stringify(DEFAULT_TARGETS));
+  GOAL_OVERRIDES = {};
+  for (const t of targets) {
+    if (["orders_out_daily", "units_built_daily", "builds_daily"].includes(t.kpi_key)) {
+      if (t.active !== false && t.target != null) GOAL_OVERRIDES[t.kpi_key] = +t.target;
+      continue;
+    }
+    if (t.active === false) { delete TARGETS[t.kpi_key]; continue; }
+    const base = TARGETS[t.kpi_key] || {};
+    TARGETS[t.kpi_key] = Object.assign({}, base, {
+      label: t.label || base.label || t.kpi_key,
+      target: t.target != null ? +t.target : base.target,
+      warn: t.warn != null ? +t.warn : base.warn,
+      direction: t.direction || base.direction || "higher",
+      unit: t.unit || base.unit || "count",
+      sort: t.sort != null ? +t.sort : base.sort || 99,
+    });
+  }
+}
+
+let lastOrderFlowFetch = 0;
+async function loadOrderFlow() {
+  if (Date.now() - lastOrderFlowFetch < CFG.ORDER_FLOW_REFRESH_MS && flowRange) return;
+  lastOrderFlowFetch = Date.now();
+  const start = businessWeek(-1)[0].date, end = chicagoDateStr(Date.now());
+  try {
+    // Same source as Ops Live's Orders In / Out: the order_flow() database function
+    const { data, error } = await client.rpc("order_flow", { p_start: start, p_end: end });
+    if (error) throw new Error(error.message);
+    const outByDate = {}, inByDate = {};
+    (data.dailyLabels || []).forEach((d, i) => { outByDate[d] = (data.dailyOut || [])[i] || 0; inByDate[d] = (data.dailyIn || [])[i] || 0; });
+    flowRange = { outByDate, inByDate };
+  } catch (e) { console.warn("order_flow:", e); }
+  if (CFG.SHIPPED_48H_URL) {
+    try { const r = await fetch(CFG.SHIPPED_48H_URL); const j = await r.json(); if (j && j.pct != null) shipped48 = +j.pct; }
+    catch (e) { console.warn("shipped48:", e); }
+  }
+}
+
+// Inventory turnover by units, Dripping Springs, last 365 days: the same
+// turnover_totals() lookup Ops Live's Inventory Turnover tab uses
+let turnoverUnits = null, lastTurnoverFetch = 0;
+async function loadTurnover() {
+  if (Date.now() - lastTurnoverFetch < 3600000 && lastTurnoverFetch) return;
+  lastTurnoverFetch = Date.now();
+  try {
+    const latest = await client.from("turnover_snapshots").select("pulled_at").order("pulled_at", { ascending: false }).limit(1);
+    const day = latest.data && latest.data[0] && latest.data[0].pulled_at;
+    if (!day) return;
+    const end = new Date(String(day).slice(0, 10) + "T00:00:00Z");
+    const startD = new Date(end); startD.setUTCDate(startD.getUTCDate() - 364);
+    const { data, error } = await client.rpc("turnover_totals", { p_start: startD.toISOString().slice(0, 10), p_end: String(day).slice(0, 10) });
+    if (error) throw new Error(error.message);
+    const v = data && data.groups && data.groups.main ? data.groups.main.turns_units : null;
+    turnoverUnits = v == null ? null : +v;
+  } catch (e) { console.warn("turnover:", e); }
+}
+
+// Yesterday's and month-to-date KPIs from kpi_summary(), the same database
+// function the KPI Summary page (kpi.html) uses, so the numbers match it.
+// "Yesterday" is the previous workday: Monday shows Friday.
+let KPI = null, lastKpiFetch = 0;
+function prevWorkdayMs() {
+  let d = chicagoMidnightMs(Date.now(), -1);
+  for (let i = 0; i < 7 && ["Sat", "Sun"].includes(chicagoPartsForInstant(d).weekday); i++) d = chicagoMidnightMs(d, -1);
+  return d;
+}
+async function loadKpis() {
+  if (KPI && Date.now() - lastKpiFetch < 15 * 60000) return;
+  lastKpiFetch = Date.now();
+  const yMs = prevWorkdayMs(), yStr = chicagoDateStr(yMs), mStart = yStr.slice(0, 8) + "01";
+  const call = (a, b) => client.rpc("kpi_summary", { p_start: a, p_end: b, p_include_fba: true });
+  try {
+    const [ry, rm] = await Promise.all([call(yStr, yStr), call(mStart, yStr)]);
+    if (ry.error) throw new Error(ry.error.message);
+    if (rm.error) throw new Error(rm.error.message);
+    KPI = { yMs, yStr, yest: ry.data || {}, month: rm.data || {} };
+  } catch (e) { console.warn("kpi_summary:", e); }
+}
+
+function productionByDate() {
+  const units = {}, builds = {}, stockAdded = {};
+  const buildIds = {};
+  let lastBuildAt = null;
+  for (const r of productionRows) {
+    const d = chicagoDateStr(new Date(r.occurred_at).getTime());
+    const u = parseFloat(r.units) || 0;
+    if (r.source === "finale_build") {
+      units[d] = (units[d] || 0) + u;
+      (buildIds[d] = buildIds[d] || new Set()).add(r.ref_id);
+      if (!lastBuildAt || r.occurred_at > lastBuildAt) lastBuildAt = r.occurred_at;
+    } else if (r.source === "stock_increase") {
+      stockAdded[d] = (stockAdded[d] || 0) + u;
+    }
+  }
+  for (const d in buildIds) builds[d] = buildIds[d].size;
+  return { units, builds, stockAdded, lastBuildAt };
+}
+
+// ---------------------------------------------------------------------
+// Model: everything the three screens show, from the Ops Live logic
+// ---------------------------------------------------------------------
+function computeModel() {
+  const rows = currentRows;
+  const shippingList = buildShippingList(rows);
+  const productionList = buildProductionList(shippingList);
+  const stockBuilds = buildStockBuilds(shippingList);
+  const held = buildHeldSummary(rows);
+  const summary = buildSummary(rows);
+
+  let atRisk = 0, overdue = 0;
+  for (const o of shippingList) {
+    if (o.hours >= OVERDUE_HOURS) overdue++;
+    else if (o.hours >= AT_RISK_HOURS) atRisk++;
+  }
+  const pickable = shippingList.filter(o => o.isPickable).length;
+  const shortageOverdue = shippingList.filter(o => !o.isPickable && o.hours >= OVERDUE_HOURS).length;
+  const overdueReady = shippingList.filter(o => o.isPickable && o.hours >= OVERDUE_HOURS).length;
+  const channelBlocked = shippingList.filter(o => !o.isPickable && o.isChannelPriority).length;
+
+  const prodSnaps = healthToday.filter(s => isProductionHours(new Date(s.pulled_at).getTime()) && s.build_hit_rate_pct != null);
+  const liveBuildPct = shippingList.length ? 100 - (shortageOverdue / shippingList.length * 100) : 100;
+  const buildPctToday = prodSnaps.length ? prodSnaps.reduce((s, x) => s + parseFloat(x.build_hit_rate_pct), 0) / prodSnaps.length : null;
+
+  const turnover = turnoverUnits, turnoverDays = null;
+
+  const prod = productionByDate();
+  const todayStr = chicagoDateStr(Date.now());
+  const ship = flowRange ? paceSeries({ valueByDate: flowRange.outByDate, override: GOAL_OVERRIDES.orders_out_daily, shift: CFG.SHIP_SHIFT }) : null;
+  const units = paceSeries({ valueByDate: prod.units, override: GOAL_OVERRIDES.units_built_daily, shift: CFG.BUILD_SHIFT, requireActivityToday: true });
+  const builds = paceSeries({ valueByDate: prod.builds, override: GOAL_OVERRIDES.builds_daily, shift: CFG.BUILD_SHIFT, requireActivityToday: true });
+
+  const updatedAt = rows.length ? rows.reduce((m, r) => r.pulled_at > m ? r.pulled_at : m, rows[0].pulled_at) : null;
+  return {
+    queue: shippingList.length, atRisk, overdue, pickable, shortageOverdue, overdueReady, channelBlocked,
+    topBuild: productionList[0] ? { sku: productionList[0].sku, blocked: productionList[0].ordersBlocked, channel: productionList[0].isChannelPriority } : null,
+    offHours: countOffHoursOrders(rows, currentOffHoursWindow()), offHoursType: currentOffHoursWindow().gapType,
+    kpi: KPI,
+    blocked: shippingList.length - pickable,
+    held: held.total_held,
+    freight: (summary.core_queue_counts.Freight || 0) + (summary.core_queue_counts.Both || 0),
+    buildsCount: productionList.length,
+    ordersWaitingOnBuilds: productionList.reduce((s, p) => s + p.ordersBlocked, 0),
+    stockBuildsCount: stockBuilds.length,
+    criticalLow: stockBuilds.filter(p => p.pctOfMax < 25).length,
+    buildPctToday, liveBuildPct,
+    turnover, turnoverDays,
+    ship, inToday: flowRange ? (flowRange.inByDate[todayStr] || 0) : null,
+    units, builds,
+    stockAddedToday: prod.stockAdded[todayStr] || 0,
+    stockAddedWeek: businessWeek(0).reduce((s, d) => s + (prod.stockAdded[d.date] || 0), 0),
+    lastBuildAt: prod.lastBuildAt,
+    productionLogged: productionRows.length > 0,
+    shipped48,
+    updatedAt,
+  };
+}
+
+// ---------------------------------------------------------------------
+// Sample data (demo mode only, clearly marked on screen)
+// ---------------------------------------------------------------------
+function demoModel() {
+  const prev = businessWeek(-1), cur = businessWeek(0);
+  const todayStr = chicagoDateStr(Date.now());
+  const out = {}, inn = {}, units = {}, builds = {}, added = {};
+  const pOut = [162, 171, 149, 158, 140], cOut = [176, 182, 151, 168, 160];
+  const pUnits = [410, 385, 450, 398, 372], cUnits = [455, 402, 470, 430, 300];
+  const pBuilds = [14, 12, 15, 13, 11], cBuilds = [15, 13, 16, 14, 9];
+  prev.forEach((d, i) => { out[d.date] = pOut[i]; units[d.date] = pUnits[i]; builds[d.date] = pBuilds[i]; });
+  cur.forEach((d, i) => {
+    if (d.date > todayStr) return;
+    const today = d.date === todayStr;
+    out[d.date] = today ? 131 : cOut[i]; inn[d.date] = today ? 140 : cOut[i] + 6;
+    units[d.date] = today ? 372 : cUnits[i]; builds[d.date] = today ? 12 : cBuilds[i];
+    added[d.date] = today ? 165 : cUnits[i] - 20;
+  });
+  const prodTodayIso = new Date(Date.now() - 50 * 60000).toISOString();
+  return {
+    queue: 142, atRisk: 23, overdue: 22, pickable: 118, shortageOverdue: 4, overdueReady: 18, channelBlocked: 1, blocked: 24, held: 6, freight: 21,
+    topBuild: { sku: "IPA99-1GAL", blocked: 9, channel: true }, offHours: 37, offHoursType: "overnight",
+    kpi: { yMs: prevWorkdayMs(), yStr: chicagoDateStr(prevWorkdayMs()),
+      yest: { ontime_pct: 0.924, ontime_passed: 1180, ontime_lines: 1277, ontime_orders: 171, queue_hours: 14.2, accuracy_avg: 0.987, orders_out: 171, units_built: 468, builds_completed: 66 },
+      month: { ontime_pct: 0.911, queue_hours: 16.8, accuracy_avg: 0.982 } },
+    buildsCount: 6, ordersWaitingOnBuilds: 24, stockBuildsCount: 19, criticalLow: 3,
+    buildPctToday: 93.4, liveBuildPct: 99.3, turnover: null, turnoverDays: 14,
+    ship: paceSeries({ valueByDate: out, shift: CFG.SHIP_SHIFT }), inToday: 140,
+    units: paceSeries({ valueByDate: units, shift: CFG.BUILD_SHIFT, requireActivityToday: true }),
+    builds: paceSeries({ valueByDate: builds, shift: CFG.BUILD_SHIFT, requireActivityToday: true }),
+    stockAddedToday: added[todayStr] || 0,
+    stockAddedWeek: cur.reduce((s, d) => s + (added[d.date] || 0), 0),
+    lastBuildAt: prodTodayIso, productionLogged: true,
+    shipped48: 91.8,
+    updatedAt: new Date(Date.now() - 6 * 60000).toISOString(),
+  };
+}
+const DEMO_CONTENT = [
+  { kind: "announcement", title: "Open enrollment", body: "Benefits open enrollment closes Friday, Oct 30. See HR with questions.", screens: ["all"], priority: "normal" },
+  { kind: "announcement", title: "Carrier cutoff moves earlier", body: "UPS pickup moves to 3:30 PM starting Monday. Have pallets staged by 3:00.", screens: ["shipping", "company"], priority: "urgent" },
+  { kind: "announcement", title: "New lab room schedule", body: "Lab Room 2 is reserved for acid downpacks Tuesday and Thursday mornings.", screens: ["production", "company"], priority: "normal" },
+  { kind: "capability", title: "Custom packaging", body: "We package from 1 oz bottles to 275-gallon totes, with custom labels and blends.", screens: ["company"] },
+  { kind: "capability", title: "HAZMAT shipping", body: "Certified to ship regulated chemicals by ground and freight, every business day.", screens: ["company"] },
+  { kind: "goal", title: "Q4 goal: 90% shipped within 48 hours", body: "Every order out the door within 48 hours of being placed. We were at 92.5% last quarter.", screens: ["company"] },
+  { kind: "shoutout", title: "Thank you, Shipping", body: "Record day Tuesday: 214 orders out the door. Great work, everyone.", screens: ["company"] },
+];
+
+// ---------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const n0 = v => v == null || isNaN(v) ? "—" : Math.round(v).toLocaleString();
+const ageClass = h => h >= OVERDUE_HOURS ? "age-bad" : h >= AT_RISK_HOURS ? "age-warn" : "";
+const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+function minutesAgo(iso) { return iso ? Math.round((Date.now() - new Date(iso).getTime()) / 60000) : null; }
+function agoText(mins) {
+  if (mins == null) return "never";
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.floor(mins / 60);
+  return h < 24 ? `${h}h ${mins % 60}m ago` : `${Math.floor(h / 24)}d ago`;
+}
+
+
+// ---------------------------------------------------------------------
+// Pace visuals shared by all screens
+// ---------------------------------------------------------------------
+const PACE_WORD = { good: "On pace", warn: "Watch", bad: "Behind", idle: "" };
+function paceBarHtml(value, target, expected, state, cls = "") {
+  if (target == null || target <= 0) return "";
+  const max = Math.max(target, value) * 1.0;
+  const fill = Math.min(100, value / max * 100);
+  const goalAt = target / max * 100;
+  const tick = expected != null && expected >= 1 && expected < target ? `<b class="tick" style="left:${expected / max * 100}%"><em>Pace ${Math.round(expected).toLocaleString()}</em></b>` : "";
+  const over = value > target ? `<b class="goalmark" style="left:${goalAt}%"></b>` : "";
+  return `<div class="pacebar ${cls}" data-state="${state}"><i style="width:${fill}%"></i>${tick}${over}</div>`;
+}
+function weekColumnsHtml(series, { below } = {}) {
+  const vals = series.days.map(d => d.value || 0);
+  const max = Math.max(series.daily || 0, ...vals, 1) * 1.08;
+  const st = d => d.future ? "future" : d.isToday ? "today" : (series.daily ? (d.value >= series.daily ? "good" : d.value >= series.daily * CFG.PACE_WARN ? "warn" : "bad") : "idle");
+  const line = series.daily ? `<div class="targetline" style="bottom:${series.daily / max * 100}%"><span>Target ${series.daily.toLocaleString()}</span></div>` : "";
+  return `<div class="cols">
+    <div class="plot">${line}${series.days.map(d => `<div class="colbar" data-state="${st(d)}"><span class="v">${d.future ? "" : n0(d.value)}</span><i style="height:${d.future ? 0 : (d.value || 0) / max * 100}%"></i></div>`).join("")}</div>
+    <div class="labels">${series.days.map(d => `<div class="wd" data-state="${st(d)}">${d.isToday ? "Today" : d.wd}${below ? `<small>${below(d) || "&nbsp;"}</small>` : ""}</div>`).join("")}</div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------
+// Stage scaling, clock, ticker, refresh loop
+// ---------------------------------------------------------------------
+function fitStage() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+  document.getElementById("stage").style.transform = `translate(-50%, -50%) scale(${s})`;
+}
+function tickClock() {
+  const now = new Date();
+  const t = now.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
+  const d = now.toLocaleDateString("en-US", { timeZone: "America/Chicago", weekday: "long", month: "short", day: "numeric" });
+  const el = document.querySelector(".andon .clock");
+  if (el) el.innerHTML = `<div class="time">${t}</div><div class="date">${d}</div>`;
+}
+
+const Ticker = {
+  items: [], i: 0, tipIdx: Math.floor(Math.random() * 1000),
+  build: null,
+  next() {
+    if (this.i >= this.items.length) { this.items = this.build ? this.build() : []; this.i = 0; }
+    const el = document.querySelector(".ticker");
+    if (!el || !this.items.length) return;
+    const it = this.items[this.i++];
+    const msg = el.querySelector(".msg");
+    msg.classList.add("fade");
+    setTimeout(() => {
+      el.dataset.kind = it.kind;
+      el.querySelector(".kind").textContent = it.label;
+      msg.textContent = it.text;
+      msg.classList.remove("fade");
+    }, 450);
+  },
+  tip(screen) { const tips = safetyTips(screen); return tips[(this.tipIdx++) % tips.length]; },
+};
+
+function renderMeta() {
+  const el = document.querySelector(".ticker .meta, .scroller .meta");
+  if (!el) return;
+  if (DEMO) { el.innerHTML = `<div><span class="demo">Sample data, not live</span><br>Add the key in tv-config.js</div>`; return; }
+  const updated = MODEL && MODEL.updatedAt;
+  const mins = minutesAgo(updated);
+  const stale = mins != null && mins > CFG.STALE_MINUTES && isProductionHours(Date.now());
+  let html = stale ? `<span class="stale">Queue data ${agoText(mins)}</span>` : `Queue updated ${agoText(mins)}`;
+  if (lastError) html += `<br><span class="err">Can't reach the database</span>`;
+  else html += `<br>Refreshes every ${Math.round(CFG.REFRESH_MS / 60000)} min`;
+  el.innerHTML = `<div>${html}</div>`;
+}
+
+
+// ---------------------------------------------------------------------
+// Scrolling ticker (Shipping and Production): safety + best practice,
+// with any announcements for that screen mixed in
+// ---------------------------------------------------------------------
+// Ticker items for one or more screens: announcements first, then safety
+// tips alternating with best practices. wall.html calls this with
+// ["shipping", "production"] to build its single shared ticker.
+function scrollerItems(screens) {
+  const seen = new Set(), uniq = arr => arr.filter(t => !seen.has(t) && seen.add(t));
+  const items = [];
+  const anns = [];
+  for (const sc of screens) for (const a of contentFor(sc, ["announcement"])) anns.push(a);
+  for (const a of anns) {
+    const text = a.title ? `${a.title}. ${a.body}` : a.body;
+    if (seen.has(text)) continue; seen.add(text);
+    items.push({ kind: a.priority === "urgent" ? "urgent" : "announcement", tag: a.priority === "urgent" ? "Heads up" : "Announcement", text });
+  }
+  const safety = uniq(screens.flatMap(sc => safetyTips(sc)));
+  const best = uniq(screens.flatMap(sc => bestPractices(sc)));
+  const n = Math.max(safety.length, best.length);
+  for (let i = 0; i < n; i++) {
+    if (safety[i]) items.push({ kind: "safety_tip", tag: "Safety", text: safety[i] });
+    if (best[i]) items.push({ kind: "best_practice", tag: "Best practice", text: best[i] });
+  }
+  return items;
+}
+function scrollerHtml(items) {
+  return items.map(it => `<span class="item" data-kind="${it.kind}"><span class="tag">${esc(it.tag)}</span>${esc(it.text)}</span>`).join("");
+}
+
+const Scroller = {
+  key: "",
+  render(screen) {
+    const el = document.querySelector(".scroller .track");
+    if (!el || EMBEDDED) return;
+    const items = scrollerItems([screen]);
+    const key = JSON.stringify(items);
+    if (key === this.key) return;
+    this.key = key;
+    const html = scrollerHtml(items);
+    el.innerHTML = html + html;   // two copies for a seamless loop
+    requestAnimationFrame(() => {
+      const half = el.scrollWidth / 2;
+      el.style.setProperty("--dur", `${Math.max(20, half / CFG.TICKER_SPEED)}s`);
+    });
+  },
+};
+
+// ---------------------------------------------------------------------
+// New-deploy check: every few minutes, fetch this page, ops-logic.js and
+// tv-config.js fresh from the site. If any of them changed since this
+// screen loaded, reload so the change shows without anyone touching the TV.
+// Guarded so a misbehaving site can't cause a reload loop.
+// ---------------------------------------------------------------------
+const Updater = {
+  baseline: null,
+  files() {
+    const page = location.href.split("#")[0];
+    return [page, new URL("/ops-logic.js", location.href).href, new URL("tv-config.js", location.href).href];
+  },
+  hash(str) { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return `${str.length}:${h}`; },
+  async fingerprint() {
+    const parts = await Promise.all(this.files().map(async u => {
+      const r = await fetch(u, { cache: "no-store" });
+      if (!r.ok) throw new Error(`${u} ${r.status}`);
+      return this.hash(await r.text());
+    }));
+    return parts.join("|");
+  },
+  async check() {
+    if (location.protocol === "file:") return;
+    try {
+      const fp = await this.fingerprint();
+      if (this.baseline == null) { this.baseline = fp; return; }
+      if (fp === this.baseline) return;
+      let last = 0;
+      try { last = +localStorage.getItem("tv-last-update-reload") || 0; } catch (e) {}
+      if (Date.now() - last < 20 * 60000) return;   // at most one auto-reload per 20 minutes
+      try { localStorage.setItem("tv-last-update-reload", String(Date.now())); } catch (e) {}
+      console.log("New deploy found; reloading.");
+      location.reload();
+    } catch (e) { console.warn("update check:", e); }   // network blip: try again next time
+  },
+};
+
+let MODEL = null;
+function setAndon(state, statusText) {
+  const a = document.querySelector(".andon");
+  a.dataset.state = state;
+  a.querySelector(".status").textContent = statusText;
+}
+
+async function start({ screen, render, tickerItems, needs = {} }) {
+  for (const [k, v] of Object.entries(CFG.COLORS || {})) document.documentElement.style.setProperty(`--${k}`, v);
+  fitStage();
+  addEventListener("resize", fitStage);
+  const scrolling = !!document.querySelector(".scroller");
+  if (EMBEDDED) { const f = document.querySelector(".scroller"); if (f) f.style.visibility = "hidden"; }
+  if (scrolling) Scroller.render(screen);
+  tickClock(); setInterval(tickClock, 15000);
+  Ticker.build = () => tickerItems ? tickerItems(MODEL) : [];
+
+  async function refresh() {
+    try {
+      if (DEMO) { CONTENT = DEMO_CONTENT; MODEL = demoModel(); }
+      else {
+        await loadCore(needs);
+        if (needs.orderFlow) await loadOrderFlow();
+        MODEL = computeModel();
+      }
+      lastOk = Date.now(); lastError = null;
+      render(MODEL);
+      if (scrolling) Scroller.render(screen);
+    } catch (e) {
+      console.error(e);
+      lastError = e;
+      if (MODEL) render(MODEL);
+      else setAndon("idle", "Waiting for data. Check the network connection.");
+    }
+    renderMeta();
+  }
+  await refresh();
+  setInterval(refresh, CFG.REFRESH_MS);
+  setInterval(renderMeta, 30000);
+  if (!scrolling) { Ticker.next(); setInterval(() => Ticker.next(), CFG.TICKER_MS); }
+  Updater.check(); setInterval(() => Updater.check(), CFG.UPDATE_CHECK_MS);
+  setTimeout(() => location.reload(), CFG.RELOAD_HOURS * 3600000);
+}
+window.TV = { paceBarHtml, weekColumnsHtml, paceState, paceGap, targetNote, PACE_WORD, start, setAndon, kpiState, goalText, contentFor, TARGETS: () => TARGETS, Ticker, esc, n0, ageClass, plural, formatAge, CFG };
+</script>
+</head>
+<body>
+<!--TITLE:Morning briefing-->
+<div id="stage">
+  <header class="andon" data-state="idle">
+    <div class="dept">Lab Alley</div>
+    <div class="status">Good morning</div>
+    <div class="clock"></div>
+  </header>
+  <main id="brief">
+    <section class="rows">
+      <div class="rowlabel" id="lbl-kpi">Yesterday</div>
+      <div class="trow" id="row-kpi"></div>
+      <div class="rowlabel">This week so far</div>
+      <div class="trow" id="row-week"></div>
+      <div class="rowlabel">Today’s goals</div>
+      <div class="trow" id="row-today"></div>
+    </section>
+    <section class="side">
+      <div class="panel" id="work">
+        <h2>Where today’s work is</h2>
+        <div id="gauge"></div>
+        <div id="actions"></div>
+      </div>
+      <div class="panel" id="feature" style="padding:0;">
+        <div id="feature-kind"></div>
+        <div id="feature-text">
+          <div id="feature-title"></div>
+          <div id="feature-body"></div>
+        </div>
+        <div id="feature-dots"></div>
+      </div>
+    </section>
+  </main>
+  <footer class="ticker" data-kind="safety"><div class="kind"></div><div class="msg"></div><div class="meta"></div></footer>
+</div>
+<style>
+  #brief { grid-template-columns: 1fr 640px; grid-template-rows: 1fr; gap: 26px; padding-top: 18px; }
+  .rows { display: grid; grid-template-rows: auto 1fr auto 1fr auto 1fr; gap: 0 0; min-height: 0; }
+  .rowlabel { font-family: var(--num); font-weight: 600; font-size: 26px; color: var(--muted); padding: 8px 2px 8px; }
+  .trow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; min-height: 0; }
+  .trow .tile { padding: 14px 22px 16px; border-top-width: 8px; }
+  .trow .tile .label { font-size: 23px; white-space: nowrap; }
+  .trow .tile .label > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+  .trow .tile .pill { font-size: 17px; padding: 2px 10px; }
+  .trow .tile > * { flex-shrink: 0; }
+  .trow .tile .value { font-size: 88px; line-height: .92; }
+  .trow .tile .value small { font-size: 40px; }
+  .trow .tile .value .of { font-size: 34px; margin-left: 10px; }
+  .trow .tile .sub { font-size: 21px; display: flex; justify-content: space-between; gap: 10px; }
+  .trow .tile .pacebar { margin: 10px 0 6px; height: 14px; }
+  .trow .tile .pacebar .tick { top: -6px; bottom: -6px; }
+  .trow .tile .pacebar .tick em { display: none; }
+
+  .side { display: grid; grid-template-rows: 500px 1fr; gap: 22px; min-height: 0; }
+  #work h2 { color: var(--text); margin-bottom: 0; font-size: 34px; }
+  #gauge { display: flex; flex-direction: column; align-items: center; }
+  #gauge svg { width: 300px; height: auto; display: block; }
+  #gauge .read { font-family: var(--num); font-weight: 700; font-size: 34px; line-height: 1; margin-top: -2px; }
+  #gauge .why { font-size: 19px; color: var(--muted); margin-top: 6px; text-align: center; }
+  #actions { margin-top: 12px; display: grid; gap: 9px; }
+  .act { display: flex; gap: 14px; font-size: 20px; line-height: 1.3; align-items: stretch; }
+  .act::before { content: ""; flex: 0 0 8px; border-radius: 4px; background: var(--sec, var(--muted)); }
+  .act b { font-weight: 700; }
+
+  #feature-kind { font-family: var(--num); font-weight: 700; font-size: 28px; padding: 14px 28px; background: var(--panel-2); }
+  #feature-text { flex: 1; padding: 22px 28px 10px; min-height: 0; overflow: hidden; }
+  #feature-title { font-family: var(--num); font-weight: 700; font-size: 44px; line-height: 1.05; margin-bottom: 14px; }
+  #feature-body { font-size: 27px; line-height: 1.38; }
+  #feature-dots { display: flex; gap: 10px; padding: 0 28px 20px; }
+  #feature-dots i { width: 14px; height: 14px; border-radius: 50%; background: var(--line); }
+  #feature-dots i.on { background: var(--text); }
+  #feature-title, #feature-body { transition: opacity .5s ease; }
+  .fade { opacity: 0; }
+</style>
+<script>
+const STATE_WORD = { good: "On track", warn: "Watch", bad: "Off track", idle: "" };
+const wdName = ms => new Date(ms).toLocaleDateString("en-US", { timeZone: "America/Chicago", weekday: "long" });
+const pct1 = v => v == null ? "–" : `${(v * 100) >= 99.95 ? "100" : (v * 100).toFixed(1)}<small>%</small>`;
+
+function tileHtml(t) {
+  return `<div class="tile" data-section="${t.section}">
+    <div class="label"><span>${esc(t.label)}</span><span class="pill" data-state="${t.state}">${esc(t.word || "")}</span></div>
+    <div class="value">${t.value}</div>
+    ${t.bar || ""}
+    <div class="sub"><span>${t.sub1 || ""}</span></div>
+    <div class="sub" style="margin-top:2px"><span>${t.sub2 || ""}</span></div>
+  </div>`;
+}
+
+// ---- Row 1: yesterday's KPIs, this month underneath ----
+function kpiRow(m) {
+  const k = m.kpi, y = (k && k.yest) || {}, mo = (k && k.month) || {};
+  const day = k ? (chicagoDateStr(k.yMs) === chicagoDateStr(chicagoMidnightMs(Date.now(), -1)) ? "Yesterday" : wdName(k.yMs)) : "Yesterday";
+  document.getElementById("lbl-kpi").textContent = k ? `${day}’s results` : "Yesterday’s results";
+  if (!k) return [1, 2, 3].map(() => tileHtml({ section: "shipped", label: "Loading KPIs", value: "–", state: "idle", sub1: "Waiting on the KPI Summary data" })).join("");
+
+  const on = y.ontime_pct, onPct = on == null ? null : on * 100;
+  const tOn = TV.TARGETS().shipped_48h_pct;
+  const sOn = TV.kpiState("shipped_48h_pct", onPct);
+  const trend = (a, b, lowerBetter) => a == null || b == null ? "idle" : (lowerBetter ? a <= b : a >= b) ? "good" : "warn";
+  const tw = { good: "Better", warn: "Worse", idle: "" };
+  const sQ = trend(y.queue_hours, mo.queue_hours, true), sA = trend(y.accuracy_avg, mo.accuracy_avg, false);
+  return [
+    tileHtml({ section: "shipped", label: "Shipped within 48 hours", value: pct1(on), state: sOn, word: STATE_WORD[sOn],
+      sub1: `This month ${mo.ontime_pct == null ? "–" : (mo.ontime_pct * 100).toFixed(1) + "%"}, goal ${tOn ? tOn.target : 90}%`,
+      sub2: on == null ? `No shipped orders ${day.toLowerCase()}` : `${n0(y.ontime_passed)} of ${n0(y.ontime_lines)} lines on time` }),
+    tileHtml({ section: "shipped", label: "Time in queue", value: y.queue_hours == null ? "–" : `${(+y.queue_hours).toFixed(1)}<small>h</small>`, state: sQ, word: tw[sQ],
+      sub1: `This month ${mo.queue_hours == null ? "–" : (+mo.queue_hours).toFixed(1) + " h"}`, sub2: "Order placed to shipped" }),
+    tileHtml({ section: "built", label: "Inventory accuracy", value: pct1(y.accuracy_avg), state: sA, word: tw[sA],
+      sub1: `This month ${mo.accuracy_avg == null ? "–" : (mo.accuracy_avg * 100).toFixed(1) + "%"}`, sub2: "Latest cycle counts" }),
+  ].join("");
+}
+
+// ---- Row 2: this week so far against the week target ----
+function weekTile(section, label, s, unitWord) {
+  const st = TV.paceState(s.week.value, s.week.expected);
+  return tileHtml({ section, label, value: `${n0(s.week.value)}${s.weekTarget ? `<span class="of">of ${n0(s.weekTarget)}</span>` : ""}`,
+    state: st, word: st === "idle" ? "" : TV.PACE_WORD[st], bar: TV.paceBarHtml(s.week.value, s.weekTarget, s.week.expected, st),
+    sub1: TV.paceGap(s.week.value, s.week.expected) || (s.basis ? "" : "Setting baseline"),
+    sub2: s.prevAvg ? `Last week: ${n0(s.prevAvg)} a day` : "" });
+}
+
+// ---- Row 3: today's goals with live progress and queue context ----
+function todayTile(section, label, s, context) {
+  const t = s.today;
+  if (!t) return tileHtml({ section, label, value: "–", state: "idle", sub1: "No goal on weekends" });
+  const st = t.active ? TV.paceState(t.value, t.expected) : "idle";
+  return tileHtml({ section, label, value: s.daily ? n0(s.daily) : "–", state: st, word: st === "idle" ? "" : TV.PACE_WORD[st],
+    bar: TV.paceBarHtml(t.value, s.daily, t.active ? t.expected : null, st),
+    sub1: s.daily ? `${n0(t.value)} done so far` : "Setting baseline", sub2: context });
+}
+
+// ---- Gauge: same rule as Ops Live's Queue Breakdown dial ----
+function gaugeHtml(m) {
+  const prod = m.shortageOverdue, ship = m.overdueReady, total = prod + ship;
+  const cx = 150, cy = 140, r = 110;
+  let ang = 90, read = "No late orders", why = "Nothing is past the 48-hour goal.";
+  if (total > 0) {
+    const share = prod / total;
+    ang = 180 - share * 180;
+    read = share < 0.35 ? "Mostly Shipping" : share < 0.65 ? "Mixed" : "Mostly Production";
+    why = `${plural(ship, "late order is", "late orders are")} ready to ship; ${prod} ${prod === 1 ? "is" : "are"} waiting on a build.`;
+  }
+  const a = ang * Math.PI / 180, L = r - 18;
+  return `<svg viewBox="0 0 300 172" aria-label="Shipping versus production gauge">
+    <defs><linearGradient id="g" x1="0%" x2="100%"><stop offset="0%" stop-color="var(--shipped)"/><stop offset="100%" stop-color="var(--built)"/></linearGradient></defs>
+    <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="url(#g)" stroke-width="18" stroke-linecap="round"/>
+    <line x1="${cx}" y1="${cy}" x2="${(cx + L * Math.cos(a)).toFixed(1)}" y2="${(cy - L * Math.sin(a)).toFixed(1)}" stroke="var(--text)" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy}" r="7" fill="var(--text)"/>
+    <text x="${cx - r}" y="${cy + 28}" fill="var(--shipped)" font-size="15" font-weight="700" text-anchor="start" font-family="Barlow, Arial">Shipping</text>
+    <text x="${cx + r}" y="${cy + 28}" fill="var(--built)" font-size="15" font-weight="700" text-anchor="end" font-family="Barlow, Arial">Production</text>
+  </svg><div class="read">${read}</div><div class="why">${why}</div>`;
+}
+
+// ---- What to action to hit today's goals (up to three, by impact) ----
+function actions(m) {
+  const out = [];
+  if (m.overdueReady > 0) out.push(["shipped", `<b>${plural(m.overdueReady, "order is", "orders are")} late but ready to ship.</b> Clearing them protects today’s 48-hour number.`]);
+  if (m.topBuild) out.push(["built", `<b>Build ${esc(m.topBuild.sku)} first.</b> It frees ${plural(m.topBuild.blocked, "waiting order", "waiting orders")}${m.topBuild.channel ? ", including Amazon or Walmart" : ""}.`]);
+  if (m.ship && m.ship.daily && m.pickable < m.ship.daily && m.blocked > 0) out.push(["built", `<b>Only ${n0(m.pickable)} orders are ready</b> against a goal of ${n0(m.ship.daily)}. Builds unblock the rest.`]);
+  if (m.atRisk > 0) out.push(["shipped", `<b>${plural(m.atRisk, "order turns", "orders turn")} 48 hours old within a day.</b>`]);
+  if (!out.length) out.push(["orders", "<b>No late orders and nothing blocked.</b> Keep the queue moving."]);
+  return out.slice(0, 3).map(([sec, html]) => `<div class="act" data-section="${sec}"><span>${html}</span></div>`).join("");
+}
+
+function render(m) {
+  const s = m.ship, u = m.units, b = m.builds;
+  document.getElementById("row-kpi").innerHTML = kpiRow(m);
+  document.getElementById("row-week").innerHTML = [
+    s ? weekTile("shipped", "Orders shipped", s, "orders") : tileHtml({ section: "shipped", label: "Orders shipped", value: "–", state: "idle", sub1: "Waiting on order data" }),
+    weekTile("built", "Units built", u, "units"),
+    weekTile("built", "Builds completed", b, "builds"),
+  ].join("");
+  document.getElementById("row-today").innerHTML = [
+    s ? todayTile("shipped", "Ship today", s, `${n0(m.queue)} waiting, ${n0(m.offHours)} came in ${m.offHoursType === "weekend" ? "over the weekend" : "overnight"}`)
+      : tileHtml({ section: "shipped", label: "Ship today", value: "–", state: "idle", sub1: "Waiting on order data" }),
+    todayTile("built", "Build today, units", u, `${n0(m.buildsCount)} short, ${n0(m.ordersWaitingOnBuilds)} orders waiting`),
+    todayTile("built", "Builds today", b, `${n0(m.criticalLow)} critically low`),
+  ].join("");
+  document.getElementById("gauge").innerHTML = gaugeHtml(m);
+  document.getElementById("actions").innerHTML = actions(m);
+
+  // Band: today's targets as the headline, colored by yesterday's 48-hour result
+  const on = m.kpi && m.kpi.yest && m.kpi.yest.ontime_pct;
+  const st = on == null ? "idle" : TV.kpiState("shipped_48h_pct", on * 100);
+  const parts = [];
+  if (s && s.daily) parts.push(`ship ${n0(s.daily)} orders`);
+  if (u && u.daily) parts.push(`build ${n0(u.daily)} units`);
+  TV.setAndon(st, parts.length ? `Today: ${parts.join(" and ")}` : "Good morning");
+}
+
+// ---- Rotating panel: announcements, goals, capabilities, shout-outs ----
+const KIND_LABEL = { announcement: "Announcement", goal: "Goal", capability: "What we do", shoutout: "Shout-out" };
+const KIND_COLOR = { announcement: "#E8E6DF", goal: "var(--shipped)", capability: "var(--panel-2)", shoutout: "var(--warn)" };
+let fi = 0;
+function showFeature() {
+  const items = TV.contentFor("briefing", ["announcement", "goal", "capability", "shoutout"]).concat(TV.contentFor("company", ["announcement", "goal", "capability", "shoutout"]))
+    .filter((x, i, a) => a.indexOf(x) === i);
+  const kindEl = document.getElementById("feature-kind"), tEl = document.getElementById("feature-title"), bEl = document.getElementById("feature-body");
+  if (!items.length) { kindEl.textContent = "Nothing posted yet"; tEl.textContent = "Add a message"; bEl.textContent = "Post announcements in the tv_content table in Supabase with screens set to company or all."; return; }
+  const it = items[fi++ % items.length];
+  tEl.classList.add("fade"); bEl.classList.add("fade");
+  setTimeout(() => {
+    const urgent = it.priority === "urgent";
+    const bg = urgent ? "var(--warn)" : KIND_COLOR[it.kind] || "var(--panel-2)";
+    kindEl.textContent = urgent ? "Heads up" : KIND_LABEL[it.kind] || "Update";
+    kindEl.style.background = bg; kindEl.style.color = bg === "var(--panel-2)" ? "var(--text)" : "var(--ink-on-status)";
+    tEl.textContent = it.title || ""; bEl.textContent = it.body || "";
+    document.getElementById("feature-dots").innerHTML = items.length > 1 ? items.map((_, i) => `<i class="${i === (fi - 1) % items.length ? "on" : ""}"></i>`).join("") : "";
+    tEl.classList.remove("fade"); bEl.classList.remove("fade");
+  }, 450);
+}
+
+function tickerItems(m) {
+  const out = [];
+  const y = m && m.kpi && m.kpi.yest;
+  if (y && y.orders_out != null) out.push({ kind: "shipped", label: "Shipped", text: `${n0(y.orders_out)} orders shipped ${m.kpi && chicagoDateStr(m.kpi.yMs) === chicagoDateStr(chicagoMidnightMs(Date.now(), -1)) ? "yesterday" : "on " + wdName(m.kpi.yMs)}.` });
+  if (y && y.units_built != null) out.push({ kind: "built", label: "Built", text: `${n0(y.units_built)} units built across ${plural(+y.builds_completed || 0, "build", "builds")}.` });
+  if (m) out.push({ kind: "orders", label: "Right now", text: `${n0(m.queue)} orders in the queue, ${n0(m.overdue)} past 48 hours.` });
+  for (let i = 0; i < 3; i++) out.push({ kind: "safety", label: "Safety", text: TV.Ticker.tip("company") });
+  return out;
+}
+TV.start({ screen: "briefing", render, tickerItems, needs: { orderFlow: true, production: true, kpi: true } }).then(() => {
+  showFeature(); setInterval(showFeature, TV.CFG.PANEL_MS);
+});
+</script>
+
+</body>
+</html>

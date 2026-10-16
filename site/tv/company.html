@@ -468,6 +468,7 @@ async function loadCore(opts) {
   const todayIso = new Date(chicagoMidnightMs(Date.now(), 0)).toISOString();
   healthToday = await soft(fetchAllRows("health_snapshots", { filter: q => q.gte("pulled_at", todayIso) }), []);
   if (opts.turnover) await loadTurnover();
+  if (opts.kpi) await loadKpis();
   if (opts.production) {
     const since = new Date(businessWeek(-1)[0].ms).toISOString();
     productionRows = await soft(fetchAllRows("production_output", { orderCol: "occurred_at", filter: q => q.gte("occurred_at", since) }), []);
@@ -533,6 +534,28 @@ async function loadTurnover() {
   } catch (e) { console.warn("turnover:", e); }
 }
 
+// Yesterday's and month-to-date KPIs from kpi_summary(), the same database
+// function the KPI Summary page (kpi.html) uses, so the numbers match it.
+// "Yesterday" is the previous workday: Monday shows Friday.
+let KPI = null, lastKpiFetch = 0;
+function prevWorkdayMs() {
+  let d = chicagoMidnightMs(Date.now(), -1);
+  for (let i = 0; i < 7 && ["Sat", "Sun"].includes(chicagoPartsForInstant(d).weekday); i++) d = chicagoMidnightMs(d, -1);
+  return d;
+}
+async function loadKpis() {
+  if (KPI && Date.now() - lastKpiFetch < 15 * 60000) return;
+  lastKpiFetch = Date.now();
+  const yMs = prevWorkdayMs(), yStr = chicagoDateStr(yMs), mStart = yStr.slice(0, 8) + "01";
+  const call = (a, b) => client.rpc("kpi_summary", { p_start: a, p_end: b, p_include_fba: true });
+  try {
+    const [ry, rm] = await Promise.all([call(yStr, yStr), call(mStart, yStr)]);
+    if (ry.error) throw new Error(ry.error.message);
+    if (rm.error) throw new Error(rm.error.message);
+    KPI = { yMs, yStr, yest: ry.data || {}, month: rm.data || {} };
+  } catch (e) { console.warn("kpi_summary:", e); }
+}
+
 function productionByDate() {
   const units = {}, builds = {}, stockAdded = {};
   const buildIds = {};
@@ -570,6 +593,8 @@ function computeModel() {
   }
   const pickable = shippingList.filter(o => o.isPickable).length;
   const shortageOverdue = shippingList.filter(o => !o.isPickable && o.hours >= OVERDUE_HOURS).length;
+  const overdueReady = shippingList.filter(o => o.isPickable && o.hours >= OVERDUE_HOURS).length;
+  const channelBlocked = shippingList.filter(o => !o.isPickable && o.isChannelPriority).length;
 
   const prodSnaps = healthToday.filter(s => isProductionHours(new Date(s.pulled_at).getTime()) && s.build_hit_rate_pct != null);
   const liveBuildPct = shippingList.length ? 100 - (shortageOverdue / shippingList.length * 100) : 100;
@@ -585,7 +610,10 @@ function computeModel() {
 
   const updatedAt = rows.length ? rows.reduce((m, r) => r.pulled_at > m ? r.pulled_at : m, rows[0].pulled_at) : null;
   return {
-    queue: shippingList.length, atRisk, overdue, pickable, shortageOverdue,
+    queue: shippingList.length, atRisk, overdue, pickable, shortageOverdue, overdueReady, channelBlocked,
+    topBuild: productionList[0] ? { sku: productionList[0].sku, blocked: productionList[0].ordersBlocked, channel: productionList[0].isChannelPriority } : null,
+    offHours: countOffHoursOrders(rows, currentOffHoursWindow()), offHoursType: currentOffHoursWindow().gapType,
+    kpi: KPI,
     blocked: shippingList.length - pickable,
     held: held.total_held,
     freight: (summary.core_queue_counts.Freight || 0) + (summary.core_queue_counts.Both || 0),
@@ -626,7 +654,11 @@ function demoModel() {
   });
   const prodTodayIso = new Date(Date.now() - 50 * 60000).toISOString();
   return {
-    queue: 142, atRisk: 23, overdue: 4, pickable: 118, shortageOverdue: 1, blocked: 24, held: 6, freight: 21,
+    queue: 142, atRisk: 23, overdue: 22, pickable: 118, shortageOverdue: 4, overdueReady: 18, channelBlocked: 1, blocked: 24, held: 6, freight: 21,
+    topBuild: { sku: "IPA99-1GAL", blocked: 9, channel: true }, offHours: 37, offHoursType: "overnight",
+    kpi: { yMs: prevWorkdayMs(), yStr: chicagoDateStr(prevWorkdayMs()),
+      yest: { ontime_pct: 0.924, ontime_passed: 1180, ontime_lines: 1277, ontime_orders: 171, queue_hours: 14.2, accuracy_avg: 0.987, orders_out: 171, units_built: 468, builds_completed: 66 },
+      month: { ontime_pct: 0.911, queue_hours: 16.8, accuracy_avg: 0.982 } },
     buildsCount: 6, ordersWaitingOnBuilds: 24, stockBuildsCount: 19, criticalLow: 3,
     buildPctToday: 93.4, liveBuildPct: 99.3, turnover: null, turnoverDays: 14,
     ship: paceSeries({ valueByDate: out, shift: CFG.SHIP_SHIFT }), inToday: 140,

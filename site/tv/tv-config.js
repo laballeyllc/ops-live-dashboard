@@ -35,7 +35,7 @@ window.TV_CONFIG = {
   // production, screensaver) to the wall.html address to pin one view.
   WALL: {
     schedule: [
-      { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "06:00", to: "08:30", show: "company" },
+      { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "06:00", to: "08:30", show: "briefing" },
       { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "08:30", to: "20:00", rotate: ["shipping", "production"], seconds: 150 },
     ],
     otherwise: "screensaver",
