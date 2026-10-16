@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Production wall display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<script src="tv-config.js" onerror="void 0"></script>
+<script src="/ops-logic.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+:root {
+  /* Lab Alley base: navy and logo blue (override in tv-config.js COLORS) */
+  --bg: #081A33;
+  --panel: #0F2747;
+  --panel-2: #183660;
+  --line: #24467A;
+  --text: #F2F5F9;
+  --muted: #9FB2CB;
+  /* Status: only for on-track / watch / off-track */
+  --good: #4CB86A;
+  --warn: #E8AA3A;
+  --bad: #E2564E;
+  /* Sections: one color per thing being measured */
+  --shipped: #3D8FF2;
+  --built: #A47FF2;
+  --orders: #2FC6D4;
+  --ink-on-status: #081A33;
+  --num: "Barlow Condensed", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --body: "Barlow", "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); overflow: hidden; }
+body { font-family: var(--body); color: var(--text); -webkit-font-smoothing: antialiased; cursor: none; }
+
+/* Fixed 1920x1080 stage, scaled to whatever TV it lands on */
+#stage {
+  position: absolute; left: 50%; top: 50%;
+  width: 1920px; height: 1080px;
+  transform-origin: center center;
+  display: grid;
+  grid-template-rows: 132px 1fr 92px;
+  background: var(--bg);
+}
+
+/* ---- Andon band: the one loud thing on each screen ---- */
+.andon {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 40px;
+  padding: 0 56px;
+  background: var(--status, var(--good));
+  color: var(--ink-on-status);
+  transition: background-color .8s ease;
+}
+.andon[data-state="bad"] { --status: var(--bad); }
+.andon[data-state="warn"] { --status: var(--warn); }
+.andon[data-state="good"] { --status: var(--good); }
+.andon[data-state="idle"] { --status: var(--panel-2); color: var(--text); }
+.andon .dept { font-family: var(--num); font-weight: 700; font-size: 64px; letter-spacing: .01em; line-height: 1; }
+.andon .status { font-family: var(--num); font-weight: 600; font-size: 54px; line-height: 1.05; border-left: 4px solid currentColor; padding-left: 40px; opacity: .95; }
+.andon .clock { text-align: right; font-family: var(--num); line-height: 1; }
+.andon .clock .time { font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.andon .clock .date { font-size: 26px; font-weight: 500; margin-top: 4px; }
+@media (prefers-reduced-motion: no-preference) {
+  .andon[data-state="bad"] .status { animation: pulse 2.4s ease-in-out infinite; }
+}
+@keyframes pulse { 50% { opacity: .62; } }
+
+/* ---- Body ---- */
+main { padding: 30px 56px 26px; display: grid; gap: 28px; min-height: 0; }
+
+.tiles { display: grid; gap: 24px; }
+.tile {
+  background: var(--panel); border-radius: 10px; padding: 22px 30px 24px;
+  border-top: 10px solid var(--tile-color, var(--line));
+  display: flex; flex-direction: column; justify-content: space-between; min-height: 0;
+}
+.tile[data-state="bad"] { --tile-color: var(--bad); }
+.tile[data-state="warn"] { --tile-color: var(--warn); }
+.tile[data-state="good"] { --tile-color: var(--good); }
+.tile .label { font-size: 30px; font-weight: 600; color: var(--text); line-height: 1.15; }
+.tile .value { font-family: var(--num); font-weight: 700; font-size: 132px; line-height: .9; font-variant-numeric: tabular-nums; color: var(--tile-color, var(--text)); }
+.tile .value small { font-size: 60px; font-weight: 600; margin-left: 4px; }
+.tile .sub { font-size: 24px; color: var(--muted); line-height: 1.25; }
+
+.panel { background: var(--panel); border-radius: 10px; padding: 26px 32px; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.panel > * { flex-shrink: 0; }
+.panel h2 { font-family: var(--num); font-weight: 600; font-size: 40px; line-height: 1; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: baseline; }
+.panel h2 .aside { font-family: var(--body); font-size: 22px; font-weight: 500; color: var(--muted); }
+
+/* Lists sized for reading at 15 feet */
+table.big { width: 100%; border-collapse: collapse; font-size: 30px; table-layout: fixed; }
+table.big th { text-align: left; font-size: 22px; font-weight: 600; color: var(--muted); padding: 0 12px 10px; border-bottom: 2px solid var(--line); }
+table.big td { padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+table.big tr:last-child td { border-bottom: 0; }
+table.big .num { text-align: right; font-family: var(--num); font-size: 36px; font-weight: 600; font-variant-numeric: tabular-nums; }
+table.big th.num { font-family: var(--body); font-size: 22px; }
+table.big .strong { font-weight: 700; }
+.age-bad { color: var(--bad); font-weight: 700; }
+.age-warn { color: var(--warn); font-weight: 700; }
+.chip { display: inline-block; font-size: 20px; font-weight: 700; padding: 4px 12px; border-radius: 6px; background: var(--warn); color: var(--ink-on-status); vertical-align: middle; }
+.chip.bad { background: var(--bad); }
+.chip.ok { background: var(--good); }
+.empty { font-size: 34px; color: var(--muted); padding: 40px 0; line-height: 1.3; }
+.empty strong { color: var(--good); display: block; font-family: var(--num); font-size: 52px; font-weight: 600; margin-bottom: 8px; }
+
+/* Horizontal stacked bar for age buckets / queue split */
+.stack { display: flex; height: 56px; border-radius: 6px; overflow: hidden; background: var(--panel-2); }
+.stack > div { display: flex; align-items: center; justify-content: center; font-family: var(--num); font-weight: 700; font-size: 30px; color: var(--ink-on-status); min-width: 0; }
+.legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; font-size: 22px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 16px; height: 16px; border-radius: 3px; background: var(--c); margin-right: 8px; vertical-align: -2px; }
+
+.statline { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 30px; }
+.statline:last-child { border-bottom: 0; }
+.statline b { font-family: var(--num); font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.meter { height: 16px; border-radius: 8px; background: var(--panel-2); overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--c, var(--warn)); }
+
+/* ---- Ticker: one message at a time, never a scrolling marquee ---- */
+.ticker {
+  display: grid; grid-template-columns: 220px 1fr auto; align-items: center;
+  background: var(--panel); border-top: 2px solid var(--line);
+  padding: 0 56px 0 0; overflow: hidden;
+}
+.ticker .kind {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  font-family: var(--num); font-weight: 700; font-size: 32px;
+  background: var(--k, var(--panel-2)); color: var(--kc, var(--text));
+}
+.ticker[data-kind="alert"] { --k: var(--bad); --kc: var(--ink-on-status); }
+.ticker[data-kind="watch"] { --k: var(--warn); --kc: var(--ink-on-status); }
+.ticker[data-kind="good"] { --k: var(--good); --kc: var(--ink-on-status); }
+.ticker[data-kind="announcement"] { --k: #E8E6DF; --kc: var(--ink-on-status); }
+.ticker[data-kind="urgent"] { --k: var(--warn); --kc: var(--ink-on-status); }
+.ticker[data-kind="safety"] { --k: #F2C94C; --kc: var(--ink-on-status); }
+.ticker .msg { font-size: 36px; font-weight: 500; padding-left: 36px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity .5s ease; }
+.ticker .msg.fade { opacity: 0; }
+.ticker .meta { font-size: 22px; color: var(--muted); text-align: right; line-height: 1.3; white-space: nowrap; }
+.ticker .meta .demo { color: var(--warn); font-weight: 700; font-size: 24px; }
+.ticker .meta .stale { color: var(--warn); font-weight: 700; }
+.ticker .meta .err { color: var(--bad); font-weight: 700; }
+
+.demo-badge {
+  position: absolute; right: 56px; top: 148px; z-index: 5;
+  background: var(--warn); color: var(--ink-on-status);
+  font-weight: 700; font-size: 22px; padding: 6px 14px; border-radius: 6px;
+}
+
+/* ---- Scoreboard pieces ---- */
+.hero-line { display: flex; align-items: baseline; gap: 22px; margin: 4px 0 18px; }
+.hero { font-family: var(--num); font-weight: 700; font-size: 168px; line-height: .85; font-variant-numeric: tabular-nums; }
+.hero.md { font-size: 120px; }
+.hero.sm { font-size: 84px; }
+.of { font-family: var(--num); font-weight: 600; font-size: 52px; color: var(--muted); }
+.gap { font-family: var(--num); font-weight: 700; font-size: 42px; margin-left: auto; white-space: nowrap; }
+.of { white-space: nowrap; }
+[data-state="good"] > .gap, .gap[data-state="good"] { color: var(--good); }
+.gap[data-state="warn"] { color: var(--warn); }
+.gap[data-state="bad"] { color: var(--bad); }
+.gap[data-state="idle"] { color: var(--muted); }
+.note { font-size: 24px; color: var(--muted); margin-top: auto; padding-top: 14px; line-height: 1.3; }
+.note b { color: var(--text); font-weight: 700; }
+
+.pacebar { position: relative; height: 48px; border-radius: 8px; background: var(--panel-2); margin-top: 34px; }
+.pacebar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; background: var(--muted); }
+.pacebar[data-state="good"] > i { background: var(--good); }
+.pacebar[data-state="warn"] > i { background: var(--warn); }
+.pacebar[data-state="bad"] > i { background: var(--bad); }
+.pacebar .tick { position: absolute; top: -10px; bottom: -10px; width: 5px; margin-left: -2px; background: var(--text); border-radius: 2px; }
+.pacebar .tick em { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-style: normal; font-size: 22px; font-weight: 700; white-space: nowrap; padding-bottom: 4px; color: var(--text); }
+.pacebar .goalmark { position: absolute; top: 0; bottom: 0; width: 4px; background: var(--ink-on-status); opacity: .5; }
+
+.cols { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: 30px; }
+.plot { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 22px; border-bottom: 2px solid var(--line); }
+.labels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 22px; }
+.colbar { position: relative; display: flex; flex-direction: column; justify-content: flex-end; min-height: 0; }
+.colbar i { display: block; background: var(--muted); border-radius: 6px 6px 0 0; }
+.colbar .v { text-align: center; font-family: var(--num); font-weight: 700; font-size: 32px; margin-bottom: 4px; }
+.colbar[data-state="good"] i { background: var(--good); }
+.colbar[data-state="warn"] i { background: var(--warn); }
+.colbar[data-state="bad"] i { background: var(--bad); }
+.colbar[data-state="today"] i { background: var(--text); }
+.wd { text-align: center; font-size: 24px; font-weight: 600; color: var(--muted); padding-top: 8px; line-height: 1.15; }
+.wd[data-state="today"] { color: var(--text); }
+.wd small { display: block; font-size: 20px; font-weight: 500; }
+.targetline { position: absolute; left: 0; right: 0; border-top: 3px dashed var(--text); opacity: .6; z-index: 2; pointer-events: none; }
+.targetline span { position: absolute; right: 0; top: -28px; padding-left: 8px; font-size: 20px; font-weight: 700; background: var(--panel); }
+.measure + .measure { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.mlabel { font-size: 28px; font-weight: 600; color: var(--muted); }
+
+.hero.xs { font-size: 76px; }
+.pacebar.thin { height: 30px; margin-top: 30px; }
+.panel h2 + .hero-line { margin-top: -6px; }
+.pacebar.thin { margin-top: 16px; margin-bottom: 30px; }
+.pacebar.thin .tick em { bottom: auto; top: 100%; padding: 2px 0 0; font-size: 20px; }
+.colbar .v { align-self: center; position: relative; z-index: 3; background: var(--panel); padding: 0 8px; border-radius: 4px; }
+
+/* ---- Section color coding ---- */
+[data-section="shipped"] { --sec: var(--shipped); }
+[data-section="built"]   { --sec: var(--built); }
+[data-section="orders"]  { --sec: var(--orders); }
+.panel[data-section] { border-top: 10px solid var(--sec); }
+.panel[data-section] h2 { color: var(--sec); }
+.tile[data-section] { border-top-color: var(--sec); }
+.tile[data-section] .label { color: var(--sec); }
+.tile[data-section] .value { color: var(--text); }
+[data-section] .pacebar > i { background: var(--sec) !important; }
+[data-section] .colbar i { background: var(--sec) !important; }
+[data-section] .colbar[data-state="warn"] i, [data-section] .colbar[data-state="bad"] i { opacity: .5; }
+[data-section] .colbar[data-state="today"] i { box-shadow: inset 0 4px 0 var(--text); }
+.colbar[data-state="warn"] .v { color: var(--warn); }
+.colbar[data-state="bad"] .v { color: var(--bad); }
+.pill { display: inline-block; font-family: var(--body); font-size: 20px; font-weight: 700; padding: 3px 12px; border-radius: 20px; background: var(--panel-2); color: var(--muted); white-space: nowrap; vertical-align: middle; }
+.pill[data-state="good"] { background: var(--good); color: var(--ink-on-status); }
+.pill[data-state="warn"] { background: var(--warn); color: var(--ink-on-status); }
+.pill[data-state="bad"]  { background: var(--bad);  color: var(--ink-on-status); }
+.pill[data-state="idle"] { display: none; }
+.tile .label { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.legend-strip { position: absolute; right: 56px; top: 0; height: 132px; display: none; }
+
+/* ---- Scrolling safety / best-practice ticker ---- */
+.scroller { display: grid; grid-template-columns: 1fr auto; align-items: stretch; background: #F2C94C; color: var(--ink-on-status); overflow: hidden; border-top: 0; }
+.scroller .lane { position: relative; overflow: hidden; display: flex; align-items: center; }
+.scroller .track { display: inline-flex; white-space: nowrap; will-change: transform; animation: scroll var(--dur, 120s) linear infinite; }
+.scroller .item { font-size: 38px; font-weight: 600; padding-right: 90px; display: inline-flex; align-items: center; gap: 18px; }
+.scroller .tag { font-family: var(--num); font-weight: 700; font-size: 30px; padding: 2px 14px; border-radius: 6px; background: var(--ink-on-status); color: #F2C94C; }
+.scroller .item[data-kind="best_practice"] .tag { background: var(--shipped); color: #fff; }
+.scroller .item[data-kind="announcement"] .tag { background: #fff; color: var(--ink-on-status); }
+.scroller .item[data-kind="urgent"] .tag { background: var(--bad); color: #fff; }
+.scroller .meta { background: var(--panel); color: var(--muted); font-size: 22px; padding: 0 40px; display: flex; flex-direction: column; justify-content: center; text-align: right; line-height: 1.3; white-space: nowrap; }
+.scroller .meta .demo { color: var(--warn); font-weight: 700; }
+.scroller .meta .stale { color: var(--warn); font-weight: 700; }
+.scroller .meta .err { color: var(--bad); font-weight: 700; }
+@keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .scroller .track { animation-duration: calc(var(--dur, 120s) * 2); } }
+.ticker[data-kind="shipped"] { --k: var(--shipped); --kc: #fff; }
+.ticker[data-kind="built"] { --k: var(--built); --kc: #fff; }
+.ticker[data-kind="orders"] { --k: var(--orders); --kc: var(--ink-on-status); }
+</style>
+<script>
+// =====================================================================
+// Lab Alley wall displays: shared runtime
+// Settings live in tv-config.js (same folder) so the key is set once
+// for all three screens. Without a key the screens run on sample data
+// and say so on screen.
+// =====================================================================
+const CFG = Object.assign({
+  SUPABASE_URL: "https://pdflsmequzgpeuodnxyg.supabase.co",
+  SUPABASE_ANON_KEY: "",
+  SHIPPED_48H_URL: "",          // optional: endpoint returning {pct: 92.5} for % shipped <48h
+  REFRESH_MS: 60000,            // queue data
+  ORDER_FLOW_REFRESH_MS: 180000,
+  TICKER_MS: 10000,
+  PANEL_MS: 15000,
+  RELOAD_HOURS: 6,              // full page reload to pick up new code
+  STALE_MINUTES: 90,            // warn if the pull hasn't run in this long during shift hours
+  SHIP_SHIFT: [8, 17],          // Central hours used to pace orders shipped through the day
+  BUILD_SHIFT: [8, 16],         // Central hours used to pace production through the day
+  BASELINE_MULT: 1.10,          // target = last week's daily average x this, until a goal is set
+  PACE_WARN: 0.90,              // under 100% of pace = Watch, under this = Behind
+  TICKER_SPEED: 110,            // scrolling ticker speed, pixels per second at 1920 wide
+  COLORS: {},                   // e.g. { shipped: "#1F6FD1", bg: "#061a33" } to match official brand hex
+}, window.TV_CONFIG || {});
+
+const QS = new URLSearchParams(location.search);
+const DEMO = QS.has("demo") || !CFG.SUPABASE_ANON_KEY || CFG.SUPABASE_ANON_KEY === "YOUR_ANON_KEY_HERE" || typeof supabase === "undefined";
+const client = DEMO ? null : supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+
+// Globals the Ops Live logic reads
+let currentRows = [];
+let currentStockLevels = [];
+
+// Queue logic comes from /ops-logic.js, loaded before this script.
+
+// ---------------------------------------------------------------------
+// KPI targets. Rows in Supabase `kpi_targets` override these defaults.
+// lower  = good when value <= target, watch when <= warn, else off track
+// higher = good when value >= target, watch when >= warn, else off track
+// ---------------------------------------------------------------------
+const DEFAULT_TARGETS = {
+  shipped_48h_pct:  { label: "Shipped within 48 hours", target: 90, warn: 85, direction: "higher", unit: "pct", sort: 1 },
+  overdue_orders:   { label: "Orders past 48 hours", target: 0, warn: 5, direction: "lower", unit: "count", sort: 2 },
+  at_risk_orders:   { label: "Orders nearing 48 hours", target: 15, warn: 30, direction: "lower", unit: "count", sort: 3 },
+  build_pct:        { label: "Build % today", target: 95, warn: 85, direction: "higher", unit: "pct", sort: 4 },
+  held_orders:      { label: "Orders on hold", target: 5, warn: 15, direction: "lower", unit: "count", sort: 6 },
+  critical_low:     { label: "Chemicals critically low", target: 0, warn: 5, direction: "lower", unit: "count", sort: 7 },
+  blocking_builds:  { label: "Chemicals to build", target: 0, warn: 5, direction: "lower", unit: "count", sort: 8 },
+  turnover_units:   { label: "Inventory turnover", target: 6, warn: 4, direction: "higher", unit: "x", sort: 9 },
+};
+let TARGETS = JSON.parse(JSON.stringify(DEFAULT_TARGETS));
+
+function kpiState(key, value) {
+  const t = TARGETS[key];
+  if (!t || value == null || isNaN(value)) return "idle";
+  if (t.direction === "lower") {
+    if (value <= t.target) return "good";
+    if (t.warn != null && value <= t.warn) return "warn";
+    return "bad";
+  }
+  if (value >= t.target) return "good";
+  if (t.warn != null && value >= t.warn) return "warn";
+  return "bad";
+}
+function goalText(key) {
+  const t = TARGETS[key];
+  if (!t) return "";
+  const v = t.unit === "pct" ? `${t.target}%` : t.unit === "x" ? `${t.target}x a year` : t.target;
+  if (t.direction === "lower") return t.target === 0 ? "Goal: zero" : `Goal: ${v} or fewer`;
+  return `Goal: ${v} or better`;
+}
+
+// Fallback safety tips if the tv_content table has none yet
+const DEFAULT_SAFETY_TIPS = [
+  "Check the SDS before handling any chemical you haven't worked with this week.",
+  "Ground and bond drums before transferring flammable liquids.",
+  "Goggles, gloves and apron on before opening any corrosive.",
+  "Never mix acids and bases in the same funnel or container.",
+  "Keep aisles and eyewash stations clear at all times.",
+  "Label every secondary container the moment it's filled.",
+  "Lift with your legs. Use the drum dolly for anything over 50 lbs.",
+  "Report every spill, no matter how small, to your lead.",
+  "Close containers when you're not actively pouring from them.",
+  "Know where the nearest spill kit and fire extinguisher are.",
+  "Store oxidizers away from flammables and organics.",
+  "Check gloves for tears before every task.",
+  "HAZMAT labels go on before the box is sealed, not after.",
+  "Wash hands before breaks and at the end of every shift.",
+  "If it doesn't look right, stop and ask. Nobody gets in trouble for asking.",
+];
+const DEFAULT_BEST_PRACTICES = {
+  shipping: [
+    "Scan every item before it goes in the box.",
+    "Match the label to the packing slip before you seal.",
+    "Double-box glass and fill every void so nothing shifts.",
+    "Liner seal and tape on every liquid closure.",
+    "Orientation arrows up on every liquid shipment.",
+    "Weigh every package. A weight that's off means something is off.",
+    "One order on the bench at a time.",
+    "Check the proper shipping name and UN number against the SDS on every HAZMAT box.",
+    "Stage pickups by carrier to keep the dock clear.",
+  ],
+  production: [
+    "Verify the lot number on the bulk container before you fill.",
+    "Label containers before filling, not after.",
+    "Record fill weights as you go, not at the end of the batch.",
+    "Complete each build in Finale as soon as the batch is done.",
+    "Rinse and dry funnels between chemicals.",
+    "Torque caps to spec and check every seal.",
+    "Return bulk containers to their marked spot after use.",
+    "Keep the fill area clear of empties and packaging.",
+  ],
+};
+let CONTENT = [];   // rows from tv_content
+
+function contentFor(screen, kinds) {
+  const now = Date.now();
+  return CONTENT.filter(c => {
+    if (c.active === false) return false;
+    if (kinds && !kinds.includes(c.kind)) return false;
+    if (c.starts_at && new Date(c.starts_at).getTime() > now) return false;
+    if (c.ends_at && new Date(c.ends_at).getTime() < now) return false;
+    const screens = Array.isArray(c.screens) ? c.screens : [c.screens || "all"];
+    return screens.includes("all") || screens.includes(screen);
+  }).sort((a, b) => (a.sort || 0) - (b.sort || 0));
+}
+function bestPractices(screen) {
+  const rows = contentFor(screen, ["best_practice"]).map(r => r.body);
+  return rows.length ? rows : (DEFAULT_BEST_PRACTICES[screen] || []);
+}
+function safetyTips(screen) {
+  const rows = contentFor(screen, ["safety_tip"]).map(r => r.body);
+  return rows.length ? rows : DEFAULT_SAFETY_TIPS;
+}
+
+// ---------------------------------------------------------------------
+// Data loading
+// ---------------------------------------------------------------------
+async function fetchAllRows(table, { orderCol = "id", ascending = true, filter = null } = {}) {
+  const pageSize = 1000;
+  const all = [];
+  let start = 0;
+  while (true) {
+    let q = client.from(table).select("*");
+    if (filter) q = filter(q);
+    const { data, error } = await q.order(orderCol, { ascending }).range(start, start + pageSize - 1);
+    if (error) throw error;
+    const batch = data || [];
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+    start += pageSize;
+  }
+  return all;
+}
+async function soft(p, fallback) { try { return await p; } catch (e) { console.warn(e); return fallback; } }
+
+let healthToday = [];
+let productionRows = [];
+let flowRange = null;        // {outByDate, inByDate}
+let shipped48 = null;
+let lastOk = null;
+let lastError = null;
+let GOAL_OVERRIDES = {};     // orders_out_daily, units_built_daily, builds_daily from kpi_targets
+
+// ---- Calendar helpers (Central time, Mon-Fri business weeks) ----
+const WD = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+function chicagoDateStr(ms) { const p = chicagoPartsForInstant(ms); return `${p.year}-${p.month}-${p.day}`; }
+function businessWeek(offsetWeeks) {
+  let d = chicagoMidnightMs(Date.now(), 0);
+  for (let i = 0; i < 7 && chicagoPartsForInstant(d).weekday !== "Mon"; i++) d = chicagoMidnightMs(d, -1);
+  if (offsetWeeks) d = chicagoMidnightMs(d, 7 * offsetWeeks);
+  return WD.map((wd, i) => { const ms = chicagoMidnightMs(d, i); return { date: chicagoDateStr(ms), wd, ms }; });
+}
+function shiftFraction(ms, [startH, endH]) {
+  const p = chicagoPartsForInstant(ms);
+  if (p.weekday === "Sat" || p.weekday === "Sun") return null;
+  const h = +p.hour + (+p.minute) / 60;
+  return Math.max(0, Math.min(1, (h - startH) / (endH - startH)));
+}
+
+// ---- Pace: today and week-to-date against a daily target ----
+// Target = explicit goal from kpi_targets if set, else last week's
+// average business day x BASELINE_MULT (needs 3+ days with activity).
+function paceSeries({ valueByDate, override, shift, requireActivityToday }) {
+  const thisWeek = businessWeek(0), prevWeek = businessWeek(-1);
+  const todayStr = chicagoDateStr(Date.now());
+  const prevVals = prevWeek.map(d => valueByDate[d.date] || 0).filter(v => v > 0);
+  const prevAvg = prevVals.length ? prevVals.reduce((a, b) => a + b, 0) / prevVals.length : null;
+  let daily = null, basis = null;
+  if (override != null) { daily = override; basis = "goal"; }
+  else if (prevVals.length >= 3) { daily = Math.ceil(prevAvg * CFG.BASELINE_MULT); basis = "baseline"; }
+  const days = thisWeek.map(d => ({ ...d, isToday: d.date === todayStr, future: d.date > todayStr, value: d.date <= todayStr ? (valueByDate[d.date] || 0) : null }));
+  const today = days.find(d => d.isToday) || null;
+  const frac = today ? shiftFraction(Date.now(), shift) : null;
+  const pastDays = days.filter(d => d.date < todayStr).length;
+  const todayActive = today && (!requireActivityToday || today.value > 0);
+  const weekValue = days.reduce((s, d) => s + (d.value || 0), 0);
+  return {
+    daily, basis, prevAvg, prevDays: prevVals.length, days,
+    weekTarget: daily != null ? daily * 5 : null,
+    today: today ? { value: today.value, frac, active: todayActive, expected: daily != null ? daily * frac : null } : null,
+    week: { value: weekValue, expected: daily != null ? daily * (pastDays + (todayActive ? frac : 0)) : null },
+  };
+}
+function paceState(value, expected) {
+  if (expected == null || expected < 1) return "idle";
+  const r = value / expected;
+  return r >= 1 ? "good" : r >= CFG.PACE_WARN ? "warn" : "bad";
+}
+function paceGap(value, expected) {
+  if (expected == null || expected < 1) return "";
+  const d = Math.round(value - expected);
+  return d >= 0 ? `${d.toLocaleString()} ahead of pace` : `${(-d).toLocaleString()} behind pace`;
+}
+function targetNote(series) {
+  if (series.basis === "goal") return `Goal: ${series.daily.toLocaleString()} a day`;
+  if (series.basis === "baseline") return `Target: ${series.daily.toLocaleString()} a day (last week +${Math.round((CFG.BASELINE_MULT - 1) * 100)}%)`;
+  return "Setting baseline: target starts after one full week of data";
+}
+
+async function loadCore(opts) {
+  currentRows = await fetchAllRows("live_queue");
+  currentStockLevels = await soft(fetchAllRows("stock_levels"), []);
+  const todayIso = new Date(chicagoMidnightMs(Date.now(), 0)).toISOString();
+  healthToday = await soft(fetchAllRows("health_snapshots", { filter: q => q.gte("pulled_at", todayIso) }), []);
+  if (opts.turnover) await loadTurnover();
+  if (opts.production) {
+    const since = new Date(businessWeek(-1)[0].ms).toISOString();
+    productionRows = await soft(fetchAllRows("production_output", { orderCol: "occurred_at", filter: q => q.gte("occurred_at", since) }), []);
+  }
+  const content = await soft(fetchAllRows("tv_content"), null);
+  if (content) CONTENT = content;
+  const targets = await soft(fetchAllRows("kpi_targets", { orderCol: "kpi_key" }), []);
+  TARGETS = JSON.parse(JSON.stringify(DEFAULT_TARGETS));
+  GOAL_OVERRIDES = {};
+  for (const t of targets) {
+    if (["orders_out_daily", "units_built_daily", "builds_daily"].includes(t.kpi_key)) {
+      if (t.active !== false && t.target != null) GOAL_OVERRIDES[t.kpi_key] = +t.target;
+      continue;
+    }
+    if (t.active === false) { delete TARGETS[t.kpi_key]; continue; }
+    const base = TARGETS[t.kpi_key] || {};
+    TARGETS[t.kpi_key] = Object.assign({}, base, {
+      label: t.label || base.label || t.kpi_key,
+      target: t.target != null ? +t.target : base.target,
+      warn: t.warn != null ? +t.warn : base.warn,
+      direction: t.direction || base.direction || "higher",
+      unit: t.unit || base.unit || "count",
+      sort: t.sort != null ? +t.sort : base.sort || 99,
+    });
+  }
+}
+
+let lastOrderFlowFetch = 0;
+async function loadOrderFlow() {
+  if (Date.now() - lastOrderFlowFetch < CFG.ORDER_FLOW_REFRESH_MS && flowRange) return;
+  lastOrderFlowFetch = Date.now();
+  const start = businessWeek(-1)[0].date, end = chicagoDateStr(Date.now());
+  try {
+    // Same source as Ops Live's Orders In / Out: the order_flow() database function
+    const { data, error } = await client.rpc("order_flow", { p_start: start, p_end: end });
+    if (error) throw new Error(error.message);
+    const outByDate = {}, inByDate = {};
+    (data.dailyLabels || []).forEach((d, i) => { outByDate[d] = (data.dailyOut || [])[i] || 0; inByDate[d] = (data.dailyIn || [])[i] || 0; });
+    flowRange = { outByDate, inByDate };
+  } catch (e) { console.warn("order_flow:", e); }
+  if (CFG.SHIPPED_48H_URL) {
+    try { const r = await fetch(CFG.SHIPPED_48H_URL); const j = await r.json(); if (j && j.pct != null) shipped48 = +j.pct; }
+    catch (e) { console.warn("shipped48:", e); }
+  }
+}
+
+// Inventory turnover by units, Dripping Springs, last 365 days: the same
+// turnover_totals() lookup Ops Live's Inventory Turnover tab uses
+let turnoverUnits = null, lastTurnoverFetch = 0;
+async function loadTurnover() {
+  if (Date.now() - lastTurnoverFetch < 3600000 && lastTurnoverFetch) return;
+  lastTurnoverFetch = Date.now();
+  try {
+    const latest = await client.from("turnover_snapshots").select("pulled_at").order("pulled_at", { ascending: false }).limit(1);
+    const day = latest.data && latest.data[0] && latest.data[0].pulled_at;
+    if (!day) return;
+    const end = new Date(String(day).slice(0, 10) + "T00:00:00Z");
+    const startD = new Date(end); startD.setUTCDate(startD.getUTCDate() - 364);
+    const { data, error } = await client.rpc("turnover_totals", { p_start: startD.toISOString().slice(0, 10), p_end: String(day).slice(0, 10) });
+    if (error) throw new Error(error.message);
+    const v = data && data.groups && data.groups.main ? data.groups.main.turns_units : null;
+    turnoverUnits = v == null ? null : +v;
+  } catch (e) { console.warn("turnover:", e); }
+}
+
+function productionByDate() {
+  const units = {}, builds = {}, stockAdded = {};
+  const buildIds = {};
+  let lastBuildAt = null;
+  for (const r of productionRows) {
+    const d = chicagoDateStr(new Date(r.occurred_at).getTime());
+    const u = parseFloat(r.units) || 0;
+    if (r.source === "finale_build") {
+      units[d] = (units[d] || 0) + u;
+      (buildIds[d] = buildIds[d] || new Set()).add(r.ref_id);
+      if (!lastBuildAt || r.occurred_at > lastBuildAt) lastBuildAt = r.occurred_at;
+    } else if (r.source === "stock_increase") {
+      stockAdded[d] = (stockAdded[d] || 0) + u;
+    }
+  }
+  for (const d in buildIds) builds[d] = buildIds[d].size;
+  return { units, builds, stockAdded, lastBuildAt };
+}
+
+// ---------------------------------------------------------------------
+// Model: everything the three screens show, from the Ops Live logic
+// ---------------------------------------------------------------------
+function computeModel() {
+  const rows = currentRows;
+  const shippingList = buildShippingList(rows);
+  const productionList = buildProductionList(shippingList);
+  const stockBuilds = buildStockBuilds(shippingList);
+  const held = buildHeldSummary(rows);
+  const summary = buildSummary(rows);
+
+  let atRisk = 0, overdue = 0;
+  for (const o of shippingList) {
+    if (o.hours >= OVERDUE_HOURS) overdue++;
+    else if (o.hours >= AT_RISK_HOURS) atRisk++;
+  }
+  const pickable = shippingList.filter(o => o.isPickable).length;
+  const shortageOverdue = shippingList.filter(o => !o.isPickable && o.hours >= OVERDUE_HOURS).length;
+
+  const prodSnaps = healthToday.filter(s => isProductionHours(new Date(s.pulled_at).getTime()) && s.build_hit_rate_pct != null);
+  const liveBuildPct = shippingList.length ? 100 - (shortageOverdue / shippingList.length * 100) : 100;
+  const buildPctToday = prodSnaps.length ? prodSnaps.reduce((s, x) => s + parseFloat(x.build_hit_rate_pct), 0) / prodSnaps.length : null;
+
+  const turnover = turnoverUnits, turnoverDays = null;
+
+  const prod = productionByDate();
+  const todayStr = chicagoDateStr(Date.now());
+  const ship = flowRange ? paceSeries({ valueByDate: flowRange.outByDate, override: GOAL_OVERRIDES.orders_out_daily, shift: CFG.SHIP_SHIFT }) : null;
+  const units = paceSeries({ valueByDate: prod.units, override: GOAL_OVERRIDES.units_built_daily, shift: CFG.BUILD_SHIFT, requireActivityToday: true });
+  const builds = paceSeries({ valueByDate: prod.builds, override: GOAL_OVERRIDES.builds_daily, shift: CFG.BUILD_SHIFT, requireActivityToday: true });
+
+  const updatedAt = rows.length ? rows.reduce((m, r) => r.pulled_at > m ? r.pulled_at : m, rows[0].pulled_at) : null;
+  return {
+    queue: shippingList.length, atRisk, overdue, pickable, shortageOverdue,
+    blocked: shippingList.length - pickable,
+    held: held.total_held,
+    freight: (summary.core_queue_counts.Freight || 0) + (summary.core_queue_counts.Both || 0),
+    buildsCount: productionList.length,
+    ordersWaitingOnBuilds: productionList.reduce((s, p) => s + p.ordersBlocked, 0),
+    stockBuildsCount: stockBuilds.length,
+    criticalLow: stockBuilds.filter(p => p.pctOfMax < 25).length,
+    buildPctToday, liveBuildPct,
+    turnover, turnoverDays,
+    ship, inToday: flowRange ? (flowRange.inByDate[todayStr] || 0) : null,
+    units, builds,
+    stockAddedToday: prod.stockAdded[todayStr] || 0,
+    stockAddedWeek: businessWeek(0).reduce((s, d) => s + (prod.stockAdded[d.date] || 0), 0),
+    lastBuildAt: prod.lastBuildAt,
+    productionLogged: productionRows.length > 0,
+    shipped48,
+    updatedAt,
+  };
+}
+
+// ---------------------------------------------------------------------
+// Sample data (demo mode only, clearly marked on screen)
+// ---------------------------------------------------------------------
+function demoModel() {
+  const prev = businessWeek(-1), cur = businessWeek(0);
+  const todayStr = chicagoDateStr(Date.now());
+  const out = {}, inn = {}, units = {}, builds = {}, added = {};
+  const pOut = [162, 171, 149, 158, 140], cOut = [176, 182, 151, 168, 160];
+  const pUnits = [410, 385, 450, 398, 372], cUnits = [455, 402, 470, 430, 300];
+  const pBuilds = [14, 12, 15, 13, 11], cBuilds = [15, 13, 16, 14, 9];
+  prev.forEach((d, i) => { out[d.date] = pOut[i]; units[d.date] = pUnits[i]; builds[d.date] = pBuilds[i]; });
+  cur.forEach((d, i) => {
+    if (d.date > todayStr) return;
+    const today = d.date === todayStr;
+    out[d.date] = today ? 131 : cOut[i]; inn[d.date] = today ? 140 : cOut[i] + 6;
+    units[d.date] = today ? 372 : cUnits[i]; builds[d.date] = today ? 12 : cBuilds[i];
+    added[d.date] = today ? 165 : cUnits[i] - 20;
+  });
+  const prodTodayIso = new Date(Date.now() - 50 * 60000).toISOString();
+  return {
+    queue: 142, atRisk: 23, overdue: 4, pickable: 118, shortageOverdue: 1, blocked: 24, held: 6, freight: 21,
+    buildsCount: 6, ordersWaitingOnBuilds: 24, stockBuildsCount: 19, criticalLow: 3,
+    buildPctToday: 93.4, liveBuildPct: 99.3, turnover: null, turnoverDays: 14,
+    ship: paceSeries({ valueByDate: out, shift: CFG.SHIP_SHIFT }), inToday: 140,
+    units: paceSeries({ valueByDate: units, shift: CFG.BUILD_SHIFT, requireActivityToday: true }),
+    builds: paceSeries({ valueByDate: builds, shift: CFG.BUILD_SHIFT, requireActivityToday: true }),
+    stockAddedToday: added[todayStr] || 0,
+    stockAddedWeek: cur.reduce((s, d) => s + (added[d.date] || 0), 0),
+    lastBuildAt: prodTodayIso, productionLogged: true,
+    shipped48: 91.8,
+    updatedAt: new Date(Date.now() - 6 * 60000).toISOString(),
+  };
+}
+const DEMO_CONTENT = [
+  { kind: "announcement", title: "Open enrollment", body: "Benefits open enrollment closes Friday, Oct 30. See HR with questions.", screens: ["all"], priority: "normal" },
+  { kind: "announcement", title: "Carrier cutoff moves earlier", body: "UPS pickup moves to 3:30 PM starting Monday. Have pallets staged by 3:00.", screens: ["shipping", "company"], priority: "urgent" },
+  { kind: "announcement", title: "New lab room schedule", body: "Lab Room 2 is reserved for acid downpacks Tuesday and Thursday mornings.", screens: ["production", "company"], priority: "normal" },
+  { kind: "capability", title: "Custom packaging", body: "We package from 1 oz bottles to 275-gallon totes, with custom labels and blends.", screens: ["company"] },
+  { kind: "capability", title: "HAZMAT shipping", body: "Certified to ship regulated chemicals by ground and freight, every business day.", screens: ["company"] },
+  { kind: "goal", title: "Q4 goal: 90% shipped within 48 hours", body: "Every order out the door within 48 hours of being placed. We were at 92.5% last quarter.", screens: ["company"] },
+  { kind: "shoutout", title: "Thank you, Shipping", body: "Record day Tuesday: 214 orders out the door. Great work, everyone.", screens: ["company"] },
+];
+
+// ---------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const n0 = v => v == null || isNaN(v) ? "—" : Math.round(v).toLocaleString();
+const ageClass = h => h >= OVERDUE_HOURS ? "age-bad" : h >= AT_RISK_HOURS ? "age-warn" : "";
+const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+function minutesAgo(iso) { return iso ? Math.round((Date.now() - new Date(iso).getTime()) / 60000) : null; }
+function agoText(mins) {
+  if (mins == null) return "never";
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.floor(mins / 60);
+  return h < 24 ? `${h}h ${mins % 60}m ago` : `${Math.floor(h / 24)}d ago`;
+}
+
+
+// ---------------------------------------------------------------------
+// Pace visuals shared by all screens
+// ---------------------------------------------------------------------
+const PACE_WORD = { good: "On pace", warn: "Watch", bad: "Behind", idle: "" };
+function paceBarHtml(value, target, expected, state, cls = "") {
+  if (target == null || target <= 0) return "";
+  const max = Math.max(target, value) * 1.0;
+  const fill = Math.min(100, value / max * 100);
+  const goalAt = target / max * 100;
+  const tick = expected != null && expected >= 1 && expected < target ? `<b class="tick" style="left:${expected / max * 100}%"><em>Pace ${Math.round(expected).toLocaleString()}</em></b>` : "";
+  const over = value > target ? `<b class="goalmark" style="left:${goalAt}%"></b>` : "";
+  return `<div class="pacebar ${cls}" data-state="${state}"><i style="width:${fill}%"></i>${tick}${over}</div>`;
+}
+function weekColumnsHtml(series, { below } = {}) {
+  const vals = series.days.map(d => d.value || 0);
+  const max = Math.max(series.daily || 0, ...vals, 1) * 1.08;
+  const st = d => d.future ? "future" : d.isToday ? "today" : (series.daily ? (d.value >= series.daily ? "good" : d.value >= series.daily * CFG.PACE_WARN ? "warn" : "bad") : "idle");
+  const line = series.daily ? `<div class="targetline" style="bottom:${series.daily / max * 100}%"><span>Target ${series.daily.toLocaleString()}</span></div>` : "";
+  return `<div class="cols">
+    <div class="plot">${line}${series.days.map(d => `<div class="colbar" data-state="${st(d)}"><span class="v">${d.future ? "" : n0(d.value)}</span><i style="height:${d.future ? 0 : (d.value || 0) / max * 100}%"></i></div>`).join("")}</div>
+    <div class="labels">${series.days.map(d => `<div class="wd" data-state="${st(d)}">${d.isToday ? "Today" : d.wd}${below ? `<small>${below(d) || "&nbsp;"}</small>` : ""}</div>`).join("")}</div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------
+// Stage scaling, clock, ticker, refresh loop
+// ---------------------------------------------------------------------
+function fitStage() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+  document.getElementById("stage").style.transform = `translate(-50%, -50%) scale(${s})`;
+}
+function tickClock() {
+  const now = new Date();
+  const t = now.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
+  const d = now.toLocaleDateString("en-US", { timeZone: "America/Chicago", weekday: "long", month: "short", day: "numeric" });
+  const el = document.querySelector(".andon .clock");
+  if (el) el.innerHTML = `<div class="time">${t}</div><div class="date">${d}</div>`;
+}
+
+const Ticker = {
+  items: [], i: 0, tipIdx: Math.floor(Math.random() * 1000),
+  build: null,
+  next() {
+    if (this.i >= this.items.length) { this.items = this.build ? this.build() : []; this.i = 0; }
+    const el = document.querySelector(".ticker");
+    if (!el || !this.items.length) return;
+    const it = this.items[this.i++];
+    const msg = el.querySelector(".msg");
+    msg.classList.add("fade");
+    setTimeout(() => {
+      el.dataset.kind = it.kind;
+      el.querySelector(".kind").textContent = it.label;
+      msg.textContent = it.text;
+      msg.classList.remove("fade");
+    }, 450);
+  },
+  tip(screen) { const tips = safetyTips(screen); return tips[(this.tipIdx++) % tips.length]; },
+};
+
+function renderMeta() {
+  const el = document.querySelector(".ticker .meta, .scroller .meta");
+  if (!el) return;
+  if (DEMO) { el.innerHTML = `<div><span class="demo">Sample data, not live</span><br>Add the key in tv-config.js</div>`; return; }
+  const updated = MODEL && MODEL.updatedAt;
+  const mins = minutesAgo(updated);
+  const stale = mins != null && mins > CFG.STALE_MINUTES && isProductionHours(Date.now());
+  let html = stale ? `<span class="stale">Queue data ${agoText(mins)}</span>` : `Queue updated ${agoText(mins)}`;
+  if (lastError) html += `<br><span class="err">Can't reach the database</span>`;
+  else html += `<br>Refreshes every ${Math.round(CFG.REFRESH_MS / 60000)} min`;
+  el.innerHTML = `<div>${html}</div>`;
+}
+
+
+// ---------------------------------------------------------------------
+// Scrolling ticker (Shipping and Production): safety + best practice,
+// with any announcements for that screen mixed in
+// ---------------------------------------------------------------------
+const Scroller = {
+  key: "",
+  render(screen) {
+    const el = document.querySelector(".scroller .track");
+    if (!el) return;
+    const safety = safetyTips(screen), best = bestPractices(screen);
+    const items = [];
+    for (const a of contentFor(screen, ["announcement"])) {
+      items.push({ kind: a.priority === "urgent" ? "urgent" : "announcement", tag: a.priority === "urgent" ? "Heads up" : "Announcement", text: a.title ? `${a.title}. ${a.body}` : a.body });
+    }
+    const n = Math.max(safety.length, best.length);
+    for (let i = 0; i < n; i++) {
+      if (safety[i]) items.push({ kind: "safety_tip", tag: "Safety", text: safety[i] });
+      if (best[i]) items.push({ kind: "best_practice", tag: "Best practice", text: best[i] });
+    }
+    const key = JSON.stringify(items);
+    if (key === this.key) return;
+    this.key = key;
+    const html = items.map(it => `<span class="item" data-kind="${it.kind}"><span class="tag">${esc(it.tag)}</span>${esc(it.text)}</span>`).join("");
+    el.innerHTML = html + html;   // two copies for a seamless loop
+    requestAnimationFrame(() => {
+      const half = el.scrollWidth / 2;
+      el.style.setProperty("--dur", `${Math.max(20, half / CFG.TICKER_SPEED)}s`);
+    });
+  },
+};
+
+let MODEL = null;
+function setAndon(state, statusText) {
+  const a = document.querySelector(".andon");
+  a.dataset.state = state;
+  a.querySelector(".status").textContent = statusText;
+}
+
+async function start({ screen, render, tickerItems, needs = {} }) {
+  for (const [k, v] of Object.entries(CFG.COLORS || {})) document.documentElement.style.setProperty(`--${k}`, v);
+  fitStage();
+  addEventListener("resize", fitStage);
+  const scrolling = !!document.querySelector(".scroller");
+  if (scrolling) Scroller.render(screen);
+  tickClock(); setInterval(tickClock, 15000);
+  Ticker.build = () => tickerItems ? tickerItems(MODEL) : [];
+
+  async function refresh() {
+    try {
+      if (DEMO) { CONTENT = DEMO_CONTENT; MODEL = demoModel(); }
+      else {
+        await loadCore(needs);
+        if (needs.orderFlow) await loadOrderFlow();
+        MODEL = computeModel();
+      }
+      lastOk = Date.now(); lastError = null;
+      render(MODEL);
+      if (scrolling) Scroller.render(screen);
+    } catch (e) {
+      console.error(e);
+      lastError = e;
+      if (MODEL) render(MODEL);
+      else setAndon("idle", "Waiting for data. Check the network connection.");
+    }
+    renderMeta();
+  }
+  await refresh();
+  setInterval(refresh, CFG.REFRESH_MS);
+  setInterval(renderMeta, 30000);
+  if (!scrolling) { Ticker.next(); setInterval(() => Ticker.next(), CFG.TICKER_MS); }
+  setTimeout(() => location.reload(), CFG.RELOAD_HOURS * 3600000);
+}
+window.TV = { paceBarHtml, weekColumnsHtml, paceState, paceGap, targetNote, PACE_WORD, start, setAndon, kpiState, goalText, contentFor, TARGETS: () => TARGETS, Ticker, esc, n0, ageClass, plural, formatAge, CFG };
+</script>
+</head>
+<body>
+<!--TITLE:Production-->
+<div id="stage">
+  <header class="andon" data-state="idle">
+    <div class="dept">Production</div>
+    <div class="status">Loading…</div>
+    <div class="clock"></div>
+  </header>
+  <main style="grid-template-rows: 1fr 214px;">
+    <section style="display:grid; grid-template-columns: 1fr 1.3fr; gap: 24px; min-height:0;">
+      <div class="panel" id="today" data-section="built"></div>
+      <div class="panel" id="week" data-section="built"></div>
+    </section>
+    <section class="tiles" style="grid-template-columns: repeat(5, 1fr);">
+      <div class="tile" id="t-build" data-section="built"><div class="label"><span>Build % today</span><span class="pill"></span></div><div class="value">–</div><div class="sub"></div></div>
+      <div class="tile" id="t-added" data-section="built"><div class="label"><span>Stock added today</span><span class="pill"></span></div><div class="value">–</div><div class="sub"></div></div>
+      <div class="tile" id="t-blocking" data-section="orders"><div class="label"><span>Shortages</span><span class="pill"></span></div><div class="value">–</div><div class="sub"></div></div>
+      <div class="tile" id="t-critical" data-section="built"><div class="label"><span>Critically low</span><span class="pill"></span></div><div class="value">–</div><div class="sub"></div></div>
+      <div class="tile" id="t-below" data-section="built"><div class="label"><span>Below reorder max</span><span class="pill"></span></div><div class="value">–</div><div class="sub"></div></div>
+    </section>
+  </main>
+  <footer class="scroller"><div class="lane"><div class="track"></div></div><div class="meta"></div></footer>
+</div>
+<style>
+  main .tiles .tile .value { font-size: 96px; }
+  main .tiles .tile .value small { font-size: 44px; }
+  main .tiles .tile .label { font-size: 28px; }
+</style>
+<script>
+const PILL = { good: "On track", warn: "Watch", bad: "Off track", idle: "" };
+function tileP(id, value, state, sub) {
+  const el = document.getElementById(id);
+  el.querySelector(".value").innerHTML = value;
+  el.querySelector(".sub").textContent = sub;
+  const p = el.querySelector(".pill");
+  p.dataset.state = state; p.textContent = PILL[state] || "";
+}
+function timeCT(iso) { return new Date(iso).toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" }); }
+function isToday(iso) { return iso && chicagoDateStr(new Date(iso).getTime()) === chicagoDateStr(Date.now()); }
+function measure(label, series, size) {
+  const t = series.today;
+  if (!t) return "";
+  const st = TV.paceState(t.value, t.expected);
+  return `<div class="measure">
+    <div class="mlabel">${label}</div>
+    <div class="hero-line" style="margin-bottom:0"><span class="hero ${size}">${n0(t.value)}</span>${series.daily ? `<span class="of">of ${n0(series.daily)}</span>` : ""}<span class="gap" data-state="${st}">${t.active ? TV.paceGap(t.value, t.expected) : ""}</span></div>
+    ${TV.paceBarHtml(t.value, series.daily, t.active ? t.expected : null, st, "thin")}</div>`;
+}
+function render(m) {
+  const u = m.units, b = m.builds;
+  const todayEl = document.getElementById("today"), weekEl = document.getElementById("week");
+  const uw = TV.paceState(u.week.value, u.week.expected);
+
+  if (m.shortageOverdue > 0) TV.setAndon("bad", `${plural(m.shortageOverdue, "overdue order is", "overdue orders are")} waiting on a build`);
+  else if (u.today && u.today.active && u.daily) TV.setAndon(TV.paceState(u.today.value, u.today.expected), `${n0(u.today.value)} units built today, ${TV.paceGap(u.today.value, u.today.expected)}`);
+  else if (u.weekTarget && u.week.expected) TV.setAndon(uw, `${n0(u.week.value)} units built this week, ${TV.paceGap(u.week.value, u.week.expected)}`);
+  else if (m.buildsCount) TV.setAndon("warn", `${plural(m.buildsCount, "chemical is", "chemicals are")} short for open orders`);
+  else TV.setAndon("good", "No orders are waiting on production");
+
+  if (!m.productionLogged) {
+    todayEl.innerHTML = `<h2>Built today</h2><div class="empty"><strong>No builds logged yet</strong>Completed builds appear here once the production pull is running.</div>`;
+  } else if (!u.today) {
+    todayEl.innerHTML = `<h2>Built today</h2><div class="empty"><strong>Weekend</strong>No production today.</div>`;
+  } else {
+    const last = m.lastBuildAt ? `Last build completed <b>${isToday(m.lastBuildAt) ? timeCT(m.lastBuildAt) : new Date(m.lastBuildAt).toLocaleDateString("en-US", { timeZone: "America/Chicago", weekday: "short" }) + " " + timeCT(m.lastBuildAt)}</b>` : "";
+    todayEl.innerHTML = `<h2>Built today <span class="aside">${u.today.active ? TV.targetNote(u) : "No builds completed yet today"}</span></h2>
+      ${measure("Units", u, "sm")}
+      ${measure("Builds completed", b, "xs")}
+      <div class="note">${last || (u.today.active ? "" : TV.targetNote(u))}</div>`;
+  }
+  weekEl.innerHTML = `
+    <h2>Built this week <span class="aside">${b.weekTarget ? `${n0(b.week.value)} of ${n0(b.weekTarget)} builds` : `${n0(b.week.value)} builds`}</span></h2>
+    <div class="hero-line"><span class="hero xs">${n0(u.week.value)}</span><span class="of">${u.weekTarget ? `of ${n0(u.weekTarget)} units` : "units"}</span><span class="gap" data-state="${uw}">${TV.paceGap(u.week.value, u.week.expected)}</span></div>
+    ${TV.paceBarHtml(u.week.value, u.weekTarget, u.week.expected, uw, "thin")}
+    ${TV.weekColumnsHtml(u, { below: d => d.future ? "" : `${n0((b.days.find(x => x.date === d.date) || {}).value)} builds` })}`;
+
+  const pct = m.buildPctToday != null ? m.buildPctToday : m.liveBuildPct;
+  tileP("t-build", `${n0(pct)}<small>%</small>`, TV.kpiState("build_pct", pct), TV.goalText("build_pct"));
+  tileP("t-added", n0(m.stockAddedToday), "idle", `${n0(m.stockAddedWeek)} this week`);
+  tileP("t-blocking", n0(m.buildsCount), TV.kpiState("blocking_builds", m.buildsCount), `${n0(m.ordersWaitingOnBuilds)} orders waiting`);
+  tileP("t-critical", n0(m.criticalLow), TV.kpiState("critical_low", m.criticalLow), "Under 25% of max");
+  tileP("t-below", n0(m.stockBuildsCount), "idle", "No orders waiting yet");
+}
+TV.start({ screen: "production", render, needs: { production: true } });
+</script>
+
+</body>
+</html>
