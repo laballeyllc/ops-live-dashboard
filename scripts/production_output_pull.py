@@ -15,15 +15,18 @@ Environment variables (GitHub Actions secrets):
   FINALE_BUILDS_REPORT_URL   CSV export URL of a Finale report listing
                              completed builds (see README)
   FINALE_API_KEY, FINALE_API_SECRET   Finale API credentials
-Optional, if your report's column headers differ:
-  BUILD_ID_COL (default "Build ID"), BUILD_PRODUCT_COL ("Product ID"),
-  BUILD_QTY_COL ("Quantity"), BUILD_COMPLETED_COL ("Completed date")
+Optional, if the report's column headers change (defaults match the
+"Completed Builds_lab_alley_tv" report; matching ignores case and extra spaces):
+  BUILD_ID_COL ("Build ID"), BUILD_PRODUCT_COL ("Product to produce"),
+  BUILD_QTY_COL ("Qty to produce"), BUILD_COMPLETED_COL ("Complete transaction timestamp")
+  BUILD_LOOKBACK_DAYS (21): builds older than this are ignored on each run
+The report link may return CSV or Excel (.xlsx); both are read.
 """
 import csv
 import io
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -34,9 +37,10 @@ SB_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 SB_HEADERS = {"apikey": SB_KEY, "Authorization": f"Bearer {SB_KEY}", "Content-Type": "application/json"}
 
 COL_ID = os.environ.get("BUILD_ID_COL", "Build ID")
-COL_PRODUCT = os.environ.get("BUILD_PRODUCT_COL", "Product ID")
-COL_QTY = os.environ.get("BUILD_QTY_COL", "Quantity")
-COL_DONE = os.environ.get("BUILD_COMPLETED_COL", "Completed date")
+COL_PRODUCT = os.environ.get("BUILD_PRODUCT_COL", "Product to produce")
+COL_QTY = os.environ.get("BUILD_QTY_COL", "Qty to produce")
+COL_DONE = os.environ.get("BUILD_COMPLETED_COL", "Complete transaction timestamp")
+LOOKBACK_DAYS = int(os.environ.get("BUILD_LOOKBACK_DAYS", "21"))
 
 
 def sb_select_all(table, select="*", params=None):
@@ -80,30 +84,61 @@ def parse_central(v):
     return None
 
 
+def norm(h):
+    return " ".join(str(h or "").split()).lower()
+
+
+def read_report(content):
+    """Rows as dicts keyed by normalized header, from CSV or .xlsx bytes."""
+    if content[:2] == b"PK":   # .xlsx is a zip file
+        from openpyxl import load_workbook
+        ws = load_workbook(io.BytesIO(content), read_only=True, data_only=True).worksheets[0]
+        it = ws.iter_rows(values_only=True)
+        headers = [norm(h) for h in next(it)]
+        rows = [dict(zip(headers, ["" if v is None else v for v in r])) for r in it]
+    else:
+        reader = csv.reader(io.StringIO(content.decode("utf-8-sig")))
+        headers = [norm(h) for h in next(reader)]
+        rows = [dict(zip(headers, r)) for r in reader]
+    return headers, rows
+
+
+def to_utc(v):
+    if isinstance(v, datetime):   # Excel cells may already be datetimes (Central)
+        return v.replace(tzinfo=CENTRAL).astimezone(timezone.utc)
+    return parse_central(str(v))
+
+
 def pull_finale_builds():
     url = os.environ.get("FINALE_BUILDS_REPORT_URL")
     if not url:
         print("FINALE_BUILDS_REPORT_URL not set; skipping completed builds")
         return 0
-    r = requests.get(url, auth=(os.environ["FINALE_API_KEY"], os.environ["FINALE_API_SECRET"]), timeout=120)
+    r = requests.get(url, auth=(os.environ["FINALE_API_KEY"], os.environ["FINALE_API_SECRET"]), timeout=300)
     r.raise_for_status()
-    reader = csv.DictReader(io.StringIO(r.content.decode("utf-8-sig")))
-    missing = [c for c in (COL_ID, COL_PRODUCT, COL_QTY, COL_DONE) if c not in (reader.fieldnames or [])]
+    headers, rows = read_report(r.content)
+    cols = {k: norm(v) for k, v in (("id", COL_ID), ("product", COL_PRODUCT), ("qty", COL_QTY), ("done", COL_DONE))}
+    missing = [v for v in cols.values() if v not in headers]
     if missing:
-        sys.exit(f"Finale builds report is missing columns {missing}. Found: {reader.fieldnames}")
-    merged = {}
-    for row in reader:
-        done = parse_central(row[COL_DONE])
-        build_id, product = row[COL_ID].strip(), row[COL_PRODUCT].strip()
+        sys.exit(f"Finale builds report is missing columns {missing}. Found: {headers}")
+    cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
+    merged, skipped_old = {}, 0
+    for row in rows:
+        done = to_utc(row.get(cols["done"]))
+        build_id, product = str(row.get(cols["id"]) or "").strip(), str(row.get(cols["product"]) or "").strip()
         if not (done and build_id and product):
+            continue
+        if done < cutoff:
+            skipped_old += 1
             continue
         key = (build_id, product)
         if key not in merged:
             merged[key] = {"source": "finale_build", "ref_id": build_id, "product_id": product,
                            "units": 0, "occurred_at": done.isoformat()}
-        merged[key]["units"] += parse_number(row[COL_QTY])
+        merged[key]["units"] += parse_number(row.get(cols["qty"]))
     sb_upsert("production_output", list(merged.values()), "source,ref_id,product_id")
-    print(f"Completed builds: upserted {len(merged)} build lines")
+    print(f"Completed builds: upserted {len(merged)} build lines from the last {LOOKBACK_DAYS} days "
+          f"({skipped_old} older rows ignored)")
     return len(merged)
 
 
