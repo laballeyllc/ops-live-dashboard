@@ -255,7 +255,8 @@ const CFG = Object.assign({
   ORDER_FLOW_REFRESH_MS: 180000,
   TICKER_MS: 10000,
   PANEL_MS: 15000,
-  RELOAD_HOURS: 6,              // full page reload to pick up new code
+  RELOAD_HOURS: 6,              // full page reload as a safety net
+  UPDATE_CHECK_MS: 300000,      // check for a new deploy every 5 minutes and reload if found
   STALE_MINUTES: 90,            // warn if the pull hasn't run in this long during shift hours
   SHIP_SHIFT: [8, 17],          // Central hours used to pace orders shipped through the day
   BUILD_SHIFT: [8, 16],         // Central hours used to pace production through the day
@@ -768,6 +769,43 @@ const Scroller = {
   },
 };
 
+// ---------------------------------------------------------------------
+// New-deploy check: every few minutes, fetch this page, ops-logic.js and
+// tv-config.js fresh from the site. If any of them changed since this
+// screen loaded, reload so the change shows without anyone touching the TV.
+// Guarded so a misbehaving site can't cause a reload loop.
+// ---------------------------------------------------------------------
+const Updater = {
+  baseline: null,
+  files() {
+    const page = location.href.split("#")[0];
+    return [page, new URL("/ops-logic.js", location.href).href, new URL("tv-config.js", location.href).href];
+  },
+  hash(str) { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return `${str.length}:${h}`; },
+  async fingerprint() {
+    const parts = await Promise.all(this.files().map(async u => {
+      const r = await fetch(u, { cache: "no-store" });
+      if (!r.ok) throw new Error(`${u} ${r.status}`);
+      return this.hash(await r.text());
+    }));
+    return parts.join("|");
+  },
+  async check() {
+    if (location.protocol === "file:") return;
+    try {
+      const fp = await this.fingerprint();
+      if (this.baseline == null) { this.baseline = fp; return; }
+      if (fp === this.baseline) return;
+      let last = 0;
+      try { last = +localStorage.getItem("tv-last-update-reload") || 0; } catch (e) {}
+      if (Date.now() - last < 20 * 60000) return;   // at most one auto-reload per 20 minutes
+      try { localStorage.setItem("tv-last-update-reload", String(Date.now())); } catch (e) {}
+      console.log("New deploy found; reloading.");
+      location.reload();
+    } catch (e) { console.warn("update check:", e); }   // network blip: try again next time
+  },
+};
+
 let MODEL = null;
 function setAndon(state, statusText) {
   const a = document.querySelector(".andon");
@@ -807,6 +845,7 @@ async function start({ screen, render, tickerItems, needs = {} }) {
   setInterval(refresh, CFG.REFRESH_MS);
   setInterval(renderMeta, 30000);
   if (!scrolling) { Ticker.next(); setInterval(() => Ticker.next(), CFG.TICKER_MS); }
+  Updater.check(); setInterval(() => Updater.check(), CFG.UPDATE_CHECK_MS);
   setTimeout(() => location.reload(), CFG.RELOAD_HOURS * 3600000);
 }
 window.TV = { paceBarHtml, weekColumnsHtml, paceState, paceGap, targetNote, PACE_WORD, start, setAndon, kpiState, goalText, contentFor, TARGETS: () => TARGETS, Ticker, esc, n0, ageClass, plural, formatAge, CFG };
