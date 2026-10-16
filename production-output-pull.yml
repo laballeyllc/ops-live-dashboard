@@ -17,7 +17,12 @@ jobs:
       - run: python scripts/production_output_pull.py
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          FINALE_BUILDS_REPORT_URL: ${{ secrets.FINALE_BUILDS_REPORT_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Separate from FINALE_BUILDS_REPORT_URL, which another workflow uses
+          FINALE_BUILDS_REPORT_URL: ${{ secrets.FINALE_TV_BUILDS_REPORT_URL }}
           FINALE_API_KEY: ${{ secrets.FINALE_API_KEY }}
           FINALE_API_SECRET: ${{ secrets.FINALE_API_SECRET }}
+          BUILD_ID_COL: "Build ID"
+          BUILD_PRODUCT_COL: "Product to produce"
+          BUILD_QTY_COL: "Qty to produce"
+          BUILD_COMPLETED_COL: "Complete transaction timestamp"
