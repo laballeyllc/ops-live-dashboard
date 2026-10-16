@@ -1,6 +1,7 @@
 // Shared settings for all three wall displays.
-// Paste the same public anon key Ops Live uses (Supabase: Project Settings > API).
-// Never put the service_role key here.
+// Leave YOUR_ANON_KEY_HERE as-is: netlify-build.sh swaps in the real key from
+// Netlify's SUPABASE_ANON_KEY environment variable on every deploy, the same
+// way it does for site/index.html. Never put the service_role key here.
 window.TV_CONFIG = {
   SUPABASE_URL: "https://pdflsmequzgpeuodnxyg.supabase.co",
   SUPABASE_ANON_KEY: "YOUR_ANON_KEY_HERE",
@@ -27,6 +28,19 @@ window.TV_CONFIG = {
   },
 
   TICKER_SPEED: 110,   // scrolling safety ticker, pixels per second
+
+  // One-TV schedule for wall.html (Central time). Outside these slots the
+  // screensaver shows, including all weekend. "seconds" is how long each
+  // screen stays up during a rotation. Add ?screen=company (or shipping,
+  // production, screensaver) to the wall.html address to pin one view.
+  WALL: {
+    schedule: [
+      { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "06:00", to: "08:30", show: "company" },
+      { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "08:30", to: "20:00", rotate: ["shipping", "production"], seconds: 150 },
+    ],
+    otherwise: "screensaver",
+    saverSpeed: 40,    // screensaver logo speed, pixels per second
+  },
 
   REFRESH_MS: 60000,   // how often the queue reloads
   TICKER_MS: 10000,    // Company screen: ms per ticker message

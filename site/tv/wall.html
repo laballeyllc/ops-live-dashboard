@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lab Alley wall display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<script src="tv-config.js" onerror="void 0"></script>
+<style>
+:root {
+  /* Lab Alley base: navy and logo blue (override in tv-config.js COLORS) */
+  --bg: #081A33;
+  --panel: #0F2747;
+  --panel-2: #183660;
+  --line: #24467A;
+  --text: #F2F5F9;
+  --muted: #9FB2CB;
+  /* Status: only for on-track / watch / off-track */
+  --good: #4CB86A;
+  --warn: #E8AA3A;
+  --bad: #E2564E;
+  /* Sections: one color per thing being measured */
+  --shipped: #3D8FF2;
+  --built: #A47FF2;
+  --orders: #2FC6D4;
+  --ink-on-status: #081A33;
+  --num: "Barlow Condensed", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --body: "Barlow", "Segoe UI", Roboto, Arial, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); overflow: hidden; }
+body { font-family: var(--body); color: var(--text); -webkit-font-smoothing: antialiased; cursor: none; }
+
+/* Fixed 1920x1080 stage, scaled to whatever TV it lands on */
+#stage {
+  position: absolute; left: 50%; top: 50%;
+  width: 1920px; height: 1080px;
+  transform-origin: center center;
+  display: grid;
+  grid-template-rows: 132px 1fr 92px;
+  background: var(--bg);
+}
+
+/* ---- Andon band: the one loud thing on each screen ---- */
+.andon {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 40px;
+  padding: 0 56px;
+  background: var(--status, var(--good));
+  color: var(--ink-on-status);
+  transition: background-color .8s ease;
+}
+.andon[data-state="bad"] { --status: var(--bad); }
+.andon[data-state="warn"] { --status: var(--warn); }
+.andon[data-state="good"] { --status: var(--good); }
+.andon[data-state="idle"] { --status: var(--panel-2); color: var(--text); }
+.andon .dept { font-family: var(--num); font-weight: 700; font-size: 64px; letter-spacing: .01em; line-height: 1; }
+.andon .status { font-family: var(--num); font-weight: 600; font-size: 54px; line-height: 1.05; border-left: 4px solid currentColor; padding-left: 40px; opacity: .95; }
+.andon .clock { text-align: right; font-family: var(--num); line-height: 1; }
+.andon .clock .time { font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.andon .clock .date { font-size: 26px; font-weight: 500; margin-top: 4px; }
+@media (prefers-reduced-motion: no-preference) {
+  .andon[data-state="bad"] .status { animation: pulse 2.4s ease-in-out infinite; }
+}
+@keyframes pulse { 50% { opacity: .62; } }
+
+/* ---- Body ---- */
+main { padding: 30px 56px 26px; display: grid; gap: 28px; min-height: 0; }
+
+.tiles { display: grid; gap: 24px; }
+.tile {
+  background: var(--panel); border-radius: 10px; padding: 22px 30px 24px;
+  border-top: 10px solid var(--tile-color, var(--line));
+  display: flex; flex-direction: column; justify-content: space-between; min-height: 0;
+}
+.tile[data-state="bad"] { --tile-color: var(--bad); }
+.tile[data-state="warn"] { --tile-color: var(--warn); }
+.tile[data-state="good"] { --tile-color: var(--good); }
+.tile .label { font-size: 30px; font-weight: 600; color: var(--text); line-height: 1.15; }
+.tile .value { font-family: var(--num); font-weight: 700; font-size: 132px; line-height: .9; font-variant-numeric: tabular-nums; color: var(--tile-color, var(--text)); }
+.tile .value small { font-size: 60px; font-weight: 600; margin-left: 4px; }
+.tile .sub { font-size: 24px; color: var(--muted); line-height: 1.25; }
+
+.panel { background: var(--panel); border-radius: 10px; padding: 26px 32px; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.panel > * { flex-shrink: 0; }
+.panel h2 { font-family: var(--num); font-weight: 600; font-size: 40px; line-height: 1; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: baseline; }
+.panel h2 .aside { font-family: var(--body); font-size: 22px; font-weight: 500; color: var(--muted); }
+
+/* Lists sized for reading at 15 feet */
+table.big { width: 100%; border-collapse: collapse; font-size: 30px; table-layout: fixed; }
+table.big th { text-align: left; font-size: 22px; font-weight: 600; color: var(--muted); padding: 0 12px 10px; border-bottom: 2px solid var(--line); }
+table.big td { padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+table.big tr:last-child td { border-bottom: 0; }
+table.big .num { text-align: right; font-family: var(--num); font-size: 36px; font-weight: 600; font-variant-numeric: tabular-nums; }
+table.big th.num { font-family: var(--body); font-size: 22px; }
+table.big .strong { font-weight: 700; }
+.age-bad { color: var(--bad); font-weight: 700; }
+.age-warn { color: var(--warn); font-weight: 700; }
+.chip { display: inline-block; font-size: 20px; font-weight: 700; padding: 4px 12px; border-radius: 6px; background: var(--warn); color: var(--ink-on-status); vertical-align: middle; }
+.chip.bad { background: var(--bad); }
+.chip.ok { background: var(--good); }
+.empty { font-size: 34px; color: var(--muted); padding: 40px 0; line-height: 1.3; }
+.empty strong { color: var(--good); display: block; font-family: var(--num); font-size: 52px; font-weight: 600; margin-bottom: 8px; }
+
+/* Horizontal stacked bar for age buckets / queue split */
+.stack { display: flex; height: 56px; border-radius: 6px; overflow: hidden; background: var(--panel-2); }
+.stack > div { display: flex; align-items: center; justify-content: center; font-family: var(--num); font-weight: 700; font-size: 30px; color: var(--ink-on-status); min-width: 0; }
+.legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; font-size: 22px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 16px; height: 16px; border-radius: 3px; background: var(--c); margin-right: 8px; vertical-align: -2px; }
+
+.statline { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 30px; }
+.statline:last-child { border-bottom: 0; }
+.statline b { font-family: var(--num); font-size: 48px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.meter { height: 16px; border-radius: 8px; background: var(--panel-2); overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--c, var(--warn)); }
+
+/* ---- Ticker: one message at a time, never a scrolling marquee ---- */
+.ticker {
+  display: grid; grid-template-columns: 220px 1fr auto; align-items: center;
+  background: var(--panel); border-top: 2px solid var(--line);
+  padding: 0 56px 0 0; overflow: hidden;
+}
+.ticker .kind {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  font-family: var(--num); font-weight: 700; font-size: 32px;
+  background: var(--k, var(--panel-2)); color: var(--kc, var(--text));
+}
+.ticker[data-kind="alert"] { --k: var(--bad); --kc: var(--ink-on-status); }
+.ticker[data-kind="watch"] { --k: var(--warn); --kc: var(--ink-on-status); }
+.ticker[data-kind="good"] { --k: var(--good); --kc: var(--ink-on-status); }
+.ticker[data-kind="announcement"] { --k: #E8E6DF; --kc: var(--ink-on-status); }
+.ticker[data-kind="urgent"] { --k: var(--warn); --kc: var(--ink-on-status); }
+.ticker[data-kind="safety"] { --k: #F2C94C; --kc: var(--ink-on-status); }
+.ticker .msg { font-size: 36px; font-weight: 500; padding-left: 36px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity .5s ease; }
+.ticker .msg.fade { opacity: 0; }
+.ticker .meta { font-size: 22px; color: var(--muted); text-align: right; line-height: 1.3; white-space: nowrap; }
+.ticker .meta .demo { color: var(--warn); font-weight: 700; font-size: 24px; }
+.ticker .meta .stale { color: var(--warn); font-weight: 700; }
+.ticker .meta .err { color: var(--bad); font-weight: 700; }
+
+.demo-badge {
+  position: absolute; right: 56px; top: 148px; z-index: 5;
+  background: var(--warn); color: var(--ink-on-status);
+  font-weight: 700; font-size: 22px; padding: 6px 14px; border-radius: 6px;
+}
+
+/* ---- Scoreboard pieces ---- */
+.hero-line { display: flex; align-items: baseline; gap: 22px; margin: 4px 0 18px; }
+.hero { font-family: var(--num); font-weight: 700; font-size: 168px; line-height: .85; font-variant-numeric: tabular-nums; }
+.hero.md { font-size: 120px; }
+.hero.sm { font-size: 84px; }
+.of { font-family: var(--num); font-weight: 600; font-size: 52px; color: var(--muted); }
+.gap { font-family: var(--num); font-weight: 700; font-size: 42px; margin-left: auto; white-space: nowrap; }
+.of { white-space: nowrap; }
+[data-state="good"] > .gap, .gap[data-state="good"] { color: var(--good); }
+.gap[data-state="warn"] { color: var(--warn); }
+.gap[data-state="bad"] { color: var(--bad); }
+.gap[data-state="idle"] { color: var(--muted); }
+.note { font-size: 24px; color: var(--muted); margin-top: auto; padding-top: 14px; line-height: 1.3; }
+.note b { color: var(--text); font-weight: 700; }
+
+.pacebar { position: relative; height: 48px; border-radius: 8px; background: var(--panel-2); margin-top: 34px; }
+.pacebar > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; background: var(--muted); }
+.pacebar[data-state="good"] > i { background: var(--good); }
+.pacebar[data-state="warn"] > i { background: var(--warn); }
+.pacebar[data-state="bad"] > i { background: var(--bad); }
+.pacebar .tick { position: absolute; top: -10px; bottom: -10px; width: 5px; margin-left: -2px; background: var(--text); border-radius: 2px; }
+.pacebar .tick em { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-style: normal; font-size: 22px; font-weight: 700; white-space: nowrap; padding-bottom: 4px; color: var(--text); }
+.pacebar .goalmark { position: absolute; top: 0; bottom: 0; width: 4px; background: var(--ink-on-status); opacity: .5; }
+
+.cols { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: 30px; }
+.plot { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 22px; border-bottom: 2px solid var(--line); }
+.labels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 22px; }
+.colbar { position: relative; display: flex; flex-direction: column; justify-content: flex-end; min-height: 0; }
+.colbar i { display: block; background: var(--muted); border-radius: 6px 6px 0 0; }
+.colbar .v { text-align: center; font-family: var(--num); font-weight: 700; font-size: 32px; margin-bottom: 4px; }
+.colbar[data-state="good"] i { background: var(--good); }
+.colbar[data-state="warn"] i { background: var(--warn); }
+.colbar[data-state="bad"] i { background: var(--bad); }
+.colbar[data-state="today"] i { background: var(--text); }
+.wd { text-align: center; font-size: 24px; font-weight: 600; color: var(--muted); padding-top: 8px; line-height: 1.15; }
+.wd[data-state="today"] { color: var(--text); }
+.wd small { display: block; font-size: 20px; font-weight: 500; }
+.targetline { position: absolute; left: 0; right: 0; border-top: 3px dashed var(--text); opacity: .6; z-index: 2; pointer-events: none; }
+.targetline span { position: absolute; right: 0; top: -28px; padding-left: 8px; font-size: 20px; font-weight: 700; background: var(--panel); }
+.measure + .measure { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.mlabel { font-size: 28px; font-weight: 600; color: var(--muted); }
+
+.hero.xs { font-size: 76px; }
+.pacebar.thin { height: 30px; margin-top: 30px; }
+.panel h2 + .hero-line { margin-top: -6px; }
+.pacebar.thin { margin-top: 16px; margin-bottom: 30px; }
+.pacebar.thin .tick em { bottom: auto; top: 100%; padding: 2px 0 0; font-size: 20px; }
+.colbar .v { align-self: center; position: relative; z-index: 3; background: var(--panel); padding: 0 8px; border-radius: 4px; }
+
+/* ---- Section color coding ---- */
+[data-section="shipped"] { --sec: var(--shipped); }
+[data-section="built"]   { --sec: var(--built); }
+[data-section="orders"]  { --sec: var(--orders); }
+.panel[data-section] { border-top: 10px solid var(--sec); }
+.panel[data-section] h2 { color: var(--sec); }
+.tile[data-section] { border-top-color: var(--sec); }
+.tile[data-section] .label { color: var(--sec); }
+.tile[data-section] .value { color: var(--text); }
+[data-section] .pacebar > i { background: var(--sec) !important; }
+[data-section] .colbar i { background: var(--sec) !important; }
+[data-section] .colbar[data-state="warn"] i, [data-section] .colbar[data-state="bad"] i { opacity: .5; }
+[data-section] .colbar[data-state="today"] i { box-shadow: inset 0 4px 0 var(--text); }
+.colbar[data-state="warn"] .v { color: var(--warn); }
+.colbar[data-state="bad"] .v { color: var(--bad); }
+.pill { display: inline-block; font-family: var(--body); font-size: 20px; font-weight: 700; padding: 3px 12px; border-radius: 20px; background: var(--panel-2); color: var(--muted); white-space: nowrap; vertical-align: middle; }
+.pill[data-state="good"] { background: var(--good); color: var(--ink-on-status); }
+.pill[data-state="warn"] { background: var(--warn); color: var(--ink-on-status); }
+.pill[data-state="bad"]  { background: var(--bad);  color: var(--ink-on-status); }
+.pill[data-state="idle"] { display: none; }
+.tile .label { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.legend-strip { position: absolute; right: 56px; top: 0; height: 132px; display: none; }
+
+/* ---- Scrolling safety / best-practice ticker ---- */
+.scroller { display: grid; grid-template-columns: 1fr auto; align-items: stretch; background: #F2C94C; color: var(--ink-on-status); overflow: hidden; border-top: 0; }
+.scroller .lane { position: relative; overflow: hidden; display: flex; align-items: center; }
+.scroller .track { display: inline-flex; white-space: nowrap; will-change: transform; animation: scroll var(--dur, 120s) linear infinite; }
+.scroller .item { font-size: 38px; font-weight: 600; padding-right: 90px; display: inline-flex; align-items: center; gap: 18px; }
+.scroller .tag { font-family: var(--num); font-weight: 700; font-size: 30px; padding: 2px 14px; border-radius: 6px; background: var(--ink-on-status); color: #F2C94C; }
+.scroller .item[data-kind="best_practice"] .tag { background: var(--shipped); color: #fff; }
+.scroller .item[data-kind="announcement"] .tag { background: #fff; color: var(--ink-on-status); }
+.scroller .item[data-kind="urgent"] .tag { background: var(--bad); color: #fff; }
+.scroller .meta { background: var(--panel); color: var(--muted); font-size: 22px; padding: 0 40px; display: flex; flex-direction: column; justify-content: center; text-align: right; line-height: 1.3; white-space: nowrap; }
+.scroller .meta .demo { color: var(--warn); font-weight: 700; }
+.scroller .meta .stale { color: var(--warn); font-weight: 700; }
+.scroller .meta .err { color: var(--bad); font-weight: 700; }
+@keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .scroller .track { animation-duration: calc(var(--dur, 120s) * 2); } }
+.ticker[data-kind="shipped"] { --k: var(--shipped); --kc: #fff; }
+.ticker[data-kind="built"] { --k: var(--built); --kc: #fff; }
+.ticker[data-kind="orders"] { --k: var(--orders); --kc: var(--ink-on-status); }
+
+/* ---- Wall player ---- */
+html, body { background: #000; }
+.view { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity .8s ease; pointer-events: none; background: var(--bg); }
+.view.on { opacity: 1; }
+#overlay { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: center center; pointer-events: none; z-index: 5; }
+#overlay .scroller { position: absolute; left: 0; right: 0; bottom: 0; height: 92px; opacity: 0; transition: opacity .8s ease; }
+#overlay.rotating .scroller { opacity: 1; }
+#countdown { position: absolute; left: 0; top: 132px; height: 24px; width: 100%; opacity: 0; transition: opacity .8s ease; }
+#overlay.rotating #countdown { opacity: 1; }
+#countdown i { display: block; height: 6px; width: 0; background: rgba(242, 245, 249, .8); }
+#countdown span { position: absolute; right: 56px; top: 4px; font-family: var(--body); font-size: 17px; font-weight: 700; color: var(--muted); line-height: 20px; }
+
+/* ---- Screensaver: logo + clock gliding on black ---- */
+#saver { position: fixed; inset: 0; background: #000; opacity: 0; transition: opacity 1.2s ease; z-index: 10; pointer-events: none; overflow: hidden; }
+#saver.on { opacity: 1; }
+#saver-stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: center center; }
+#saver-group { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 26px; will-change: transform; }
+#saver-group img { width: 720px; height: auto; display: block; }
+#saver-time { font-family: var(--num); font-weight: 600; font-size: 64px; line-height: 1; color: #888888; font-variant-numeric: tabular-nums; }
+#saver-date { font-family: var(--body); font-weight: 500; font-size: 28px; color: #6f6f6f; margin-top: -14px; }
+</style>
+</head>
+<body>
+<iframe class="view" id="v-company" title="Company" src="company.html?embedded=1"></iframe>
+<iframe class="view" id="v-shipping" title="Shipping" src="shipping.html?embedded=1"></iframe>
+<iframe class="view" id="v-production" title="Production" src="production.html?embedded=1"></iframe>
+
+<div id="overlay">
+  <div id="countdown"><i></i><span></span></div>
+  <footer class="scroller"><div class="lane"><div class="track"></div></div><div class="meta"></div></footer>
+</div>
+
+<div id="saver">
+  <div id="saver-stage">
+    <div id="saver-group">
+      <img src="lab-alley-logo.png" alt="Lab Alley Essential Chemicals">
+      <div id="saver-time"></div>
+      <div id="saver-date"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// =====================================================================
+// Lab Alley wall player: one TV, one address (tv/wall.html).
+// Shows Company, Shipping, Production or the screensaver on a schedule
+// set in tv-config.js (WALL). All three screens stay loaded and live,
+// so every switch is instant and the numbers are always current.
+// Override for meetings or testing: wall.html?screen=company
+// (or shipping, production, screensaver).
+// =====================================================================
+const CFG = window.TV_CONFIG || {};
+const WALL = Object.assign({
+  schedule: [
+    { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "06:00", to: "08:30", show: "company" },
+    { days: ["Mon", "Tue", "Wed", "Thu", "Fri"], from: "08:30", to: "20:00", rotate: ["shipping", "production"], seconds: 150 },
+  ],
+  otherwise: "screensaver",
+  saverSpeed: 40,          // logo glide speed, pixels per second at 1920 wide
+}, CFG.WALL || {});
+const TICKER_SPEED = CFG.TICKER_SPEED || 110;
+const UPDATE_CHECK_MS = CFG.UPDATE_CHECK_MS || 300000;
+const OVERRIDE = new URLSearchParams(location.search).get("screen");
+
+const views = { company: v("v-company"), shipping: v("v-shipping"), production: v("v-production") };
+function v(id) { return document.getElementById(id); }
+const overlay = v("overlay"), saver = v("saver");
+
+// ---- Time in Central ----
+function central(ms) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", weekday: "short", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+    .formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+  return { wd: p.weekday, secs: (+p.hour) * 3600 + (+p.minute) * 60 + (+p.second) };
+}
+const toSecs = hhmm => { const [h, m] = hhmm.split(":").map(Number); return h * 3600 + m * 60; };
+
+// ---- What should be on screen right now ----
+// Rotation is worked out from the clock, not a counter, so it stays on
+// the same rhythm after a reload or a deploy.
+function current() {
+  if (OVERRIDE) return { view: OVERRIDE };
+  const { wd, secs } = central(Date.now());
+  for (const slot of WALL.schedule) {
+    if (!slot.days.includes(wd)) continue;
+    const a = toSecs(slot.from), b = toSecs(slot.to);
+    if (secs < a || secs >= b) continue;
+    if (slot.show) return { view: slot.show };
+    const period = slot.seconds || 150, list = slot.rotate;
+    const n = Math.floor((secs - a) / period);
+    const view = list[n % list.length];
+    const left = period - ((secs - a) % period);
+    const next = (secs + left < b) ? list[(n + 1) % list.length] : null;
+    return { view, rotating: true, left, period, next };
+  }
+  return { view: WALL.otherwise };
+}
+
+let shown = null;
+function apply() {
+  const c = current();
+  if (c.view !== shown) {
+    for (const [name, el] of Object.entries(views)) el.classList.toggle("on", name === c.view);
+    saver.classList.toggle("on", c.view === "screensaver");
+    shown = c.view;
+  }
+  overlay.classList.toggle("rotating", !!c.rotating);
+  if (c.rotating) {
+    v("countdown").querySelector("i").style.width = `${(1 - c.left / c.period) * 100}%`;
+    const label = { shipping: "Shipping", production: "Production" }[c.next] || "";
+    const m = Math.floor(c.left / 60), s = String(c.left % 60).padStart(2, "0");
+    v("countdown").querySelector("span").textContent = label ? `Next: ${label} in ${m}:${s}` : "";
+  }
+}
+
+// ---- Shared ticker for the Shipping/Production rotation ----
+// Built from the Shipping frame's own content (same Supabase rows),
+// covering both floors, so the text keeps scrolling through each switch.
+let tickerKey = "";
+function renderTicker() {
+  const w = views.shipping.contentWindow;
+  if (!w || typeof w.scrollerItems !== "function") return;
+  try {
+    const items = w.scrollerItems(["shipping", "production"]);
+    const key = JSON.stringify(items);
+    if (key === tickerKey) return;
+    tickerKey = key;
+    const track = overlay.querySelector(".track");
+    const html = w.scrollerHtml(items);
+    track.innerHTML = html + html;
+    requestAnimationFrame(() => track.style.setProperty("--dur", `${Math.max(20, (track.scrollWidth / 2) / TICKER_SPEED)}s`));
+  } catch (e) { console.warn("ticker:", e); }
+}
+function copyMeta() {
+  const view = shown === "production" ? views.production : views.shipping;
+  try {
+    const m = view.contentDocument && view.contentDocument.querySelector(".scroller .meta");
+    if (m) overlay.querySelector(".meta").innerHTML = m.innerHTML;
+  } catch (e) {}
+}
+
+// ---- Screensaver: slow bounce, clock moving with the logo ----
+const group = v("saver-group");
+let x = 300, y = 220, dx = 1, dy = 1, lastT = null;
+function saverFrame(t) {
+  if (lastT == null) lastT = t;
+  const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
+  if (shown === "screensaver") {
+    const W = 1920 - group.offsetWidth, H = 1080 - group.offsetHeight;
+    x += dx * WALL.saverSpeed * dt; y += dy * WALL.saverSpeed * dt;
+    if (x <= 0) { x = 0; dx = 1; } if (x >= W) { x = W; dx = -1; }
+    if (y <= 0) { y = 0; dy = 1; } if (y >= H) { y = H; dy = -1; }
+    group.style.transform = `translate(${x}px, ${y}px)`;
+  }
+  requestAnimationFrame(saverFrame);
+}
+function saverClock() {
+  const now = new Date();
+  v("saver-time").textContent = now.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
+  v("saver-date").textContent = now.toLocaleDateString("en-US", { timeZone: "America/Chicago", weekday: "long", month: "long", day: "numeric" });
+}
+
+// ---- Scale the overlay and screensaver to the TV ----
+function fit() {
+  const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+  for (const el of [overlay, v("saver-stage")]) el.style.transform = `translate(-50%, -50%) scale(${s})`;
+}
+
+// ---- New-deploy check for this page and its config ----
+// (Each screen inside checks its own files and reloads itself.)
+const Updater = {
+  base: null,
+  hash(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return `${s.length}:${h}`; },
+  async check() {
+    if (location.protocol === "file:") return;
+    try {
+      const urls = [location.href.split("#")[0], new URL("tv-config.js", location.href).href];
+      const fp = (await Promise.all(urls.map(async u => { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error(r.status); return this.hash(await r.text()); }))).join("|");
+      if (this.base == null) { this.base = fp; return; }
+      if (fp === this.base) return;
+      let last = 0; try { last = +localStorage.getItem("wall-last-update-reload") || 0; } catch (e) {}
+      if (Date.now() - last < 20 * 60000) return;
+      try { localStorage.setItem("wall-last-update-reload", String(Date.now())); } catch (e) {}
+      location.reload();
+    } catch (e) { console.warn("update check:", e); }
+  },
+};
+
+fit(); addEventListener("resize", fit);
+saverClock(); setInterval(saverClock, 1000);
+apply(); setInterval(apply, 1000);
+setInterval(() => { renderTicker(); copyMeta(); }, 5000);
+views.shipping.addEventListener("load", () => setTimeout(() => { renderTicker(); copyMeta(); }, 1500));
+requestAnimationFrame(saverFrame);
+Updater.check(); setInterval(() => Updater.check(), UPDATE_CHECK_MS);
+setTimeout(() => location.reload(), 6 * 3600000);
+</script>
+</body>
+</html>

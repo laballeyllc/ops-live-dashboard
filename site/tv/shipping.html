@@ -267,6 +267,7 @@ const CFG = Object.assign({
 }, window.TV_CONFIG || {});
 
 const QS = new URLSearchParams(location.search);
+const EMBEDDED = QS.has("embedded");   // running inside wall.html, which draws one shared ticker
 const DEMO = QS.has("demo") || !CFG.SUPABASE_ANON_KEY || CFG.SUPABASE_ANON_KEY === "YOUR_ANON_KEY_HERE" || typeof supabase === "undefined";
 const client = DEMO ? null : supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
 
@@ -742,25 +743,42 @@ function renderMeta() {
 // Scrolling ticker (Shipping and Production): safety + best practice,
 // with any announcements for that screen mixed in
 // ---------------------------------------------------------------------
+// Ticker items for one or more screens: announcements first, then safety
+// tips alternating with best practices. wall.html calls this with
+// ["shipping", "production"] to build its single shared ticker.
+function scrollerItems(screens) {
+  const seen = new Set(), uniq = arr => arr.filter(t => !seen.has(t) && seen.add(t));
+  const items = [];
+  const anns = [];
+  for (const sc of screens) for (const a of contentFor(sc, ["announcement"])) anns.push(a);
+  for (const a of anns) {
+    const text = a.title ? `${a.title}. ${a.body}` : a.body;
+    if (seen.has(text)) continue; seen.add(text);
+    items.push({ kind: a.priority === "urgent" ? "urgent" : "announcement", tag: a.priority === "urgent" ? "Heads up" : "Announcement", text });
+  }
+  const safety = uniq(screens.flatMap(sc => safetyTips(sc)));
+  const best = uniq(screens.flatMap(sc => bestPractices(sc)));
+  const n = Math.max(safety.length, best.length);
+  for (let i = 0; i < n; i++) {
+    if (safety[i]) items.push({ kind: "safety_tip", tag: "Safety", text: safety[i] });
+    if (best[i]) items.push({ kind: "best_practice", tag: "Best practice", text: best[i] });
+  }
+  return items;
+}
+function scrollerHtml(items) {
+  return items.map(it => `<span class="item" data-kind="${it.kind}"><span class="tag">${esc(it.tag)}</span>${esc(it.text)}</span>`).join("");
+}
+
 const Scroller = {
   key: "",
   render(screen) {
     const el = document.querySelector(".scroller .track");
-    if (!el) return;
-    const safety = safetyTips(screen), best = bestPractices(screen);
-    const items = [];
-    for (const a of contentFor(screen, ["announcement"])) {
-      items.push({ kind: a.priority === "urgent" ? "urgent" : "announcement", tag: a.priority === "urgent" ? "Heads up" : "Announcement", text: a.title ? `${a.title}. ${a.body}` : a.body });
-    }
-    const n = Math.max(safety.length, best.length);
-    for (let i = 0; i < n; i++) {
-      if (safety[i]) items.push({ kind: "safety_tip", tag: "Safety", text: safety[i] });
-      if (best[i]) items.push({ kind: "best_practice", tag: "Best practice", text: best[i] });
-    }
+    if (!el || EMBEDDED) return;
+    const items = scrollerItems([screen]);
     const key = JSON.stringify(items);
     if (key === this.key) return;
     this.key = key;
-    const html = items.map(it => `<span class="item" data-kind="${it.kind}"><span class="tag">${esc(it.tag)}</span>${esc(it.text)}</span>`).join("");
+    const html = scrollerHtml(items);
     el.innerHTML = html + html;   // two copies for a seamless loop
     requestAnimationFrame(() => {
       const half = el.scrollWidth / 2;
@@ -818,6 +836,7 @@ async function start({ screen, render, tickerItems, needs = {} }) {
   fitStage();
   addEventListener("resize", fitStage);
   const scrolling = !!document.querySelector(".scroller");
+  if (EMBEDDED) { const f = document.querySelector(".scroller"); if (f) f.style.visibility = "hidden"; }
   if (scrolling) Scroller.render(screen);
   tickClock(); setInterval(tickClock, 15000);
   Ticker.build = () => tickerItems ? tickerItems(MODEL) : [];
