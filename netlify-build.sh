@@ -48,3 +48,12 @@ if [ -f site/tv/tv-config.js ]; then
 else
   echo "No site/tv/tv-config.js yet; skipping wall display key."
 fi
+
+# Site password: generates site/_headers from Netlify's BASIC_AUTH_CREDENTIALS
+# variable (format user:password) so the password never sits in the repo.
+if [ -n "$BASIC_AUTH_CREDENTIALS" ]; then
+  printf '/*\n  Basic-Auth: %s\n' "$BASIC_AUTH_CREDENTIALS" >> site/_headers
+  echo "Site password protection added."
+else
+  echo "WARNING: BASIC_AUTH_CREDENTIALS not set; site is NOT password protected."
+fi
