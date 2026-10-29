@@ -424,8 +424,11 @@ const Updater = {
   async check() {
     if (location.protocol === "file:") return;
     try {
-      const urls = [location.href.split("#")[0], new URL("tv-config.js", location.href).href];
-      const fp = (await Promise.all(urls.map(async u => { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error(r.status); return this.hash(await r.text()); }))).join("|");
+      // Strip any username:password from the kiosk address; Chrome won't fetch
+      // URLs that carry credentials but still sends the remembered sign-in.
+      const clean = u => { const x = new URL(u, location.href); x.username = ""; x.password = ""; x.hash = ""; return x.href; };
+      const urls = [clean(location.href), clean("tv-config.js")];
+      const fp = (await Promise.all(urls.map(async u => { const r = await fetch(u, { cache: "no-store", credentials: "same-origin" }); if (!r.ok) throw new Error(r.status); return this.hash(await r.text()); }))).join("|");
       if (this.base == null) { this.base = fp; return; }
       if (fp === this.base) return;
       let last = 0; try { last = +localStorage.getItem("wall-last-update-reload") || 0; } catch (e) {}

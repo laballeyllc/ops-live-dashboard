@@ -827,14 +827,17 @@ const Scroller = {
 // ---------------------------------------------------------------------
 const Updater = {
   baseline: null,
+  // Addresses without any username:password in them: when the kiosk opens
+  // https://user:pass@site/..., Chrome refuses fetches to URLs that carry
+  // credentials, but it still sends the remembered sign-in to plain URLs.
+  clean(u) { const x = new URL(u, location.href); x.username = ""; x.password = ""; x.hash = ""; return x.href; },
   files() {
-    const page = location.href.split("#")[0];
-    return [page, new URL("/ops-logic.js", location.href).href, new URL("tv-config.js", location.href).href];
+    return [this.clean(location.href), this.clean("/ops-logic.js"), this.clean("tv-config.js")];
   },
   hash(str) { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return `${str.length}:${h}`; },
   async fingerprint() {
     const parts = await Promise.all(this.files().map(async u => {
-      const r = await fetch(u, { cache: "no-store" });
+      const r = await fetch(u, { cache: "no-store", credentials: "same-origin" });
       if (!r.ok) throw new Error(`${u} ${r.status}`);
       return this.hash(await r.text());
     }));
