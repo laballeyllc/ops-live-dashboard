@@ -301,19 +301,39 @@ const UPDATE_CHECK_MS = CFG.UPDATE_CHECK_MS || 300000;
 const OVERRIDE = new URLSearchParams(location.search).get("screen");
 
 function v(id) { return document.getElementById(id); }
-// One iframe per screen the schedule (or override) uses. The shipping frame
-// is always loaded: the shared ticker is built from its content.
+// Screens load only when needed: those for the current time slot, plus the
+// next slot's screens 90 seconds early so the switch is still instant.
+// Others are unloaded, which keeps a small signage stick (OptiStick) cool:
+// overnight only the logo runs. The shipping frame also feeds the shared
+// ticker, so it's present whenever Shipping and Production rotate.
 const PAGES = ["briefing", "company", "shipping", "production"];
-const wanted = new Set(["shipping"]);
-for (const s of WALL.schedule) for (const n of (s.show ? [s.show] : s.rotate || [])) wanted.add(n);
-if (OVERRIDE) wanted.add(OVERRIDE);
 const views = {};
-for (const name of PAGES) {
-  if (!wanted.has(name)) continue;
-  const f = document.createElement("iframe");
-  f.className = "view"; f.id = "v-" + name; f.title = name;
-  f.src = `${name}.html?embedded=1`;
-  v("views").appendChild(f); views[name] = f;
+function viewsAt(ms) {
+  if (OVERRIDE) return OVERRIDE === "screensaver" ? [] : [OVERRIDE];
+  const { wd, secs } = central(ms);
+  for (const slot of WALL.schedule) {
+    if (!slot.days.includes(wd)) continue;
+    if (secs < toSecs(slot.from) || secs >= toSecs(slot.to)) continue;
+    return slot.show ? [slot.show] : slot.rotate.slice();
+  }
+  return [];
+}
+function syncFrames() {
+  const now = Date.now();
+  const need = new Set([...viewsAt(now - 5000), ...viewsAt(now), ...viewsAt(now + 90000)]);
+  for (const name of PAGES) {
+    if (need.has(name) && !views[name]) {
+      const f = document.createElement("iframe");
+      f.className = "view"; f.id = "v-" + name; f.title = name;
+      f.src = `${name}.html?embedded=1`;
+      if (name === "shipping") f.addEventListener("load", () => setTimeout(() => { renderTicker(); copyMeta(); }, 1500));
+      v("views").appendChild(f); views[name] = f;
+      shown = null;   // re-apply visibility for the new frame
+    } else if (!need.has(name) && views[name]) {
+      views[name].remove(); delete views[name];
+      if (name === "shipping") tickerKey = "";
+    }
+  }
 }
 const overlay = v("overlay"), saver = v("saver");
 
@@ -368,7 +388,7 @@ function apply() {
 // covering both floors, so the text keeps scrolling through each switch.
 let tickerKey = "";
 function renderTicker() {
-  const w = views.shipping.contentWindow;
+  const w = views.shipping && views.shipping.contentWindow;
   if (!w || typeof w.scrollerItems !== "function") return;
   try {
     const items = w.scrollerItems(["shipping", "production"]);
@@ -383,6 +403,7 @@ function renderTicker() {
 }
 function copyMeta() {
   const view = shown === "production" ? views.production : views.shipping;
+  if (!view) return;
   try {
     const m = view.contentDocument && view.contentDocument.querySelector(".scroller .meta");
     if (m) overlay.querySelector(".meta").innerHTML = m.innerHTML;
@@ -441,9 +462,8 @@ const Updater = {
 
 fit(); addEventListener("resize", fit);
 saverClock(); setInterval(saverClock, 1000);
-apply(); setInterval(apply, 1000);
+syncFrames(); apply(); setInterval(() => { syncFrames(); apply(); }, 1000);
 setInterval(() => { renderTicker(); copyMeta(); }, 5000);
-views.shipping.addEventListener("load", () => setTimeout(() => { renderTicker(); copyMeta(); }, 1500));
 requestAnimationFrame(saverFrame);
 Updater.check(); setInterval(() => Updater.check(), UPDATE_CHECK_MS);
 setTimeout(() => location.reload(), 6 * 3600000);
