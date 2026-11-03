@@ -1071,10 +1071,11 @@ def order_age_hours(naive_str: str) -> float:
 
 # --- Off-hours order pile-up tracking (mirrors currentOffHoursWindow() /
 # countOffHoursOrders() in site/index.html). Production shift: Mon-Fri,
-# 8am-4pm Central, confirmed directly. ---
+# 8am-5pm Central, confirmed directly (end moved from 4pm to 5pm on
+# Nov 3, 2026, so off-hours counts logged before that date used a 4pm shift end). ---
 
 SHIFT_START_HOUR = 8
-SHIFT_END_HOUR = 16
+SHIFT_END_HOUR = 17
 
 
 def _chicago_time_on_date(day_dt: datetime, hour: int) -> datetime:

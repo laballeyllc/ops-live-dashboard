@@ -12,7 +12,7 @@ window.TV_CONFIG = {
 
   // Shift hours (Central) used to pace progress through the day
   SHIP_SHIFT: [8, 17],
-  BUILD_SHIFT: [8, 16],
+  BUILD_SHIFT: [8, 17],
   // Until a daily goal is set in kpi_targets, target = last week's daily average x this
   BASELINE_MULT: 1.10,
 

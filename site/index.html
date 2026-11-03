@@ -1243,7 +1243,7 @@
       </div>
     </div>
 
-    <div class="history-note">Production hours: Mon–Fri, 8am–4pm Central — snapshots outside that window are shown on the chart below for context, but excluded from the average above, since Build % naturally drifts while no one's working to act on shortages. Order age (the 24h / 48h thresholds behind Build %) now follows ShipStation's Age -- real elapsed time, weekends included. Pulls logged before that switch measured it in business hours (weekends excluded), so a range that spans the switch isn't directly comparable.</div>
+    <div class="history-note">Production hours: Mon–Fri, 8am–5pm Central — snapshots outside that window are shown on the chart below for context, but excluded from the average above, since Build % naturally drifts while no one's working to act on shortages. Order age (the 24h / 48h thresholds behind Build %) now follows ShipStation's Age -- real elapsed time, weekends included. Pulls logged before that switch measured it in business hours (weekends excluded), so a range that spans the switch isn't directly comparable.</div>
 
     <div class="attack-subsection">
       <h3>Chart <span id="history-day-label" class="h2-note"></span></h3>
@@ -1389,7 +1389,7 @@
     <div class="list-controls">
       <button class="toggle-btn" id="leadtime-clock-calendar" onclick="setLeadTimeClock('calendar')">Calendar time</button>
       <button class="toggle-btn" id="leadtime-clock-weekdays" onclick="setLeadTimeClock('weekdays')">Weekdays only</button>
-      <button class="toggle-btn active" id="leadtime-clock-shift" onclick="setLeadTimeClock('shift')">Shift hours (Mon&ndash;Fri 8am&ndash;4pm)</button>
+      <button class="toggle-btn active" id="leadtime-clock-shift" onclick="setLeadTimeClock('shift')">Shift hours (Mon&ndash;Fri 8am&ndash;5pm)</button>
     </div>
     <div class="history-note" id="leadtime-clock-blurb" style="margin-top:-2px;"></div>
 
@@ -2510,7 +2510,7 @@ function renderTurnoverTable() {
 const LEADTIME_CLOCKS = {
   calendar: "Real elapsed time, weekends and nights included \u2014 how long the order actually waited.",
   weekdays: "Skips Saturday and Sunday; every hour Monday\u2013Friday counts, nights included.",
-  shift:    "Counts only Mon\u2013Fri 8am\u20134pm Central \u2014 the hours production can actually work. Holidays aren't excluded.",
+  shift:    "Counts only Mon\u2013Fri 8am\u20135pm Central \u2014 the hours production can actually work. Holidays aren't excluded.",
 };
 let leadTimeClock = "shift";
 let currentBlockedEvents = [];
@@ -2528,7 +2528,7 @@ function leadTimeElapsedHours(startMs, endMs, clock) {
       const lo = Math.max(dayStart, startMs), hi = Math.min(dayEnd, endMs);
       if (hi > lo) weekendMs += hi - lo;
     } else {
-      // Mon-Fri 8am-4pm Central. Midnight + whole hours is exact here:
+      // Mon-Fri 8am-5pm Central. Midnight + whole hours is exact here:
       // US daylight-saving changes happen on Sundays, never inside a weekday.
       const lo = Math.max(dayStart + SHIFT_START_HOUR * 3600000, startMs);
       const hi = Math.min(dayStart + SHIFT_END_HOUR * 3600000, endMs);
@@ -2697,7 +2697,7 @@ function renderHistoryTab() {
   if (todayProdSnapshots.length > 0) {
     const avg = todayProdSnapshots.reduce((sum, s) => sum + (parseFloat(s.build_hit_rate_pct) || 0), 0) / todayProdSnapshots.length;
     document.getElementById("history-rolling-value").textContent = `${avg.toFixed(0)}%`;
-    document.getElementById("history-rolling-sub").textContent = `Averaged across ${todayProdSnapshots.length} pull${todayProdSnapshots.length === 1 ? '' : 's'} during production hours (every 30 min, 8am\u20134pm) today`;
+    document.getElementById("history-rolling-sub").textContent = `Averaged across ${todayProdSnapshots.length} pull${todayProdSnapshots.length === 1 ? '' : 's'} during production hours (every 30 min, 8am\u20135pm) today`;
   } else {
     document.getElementById("history-rolling-value").textContent = "—";
     document.getElementById("history-rolling-sub").textContent = "No production-hours snapshots logged yet today.";
@@ -3019,14 +3019,14 @@ function renderHistoryRange() {
   const avg = inRange.reduce((sum, s) => sum + parseFloat(s.build_hit_rate_pct), 0) / inRange.length;
   valueEl.textContent = `${avg.toFixed(0)}%`;
   subEl.textContent = (() => {
-    // Count PULLS, not hours: one pull every 30 min, Mon-Fri 8am-4pm
-    // Central = 16 per working day. Say so, plus the working-day count,
+    // Count PULLS, not hours: one pull every 30 min, Mon-Fri 8am-5pm
+    // Central = 18 per working day. Say so, plus the working-day count,
     // so the number can be sanity-checked at a glance.
     const workingDays = new Set(inRange.map(s => {
       const p = chicagoPartsForInstant(new Date(s.pulled_at).getTime());
       return `${p.year}-${p.month}-${p.day}`;
     })).size;
-    return `Averaged across ${inRange.length} pull${inRange.length === 1 ? '' : 's'} (${workingDays} working day${workingDays === 1 ? '' : 's'}, one pull every 30 min, Mon\u2013Fri 8am\u20134pm), ${startStr} to ${endStr}`;
+    return `Averaged across ${inRange.length} pull${inRange.length === 1 ? '' : 's'} (${workingDays} working day${workingDays === 1 ? '' : 's'}, one pull every 30 min, Mon\u2013Fri 8am\u20135pm), ${startStr} to ${endStr}`;
   })();
 }
 
@@ -3047,7 +3047,7 @@ function renderHistoryDay(dateStr) {
   if (dayProdSnapshots.length > 0) {
     const avg = dayProdSnapshots.reduce((sum, s) => sum + parseFloat(s.build_hit_rate_pct), 0) / dayProdSnapshots.length;
     document.getElementById("history-day-avg-value").textContent = `${avg.toFixed(0)}%`;
-    document.getElementById("history-day-avg-sub").textContent = `Averaged across ${dayProdSnapshots.length} pull${dayProdSnapshots.length === 1 ? '' : 's'} during production hours (every 30 min, 8am\u20134pm) on ${dateStr}`;
+    document.getElementById("history-day-avg-sub").textContent = `Averaged across ${dayProdSnapshots.length} pull${dayProdSnapshots.length === 1 ? '' : 's'} during production hours (every 30 min, 8am\u20135pm) on ${dateStr}`;
   } else {
     document.getElementById("history-day-avg-value").textContent = "—";
     document.getElementById("history-day-avg-sub").textContent = `No production-hours snapshots logged for ${dateStr}.`;
@@ -3143,7 +3143,7 @@ function renderHistoryChart(daySnapshots) {
       <path d="${linePath}" fill="none" stroke="#4FB0A5" stroke-width="2" />
       ${dots}
     </svg>
-    <div class="h2-note" style="margin-top:6px;">Teal dots = production hours · grey dots = outside production hours · shaded band = today's 8am–4pm window</div>
+    <div class="h2-note" style="margin-top:6px;">Teal dots = production hours · grey dots = outside production hours · shaded band = today's 8am–5pm window</div>
   `;
 }
 

@@ -268,13 +268,15 @@ function chicagoMidnightMs(dateMs, dayOffset) {
   return g;
 }
 
-// --- Production shift window: Mon-Fri 8am-4pm Central, confirmed
+// --- Production shift window: Mon-Fri 8am-5pm Central, confirmed
 // directly. Used both for the Build Health "production hours" average
 // (site tab: Queue Breakdown) and the off-hours order pile-up tracking
 // below (site tab: Historical Analysis).
+// Moved from 4pm to 5pm on Nov 3, 2026: completed builds are entered through
+// 4:59 PM (99% of entries fall inside 8am-5pm) and nothing is entered after 5 PM.
 const SHIFT_START_HOUR = 8;
 
-const SHIFT_END_HOUR = 16;
+const SHIFT_END_HOUR = 17;
 
 function chicagoTimeOnDate(dayMs, hour) {
   // Same iterative-correction technique as chicagoMidnightMs, just for
@@ -306,7 +308,7 @@ function isProductionHours(ms) {
 
 function mostRecentShiftEnd(nowMs) {
   // Walks backward day by day (Chicago calendar) to find the most
-  // recent Mon-Fri 4pm at or before now.
+  // recent Mon-Fri 5pm at or before now.
   let cursor = chicagoMidnightMs(nowMs, 0);
   for (let i = 0; i < 14; i++) {
     const parts = chicagoPartsForInstant(cursor);
