@@ -181,6 +181,7 @@
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
         <div class="pop hidden" id="sku-pop" role="group" aria-label="SKUs">
           <div class="pop-actions"><button type="button" class="btn quiet" id="sku-all">Select all</button><button type="button" class="btn quiet" id="sku-clear">Clear</button></div>
+          <div class="help" style="padding: 2px 8px 6px">Select all replaces what you chose before. Tick boxes to add SKUs one at a time.</div>
           <div id="sku-opts"></div>
           <div class="pop-foot"><span class="lbl" id="sku-more"></span><button type="button" class="btn" id="sku-done">Done</button></div>
         </div>
@@ -342,7 +343,7 @@ const S = {
   preset: "12m", from: "", to: "",
   view: "same", chartOn: false, sort: { key: "effect", dir: -1 }, shown: PAGE,
   selected: new Set(),
-  ovTab: "up", listMode: "skus", supSort: { key: "spend", dir: -1 }, expPct: 5, alertPct: 10, chartKind: "time", sales: new Map(),
+  hidden: new Set(), scale: "price", ovTab: "up", listMode: "skus", supSort: { key: "spend", dir: -1 }, expPct: 5, alertPct: 10, chartKind: "time", sales: new Map(),
 };
 let V = null;       // the current derived view (groups, visible rows, selection...)
 
@@ -462,8 +463,9 @@ function renderSkuOpts() {
     const d = IDX.skuDesc.get(x) || "", off = have && !have.has(x);
     return '<label><input type="checkbox" data-s="' + i + '"' + (S.skus.has(x) ? " checked" : "") + '><span class="opt"><span class="sku">' + esc(x) + "</span>" + (d ? '<span class="desc">' + esc(d) + "</span>" : "") + (off ? '<span class="desc">' + esc(S.supplier) + " has never supplied this</span>" : "") + "</span></label>";
   }).join("") || '<div class="lbl" style="padding:12px 8px">No SKUs match.</div>';
-  $("sku-all").textContent = (SEARCH_TERMS.length || S.category || S.single ? "Select all matching" : "Select all") + " (" + all.length + ")";
-  $("sku-all").disabled = all.length === 0;
+  const pool = skuPool().size;
+  $("sku-all").textContent = (SEARCH_TERMS.length || S.category || S.single ? "Select all matching" : "Select all") + " (" + pool + ")";
+  $("sku-all").disabled = pool === 0;
   $("sku-more").textContent = all.length > shown.length ? "Showing the first " + shown.length + " of " + all.length + ". Use Search to narrow." : "";
 }
 function renderChips() {
@@ -629,52 +631,69 @@ function derive() {
 
 // ---------------------------------------------------------------- chart helpers
 const COLORS = ["#4FB0A5", "#D9A441", "#7FB2E5", "#B8A4E3", "#E58C7B", "#B5D67A", "#E59BC1", "#9FB4C7"];
-function markerSvg(shape, color, x, y, big) {
-  const s = big ? 5 : 4;
-  const m = shape % 4;
-  if (m === 0) return '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + s + '" fill="' + color + '"/>';
-  if (m === 1) return '<rect x="' + (x - s).toFixed(1) + '" y="' + (y - s).toFixed(1) + '" width="' + 2 * s + '" height="' + 2 * s + '" fill="' + color + '"/>';
-  if (m === 2) return '<polygon points="' + x.toFixed(1) + "," + (y - s - 1).toFixed(1) + " " + (x + s + 1).toFixed(1) + "," + (y + s).toFixed(1) + " " + (x - s - 1).toFixed(1) + "," + (y + s).toFixed(1) + '" fill="' + color + '"/>';
-  return '<polygon points="' + x.toFixed(1) + "," + (y - s - 1).toFixed(1) + " " + (x + s + 1).toFixed(1) + "," + y.toFixed(1) + " " + x.toFixed(1) + "," + (y + s + 1).toFixed(1) + " " + (x - s - 1).toFixed(1) + "," + y.toFixed(1) + '" fill="' + color + '"/>';
+function markerSvg(shape, color, x, y, big, hollow) {
+  const r = big ? 5 : 4, m = shape % 4, f = hollow ? ' fill="none" stroke="' + color + '" stroke-width="1.5"' : ' fill="' + color + '"';
+  if (m === 0) return '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + r + '"' + f + "/>";
+  if (m === 1) return '<rect x="' + (x - r).toFixed(1) + '" y="' + (y - r).toFixed(1) + '" width="' + 2 * r + '" height="' + 2 * r + '"' + f + "/>";
+  if (m === 2) return '<polygon points="' + x.toFixed(1) + "," + (y - r - 1).toFixed(1) + " " + (x + r + 1).toFixed(1) + "," + (y + r).toFixed(1) + " " + (x - r - 1).toFixed(1) + "," + (y + r).toFixed(1) + '"' + f + "/>";
+  return '<polygon points="' + x.toFixed(1) + "," + (y - r - 1).toFixed(1) + " " + (x + r + 1).toFixed(1) + "," + y.toFixed(1) + " " + x.toFixed(1) + "," + (y + r + 1).toFixed(1) + " " + (x - r - 1).toFixed(1) + "," + y.toFixed(1) + '"' + f + "/>";
 }
-function niceTicks(lo, hi, count) {
+function niceTicks(lo, hi, count, allowNeg) {
   if (lo === hi) { lo *= 0.95; hi *= 1.05; if (lo === hi) { lo -= 1; hi += 1; } }
-  const pad = (hi - lo) * 0.06; lo = Math.max(0, lo - pad); hi += pad;
+  const pad = (hi - lo) * 0.06; lo = allowNeg ? lo - pad : Math.max(0, lo - pad); hi += pad;
   const step0 = (hi - lo) / count, mag = Math.pow(10, Math.floor(Math.log10(step0))), norm = step0 / mag;
   const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
   const ticks = []; for (let v = Math.floor(lo / step) * step; v <= Math.ceil(hi / step) * step + step / 2; v += step) ticks.push(+v.toFixed(10));
   return { ticks, step };
 }
 const tickFmt = (v, step) => "$" + v.toLocaleString("en-US", { minimumFractionDigits: step >= 1 ? 0 : Math.min(4, Math.max(2, Math.ceil(-Math.log10(step)))), maximumFractionDigits: step >= 1 ? 0 : Math.min(4, Math.max(2, Math.ceil(-Math.log10(step)))) });
+const pctTick = (v, step) => (v > 0 ? "+" : v < 0 ? "\u2212" : "") + Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: step >= 1 ? 0 : 1 }) + "%";
 const FONT = "IBM Plex Sans, system-ui, sans-serif";
-const txt = (x, y, s, o) => '<text x="' + x + '" y="' + y + '" font-family="' + FONT + '" font-size="' + ((o && o.size) || 12) + '" fill="' + ((o && o.fill) || "#9AA0A6") + '"' + (o && o.anchor ? ' text-anchor="' + o.anchor + '"' : "") + (o && o.weight ? ' font-weight="' + o.weight + '"' : "") + (o && o.halo ? ' stroke="#22272C" stroke-width="3" paint-order="stroke"' : "") + ">" + esc(s) + "</text>";
+const txt = (x, y, s, o) => '<text x="' + x + '" y="' + y + '" font-family="' + FONT + '" font-size="' + ((o && o.size) || 12) + '" fill="' + ((o && o.fill) || "#9AA0A6") + '"' + (o && o.anchor ? ' text-anchor="' + o.anchor + '"' : "") + (o && o.weight ? ' font-weight="' + o.weight + '"' : "") + (o && o.strike ? ' text-decoration="line-through"' : "") + (o && o.halo ? ' stroke="#22272C" stroke-width="3" paint-order="stroke"' : "") + ">" + esc(s) + "</text>";
+
+// One legend entry per line. Clicking it (or pressing Enter or Space on it) hides or shows that line; a hidden entry is hollow and struck through.
+function legendSvg(series, L, y0, statText) {
+  return series.map((s, i) => {
+    const off = S.hidden.has(s.g.key), col = COLORS[i % COLORS.length], y = y0 + i * 22;
+    return '<g class="lg" data-i="' + i + '" role="button" tabindex="0" aria-pressed="' + (!off) + '" aria-label="' + esc(s.label + (off ? ", hidden. Press to show it." : ", shown. Press to hide it.")) + '" style="cursor:pointer">' +
+      '<rect x="' + (L - 6) + '" y="' + (y - 16) + '" width="900" height="22" fill="transparent"/>' + markerSvg(i, col, L + 6, y - 4, true, off) +
+      txt(L + 22, y, s.label + "   " + statText(s), { fill: off ? "#6B727A" : "#E8E6E1", size: 13, strike: off }) + "</g>";
+  }).join("");
+}
+const visibleSeries = (plan) => { const v = plan.series.filter((x) => !S.hidden.has(x.g.key)); return v.length ? v : plan.series; };
 
 function lineChartSvg(series, title) {
+  const pctMode = S.scale === "pct", shown = series.filter((x) => !S.hidden.has(x.g.key)), base = shown.length ? shown : series;   // axes follow what is shown
   const W = 1060, L = 64, R = 170, T = 14, B = 38, PH = 320, legendH = series.length * 22 + 14, H = T + PH + B + legendH;
-  const all = series.flatMap((s) => s.rows);
-  let t0 = Math.min(...all.map((r) => utc(r.order_date))), t1 = Math.max(...all.map((r) => utc(r.order_date)));
+  const val = (sr, r) => (pctMode ? (r.px / sr.rows[0].px - 1) * 100 : r.px);
+  const dates = base.flatMap((sr) => sr.rows.map((r) => utc(r.order_date))), vals = base.flatMap((sr) => sr.rows.map((r) => val(sr, r)));
+  let t0 = Math.min(...dates), t1 = Math.max(...dates);
   if (t0 === t1) { t0 -= 15 * 86400000; t1 += 15 * 86400000; }
-  const { ticks, step } = niceTicks(Math.min(...all.map((r) => r.px)), Math.max(...all.map((r) => r.px)), 5);
+  const { ticks, step } = niceTicks(Math.min(...vals), Math.max(...vals), 5, pctMode);
   const lo = ticks[0], hi = ticks[ticks.length - 1];
   const X = (iso) => L + (W - L - R) * ((utc(iso) - t0) / (t1 - t0));
   const Y = (p) => T + PH * (1 - (p - lo) / (hi - lo));
   const o = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + esc(title) + '"><rect width="' + W + '" height="' + H + '" fill="#22272C"/>'];
-  for (const v of ticks) { const y = Y(v); o.push('<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) + '" stroke="#2E343A"/>' + txt(L - 10, (y + 4).toFixed(1), tickFmt(v, step), { anchor: "end" })); }
+  for (const v of ticks) { const y = Y(v); o.push('<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) + '" stroke="#2E343A"/>' + txt(L - 10, (y + 4).toFixed(1), pctMode ? pctTick(v, step) : tickFmt(v, step), { anchor: "end" })); }
+  if (pctMode && lo < 0 && hi > 0) o.push('<line x1="' + L + '" y1="' + Y(0).toFixed(1) + '" x2="' + (W - R) + '" y2="' + Y(0).toFixed(1) + '" stroke="#5A626A" stroke-width="1.5"/>');
   // month ticks, thinned so they never crowd
   const d0 = new Date(t0), months = []; let cur = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() + 1, 1);
   while (cur <= t1) { months.push(cur); const c = new Date(cur); cur = Date.UTC(c.getUTCFullYear(), c.getUTCMonth() + 1, 1); }
   const every = Math.max(1, Math.ceil(months.length / 8));
   months.forEach((ms, i) => { if (i % every) return; const c = new Date(ms), x = X(isoOf(ms)); o.push('<line x1="' + x.toFixed(1) + '" y1="' + (T + PH) + '" x2="' + x.toFixed(1) + '" y2="' + (T + PH + 5) + '" stroke="#9AA0A6"/>' + txt(x.toFixed(1), T + PH + 20, MONTHS[c.getUTCMonth()] + " \u2019" + String(c.getUTCFullYear()).slice(2), { anchor: "middle" })); });
   const ends = [];
-  series.forEach((s, i) => {
+  series.forEach((sr, i) => {
+    if (S.hidden.has(sr.g.key) && shown.length) return;
+    if (!shown.length) return;
     const col = COLORS[i % COLORS.length];
-    if (s.rows.length > 1) o.push('<polyline points="' + s.rows.map((r) => X(r.order_date).toFixed(1) + "," + Y(r.px).toFixed(1)).join(" ") + '" fill="none" stroke="' + col + '" stroke-width="2" stroke-linejoin="round"/>');
-    for (const r of s.rows) o.push("<g>" + "<title>" + esc(s.label + " \u00b7 " + fmtDate(r.order_date) + " \u00b7 " + money(r.px) + " \u00b7 PO " + r.po_id) + "</title>" + markerSvg(i, col, X(r.order_date), Y(r.unit_price)) + "</g>");
-    const last = s.rows[s.rows.length - 1]; ends.push({ y: Y(last.px), x: X(last.order_date), label: s.label, i });
+    if (sr.rows.length > 1) o.push('<polyline points="' + sr.rows.map((r) => X(r.order_date).toFixed(1) + "," + Y(val(sr, r)).toFixed(1)).join(" ") + '" fill="none" stroke="' + col + '" stroke-width="2" stroke-linejoin="round"/>');
+    for (const r of sr.rows) o.push("<g><title>" + esc(sr.label + " \u00b7 " + fmtDate(r.order_date) + " \u00b7 " + money(r.px) + (pctMode ? " (" + signPct(val(sr, r)) + " since the first purchase)" : "") + " \u00b7 PO " + r.po_id) + "</title>" + markerSvg(i, col, X(r.order_date), Y(val(sr, r))) + "</g>");
+    const last = sr.rows[sr.rows.length - 1]; ends.push({ y: Y(val(sr, last)), x: X(last.order_date), label: sr.label, i });
   });
   ends.sort((a, b) => a.y - b.y); for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 16) ends[k].y = ends[k - 1].y + 16;
   for (const e of ends) { const col = COLORS[e.i % COLORS.length]; o.push(markerSvg(e.i, col, e.x + 16, e.y, true) + txt((e.x + 28).toFixed(1), (e.y + 4).toFixed(1), e.label.length > 22 ? e.label.slice(0, 21) + "\u2026" : e.label, { fill: "#E8E6E1", size: 13, halo: true })); }
-  series.forEach((s, i) => { const y = T + PH + B + 12 + i * 22, col = COLORS[i % COLORS.length], st = s.st; o.push(markerSvg(i, col, L + 6, y - 4, true) + txt(L + 22, y, s.label + "   " + st.n + " purchase" + (st.n === 1 ? "" : "s") + " \u00b7 average " + money(st.mean) + " \u00b7 std dev " + moneySd(st.sd) + (st.cv == null ? "" : " \u00b7 variation " + pct(st.cv)), { fill: "#E8E6E1", size: 13 })); });
+  if (!shown.length) o.push(txt((L + W - R) / 2, T + PH / 2, "All lines are hidden. Click a legend entry to show it.", { anchor: "middle", fill: "#E8E6E1", size: 14 }));
+  o.push(legendSvg(series, L, T + PH + B + 12, (sr) => sr.st.n + " purchase" + (sr.st.n === 1 ? "" : "s") + " \u00b7 average " + money(sr.st.mean) + " \u00b7 std dev " + moneySd(sr.st.sd) + (sr.st.cv == null ? "" : " \u00b7 variation " + pct(sr.st.cv))));
   o.push("</svg>"); return o.join("");
 }
 
@@ -799,8 +818,9 @@ function renderSupplierTable() {
 
 // ---------------------------------------------------------------- price vs order size
 function scatterSvg(series, title) {
+  const shown = series.filter((x) => !S.hidden.has(x.g.key)), base = shown.length ? shown : series;
   const W = 1060, L = 64, R = 40, T = 14, B = 52, PH = 320, legendH = series.length * 22 + 14, H = T + PH + B + legendH;
-  const pts = series.flatMap((s) => s.rows).filter((r) => r.qty > 0);
+  const pts = base.flatMap((x) => x.rows).filter((r) => r.qty > 0);
   if (!pts.length) return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' 80" role="img" aria-label="' + esc(title) + '"><rect width="' + W + '" height="80" fill="#22272C"/>' + txt(20, 44, "No quantities are recorded for these purchase lines.", { fill: "#E8E6E1", size: 14 }) + "</svg>";
   const qs = pts.map((r) => r.qty), qmin = Math.min(...qs), qmax = Math.max(...qs), logX = qmax / qmin > 20;
   const { ticks, step } = niceTicks(Math.min(...pts.map((r) => r.px)), Math.max(...pts.map((r) => r.px)), 5), lo = ticks[0], hi = ticks[ticks.length - 1];
@@ -812,8 +832,9 @@ function scatterSvg(series, title) {
   for (const v of ticks) { const y = Y(v); o.push('<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) + '" stroke="#2E343A"/>' + txt(L - 10, (y + 4).toFixed(1), tickFmt(v, step), { anchor: "end" })); }
   for (const v of xTicks) { const x = X(v); if (x < L - 1 || x > W - R + 1) continue; o.push('<line x1="' + x.toFixed(1) + '" y1="' + (T + PH) + '" x2="' + x.toFixed(1) + '" y2="' + (T + PH + 5) + '" stroke="#9AA0A6"/>' + txt(x.toFixed(1), T + PH + 20, v.toLocaleString("en-US"), { anchor: "middle" })); }
   o.push(txt((L + W - R) / 2, T + PH + 42, "Quantity on the order line" + (logX ? " (log scale)" : ""), { anchor: "middle", size: 12 }));
-  series.forEach((s, i) => { const col = COLORS[i % COLORS.length]; for (const r of s.rows) if (r.qty > 0) o.push("<g><title>" + esc(s.label + " \u00b7 " + fmtDate(r.order_date) + " \u00b7 " + Math.round(r.qty).toLocaleString("en-US") + " \u00d7 " + money(r.px) + " \u00b7 PO " + r.po_id) + "</title>" + markerSvg(i, col, X(r.qty), Y(r.px)) + "</g>"); });
-  series.forEach((s, i) => { const y = T + PH + B + 12 + i * 22, col = COLORS[i % COLORS.length], q = s.rows.filter((r) => r.qty > 0); o.push(markerSvg(i, col, L + 6, y - 4, true) + txt(L + 22, y, s.label + "   " + s.st.n + " purchase" + (s.st.n === 1 ? "" : "s") + " \u00b7 average order " + Math.round(q.length ? sumOf(q, (r) => r.qty) / q.length : 0).toLocaleString("en-US") + " \u00b7 average price " + money(s.st.mean), { fill: "#E8E6E1", size: 13 })); });
+  series.forEach((sr, i) => { if (S.hidden.has(sr.g.key) && shown.length) return; const col = COLORS[i % COLORS.length]; for (const r of sr.rows) if (r.qty > 0) o.push("<g><title>" + esc(sr.label + " \u00b7 " + fmtDate(r.order_date) + " \u00b7 " + Math.round(r.qty).toLocaleString("en-US") + " \u00d7 " + money(r.px) + " \u00b7 PO " + r.po_id) + "</title>" + markerSvg(i, col, X(r.qty), Y(r.px)) + "</g>"); });
+  if (!shown.length) o.push(txt((L + W - R) / 2, T + PH / 2, "All lines are hidden. Click a legend entry to show it.", { anchor: "middle", fill: "#E8E6E1", size: 14 }));
+  o.push(legendSvg(series, L, T + PH + B + 12, (sr) => { const q = sr.rows.filter((r) => r.qty > 0); return sr.st.n + " purchase" + (sr.st.n === 1 ? "" : "s") + " \u00b7 average order " + Math.round(q.length ? sumOf(q, (r) => r.qty) / q.length : 0).toLocaleString("en-US") + " \u00b7 average price " + money(sr.st.mean); }));
   o.push("</svg>"); return o.join("");
 }
 
@@ -891,31 +912,34 @@ function chartPlan() {
     const gs = V.focusGroups.slice(0, MAX_LINES);
     return { mode: "lines", series: gs.map((g) => ({ label: g.supplier, rows: g.rows, st: g.st, g })), title: "Price paid per unit for " + V.focusSku + ", by supplier", subtitle: "Each marker is one purchase order line. Lines join purchases in date order.", note: V.focusGroups.length > MAX_LINES ? "Showing the " + MAX_LINES + " suppliers with the most purchases." : "" };
   }
-  const sg = V.selGroups;
-  if (!sg.length) return { err: "Tick at least one row to chart it." };
+  const viaChosen = !V.selGroups.length && S.skus.size > 0;
+  const sg = viaChosen ? V.visible.filter((g) => S.skus.has(g.sku)) : V.selGroups;
+  const via = viaChosen ? "No rows are ticked, so this charts every row of the chosen SKUs." : "";
+  if (!sg.length) return { err: S.skus.size ? "None of the chosen SKUs has purchases in the selected dates and filters." : "Tick at least one row to chart it." };
   if (sg.length > MAX_LINES) {
     const items = sg.filter((g) => g.st.cv != null).sort((a, b) => b.st.cv - a.st.cv).slice(0, RANK_ROWS);
     if (!items.length) return { err: "None of the ticked rows has two or more purchases yet, so there is no variation to rank." };
-    return { mode: "rank", items, all: sg, title: "Price volatility ranking of " + sg.length + " selected rows", subtitle: "Most volatile first. More than " + MAX_LINES + " rows ticked, so this ranks them instead of drawing lines.", note: sg.length > items.length ? "Showing the " + items.length + " most volatile." : "" };
+    return { mode: "rank", items, all: sg, title: "Price volatility ranking of " + sg.length + " selected rows", subtitle: "Most volatile first. More than " + MAX_LINES + " rows ticked, so this ranks them instead of drawing lines.", note: (via ? via + " " : "") + (sg.length > items.length ? "Showing the " + items.length + " most volatile." : "") };
   }
   const sameSku = new Set(sg.map((g) => g.sku)).size === 1, sameSup = new Set(sg.map((g) => g.supplier)).size === 1;
-  return { mode: "lines", series: sg.map((g) => ({ label: sameSku ? g.supplier : sameSup ? g.sku : g.sku + " \u00b7 " + g.supplier, rows: g.rows, st: g.st, g })), title: "Price paid per unit over time", subtitle: "Each marker is one purchase order line. Lines join purchases in date order.", note: "" };
+  return { mode: "lines", series: sg.map((g) => ({ label: sameSku ? g.supplier : sameSup ? g.sku : g.sku + " \u00b7 " + g.supplier, rows: g.rows, st: g.st, g })), title: "Price paid per unit over time", subtitle: "Each marker is one purchase order line. Lines join purchases in date order.", note: via };
 }
 
 function renderChart() {
   const el = $("chart"), btn = $("gen");
   const plan = S.loaded && S.rows.length ? chartPlan() : { err: "" };
-  $("gen-hint").textContent = S.view === "all" ? (V && V.focusSku ? "Comparing every supplier for " + V.focusSku + "." : "Choose one SKU to compare suppliers.") : (V && V.selGroups.length > MAX_LINES ? "More than " + MAX_LINES + " ticked: the chart ranks volatility." : V && V.selGroups.length ? V.selGroups.length + " row" + (V.selGroups.length === 1 ? "" : "s") + " ticked." : "Tick up to " + MAX_LINES + " rows, then generate a chart.");
+  $("gen-hint").textContent = S.view === "all" ? (V && V.focusSku ? "Comparing every supplier for " + V.focusSku + "." : "Choose one SKU to compare suppliers.") : (V && V.selGroups.length > MAX_LINES ? "More than " + MAX_LINES + " ticked: the chart ranks volatility." : V && V.selGroups.length ? V.selGroups.length + " row" + (V.selGroups.length === 1 ? "" : "s") + " ticked." : S.skus.size ? "No rows ticked: this charts the " + S.skus.size + " chosen SKU" + (S.skus.size === 1 ? "" : "s") + "." : "Tick up to " + MAX_LINES + " rows, then generate a chart.");
   btn.disabled = !!plan.err && !S.chartOn;      // an open chart can always be hidden
   $("gen-text").textContent = S.chartOn ? "Hide chart" : "Generate chart";
   if (!S.chartOn) { el.innerHTML = ""; return; }
   if (plan.err) { el.innerHTML = '<div class="panel chart-panel"><div class="lbl">' + esc(plan.err) + "</div></div>"; return; }
-  const size = plan.mode === "lines" && S.chartKind === "size";
-  const title = size ? (S.view === "all" ? "Price paid per unit for " + V.focusSku + ", by order size" : "Price paid per unit by order size") : plan.title;
-  const subtitle = size ? "Each marker is one purchase order line; bigger orders sit further right." : plan.subtitle;
+  const size = plan.mode === "lines" && S.chartKind === "size", pctMode = plan.mode === "lines" && !size && S.scale === "pct";
+  const title = size ? (S.view === "all" ? "Price paid per unit for " + V.focusSku + ", by order size" : "Price paid per unit by order size") : pctMode ? plan.title.replace("Price paid per unit", "Change in price per unit") : plan.title;
+  const subtitle = size ? "Each marker is one purchase order line; bigger orders sit further right." : pctMode ? "Every line starts at 0% at its first purchase in the selected dates, so SKUs with very different prices can share one chart. Click a legend entry to hide a line." : plan.subtitle + (plan.mode === "lines" ? " Click a legend entry to hide a line." : "");
   const svg = plan.mode === "lines" ? (size ? scatterSvg(plan.series, title) : lineChartSvg(plan.series, title)) : rankingSvg(plan.items, plan.title);
+  const scales = plan.mode === "lines" && !size ? '<div class="seg" id="cscale" role="group" aria-label="Chart scale"><button type="button" data-sc="price" aria-pressed="' + !pctMode + '">Price ($)</button><button type="button" data-sc="pct" aria-pressed="' + pctMode + '">% change</button></div>' : "";
   const kinds = plan.mode === "lines" ? '<div class="seg" id="ckinds" role="group" aria-label="Chart type"><button type="button" data-k="time" aria-pressed="' + (!size) + '">Price over time</button><button type="button" data-k="size" aria-pressed="' + size + '">Price vs order size</button></div>' : "";
-  el.innerHTML = '<div class="panel chart-panel"><div class="chart-head"><h2>' + esc(title) + '</h2><span class="lbl">' + esc(subtitle) + (plan.note ? " " + esc(plan.note) : "") + "</span>" + kinds + '</div><div class="chart-box" id="chart-box">' + svg + '</div><div class="chart-actions"><button type="button" class="btn quiet" id="dl-img">Download chart image</button><button type="button" class="btn quiet" id="dl-csv">Download data (CSV)</button></div></div>';
+  el.innerHTML = '<div class="panel chart-panel"><div class="chart-head"><h2>' + esc(title) + '</h2><span class="lbl">' + esc(subtitle) + (plan.note ? " " + esc(plan.note) : "") + "</span>" + scales + kinds + '</div><div class="chart-box" id="chart-box">' + svg + '</div><div class="chart-actions"><button type="button" class="btn quiet" id="dl-img">Download chart image</button><button type="button" class="btn quiet" id="dl-csv">Download data (CSV)</button></div></div>';
   $("dl-img").onclick = () => downloadPng($("chart-box").querySelector("svg"), "supplier-pricing-chart");
   $("dl-csv").onclick = () => downloadCsv(plan);
 }
@@ -983,7 +1007,7 @@ function downloadCsv(plan) {
   const lines = [];
   if (plan.mode === "lines") {
     lines.push(["SKU", "Description", "Supplier", "Destination", "PO", "Order date", "Unit price", "Landed cost per unit (estimate)", "Price used in this view", "Quantity ordered", "Quantity received"]);
-    for (const s of plan.series) for (const r of s.rows) lines.push([r.product_id, r.description || "", r.supplier, r.destination === NONE ? "" : r.destination, r.po_id, r.order_date, r.unit_price, r.landed, r.px, r.quantity, r.quantity_received]);
+    for (const s of visibleSeries(plan)) for (const r of s.rows) lines.push([r.product_id, r.description || "", r.supplier, r.destination === NONE ? "" : r.destination, r.po_id, r.order_date, r.unit_price, r.landed, r.px, r.quantity, r.quantity_received]);
   } else {
     lines.push(["SKU", "Description", "Supplier", "Purchases", "Latest", "Average", "Low", "High", "Std dev", "Variation %", "First to latest %"]);
     for (const g of plan.all) lines.push([g.sku, g.desc, g.supplier, g.st.n, g.st.latest, g.st.mean, g.st.lo, g.st.hi, g.st.sd, g.st.cv, g.st.change]);
@@ -1008,7 +1032,7 @@ function setSkuOpen(open) {
 }
 $("skubtn").addEventListener("click", () => setSkuOpen($("sku-pop").classList.contains("hidden")));
 $("sku-opts").addEventListener("change", (e) => { const x = SKU_VIEW[Number(e.target.dataset.s)]; if (x == null) return; if (e.target.checked) S.skus.add(x); else S.skus.delete(x); S.shown = PAGE; update(); });
-$("sku-all").addEventListener("click", () => { skuMatches().forEach((x) => S.skus.add(x)); renderSkuOpts(); S.shown = PAGE; update(); });
+$("sku-all").addEventListener("click", () => { S.skus = new Set(skuPool()); renderSkuOpts(); S.shown = PAGE; update(); });      // replaces the old choice, so an earlier SKU that no longer matches is not left ticked
 $("sku-clear").addEventListener("click", () => { S.skus = new Set(); renderSkuOpts(); S.shown = PAGE; update(); });
 $("sku-done").addEventListener("click", () => { setSkuOpen(false); $("skubtn").focus(); });
 $("chips").addEventListener("click", (e) => {
@@ -1032,9 +1056,23 @@ $("overview").addEventListener("click", (e) => {                       // a move
   S.q = b.dataset.q; $("q").value = S.q; S.skus = new Set(); S.listMode = "skus"; S.shown = PAGE; update();
   const t = $("table-panel"); if (t.scrollIntoView) t.scrollIntoView({ behavior: "smooth", block: "start" });
 });
+function toggleSeries(i) {
+  const plan = chartPlan(); if (plan.err || plan.mode !== "lines" || !plan.series[i]) return;
+  const key = plan.series[i].g.key;
+  if (S.hidden.has(key)) S.hidden.delete(key); else S.hidden.add(key);
+  renderChart();
+  const nb = document.querySelector('#chart .lg[data-i="' + i + '"]'); if (nb) nb.focus();
+}
 $("chart").addEventListener("click", (e) => {
+  const lg = e.target.closest(".lg"); if (lg) { toggleSeries(Number(lg.dataset.i)); return; }
+  const sc = e.target.closest("#cscale button"); if (sc) { S.scale = sc.dataset.sc; renderChart(); const nb = document.querySelector('#cscale [data-sc="' + sc.dataset.sc + '"]'); if (nb) nb.focus(); return; }
   const b = e.target.closest("#ckinds button"); if (!b) return;
   S.chartKind = b.dataset.k; update(); const nb = document.querySelector('#ckinds [data-k="' + b.dataset.k + '"]'); if (nb) nb.focus();
+});
+$("chart").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const lg = e.target.closest && e.target.closest(".lg"); if (!lg) return;
+  e.preventDefault(); toggleSeries(Number(lg.dataset.i));
 });
 $("tbody").addEventListener("click", (e) => { const b = e.target.closest("button[data-sup]"); if (!b || !V.supRows) return; S.supplier = V.supRows[Number(b.dataset.sup)].supplier; S.listMode = "skus"; S.shown = PAGE; update(); });
 $("views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.view = b.dataset.v; update(); });
