@@ -68,6 +68,19 @@
   .pop label { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 8px; cursor: pointer; }
   .pop input[type=checkbox], td input[type=checkbox], th input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--better); }
   .pop hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+  #sku-pop { width: 400px; }
+  #sku-opts label { align-items: flex-start; padding: 8px; }
+  #sku-opts .opt { display: flex; flex-direction: column; min-width: 0; }
+  #sku-opts .desc { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
+  .pop-actions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
+  .pop-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 8px; }
+  #skubtn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .chips:empty { display: none; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 4px 0 12px; background: var(--panel-raised); border: 1px solid var(--border-strong); border-radius: 999px; font-size: 13px; }
+  .chip.off { opacity: .55; }
+  .chip button { min-width: 36px; min-height: 36px; background: none; border: 0; border-radius: 999px; cursor: pointer; font-size: 18px; line-height: 1; color: var(--text-muted); }
+  .chip button:hover { color: var(--text); }
 
   /* ---- summary cards ---- */
   section.block { margin-top: 16px; }
@@ -125,13 +138,19 @@
         <input id="q" class="field" type="search" placeholder="SKU, description or supplier" autocomplete="off">
       </div>
       <div class="field-wrap" style="flex: 1 1 180px">
-        <label class="lbl" for="sup">Supplier</label>
+        <label class="lbl" for="sup" id="sup-lbl">Supplier</label>
         <select id="sup" class="field"><option value="">All suppliers</option></select>
       </div>
-      <div class="field-wrap" style="flex: 1 1 200px">
-        <label class="lbl" for="sku">SKU</label>
-        <input id="sku" class="field" list="sku-list" placeholder="All SKUs" autocomplete="off">
-        <datalist id="sku-list"></datalist>
+      <div class="field-wrap" style="flex: 1 1 200px" id="sku-wrap">
+        <span class="lbl" id="sku-lbl">SKU</span>
+        <button type="button" id="skubtn" class="field" aria-haspopup="true" aria-expanded="false" aria-labelledby="sku-lbl skubtn"><span id="skubtn-text">All SKUs</span>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
+        <div class="pop hidden" id="sku-pop" role="group" aria-label="SKUs">
+          <input id="sku-q" class="field" type="search" placeholder="Type to find SKUs" aria-label="Find SKUs" autocomplete="off">
+          <div class="pop-actions"><button type="button" class="btn quiet" id="sku-all">Select all</button><button type="button" class="btn quiet" id="sku-clear">Clear</button></div>
+          <div id="sku-opts"></div>
+          <div class="pop-foot"><span class="lbl" id="sku-more"></span><button type="button" class="btn" id="sku-done">Done</button></div>
+        </div>
       </div>
       <div class="field-wrap" style="flex: 1 1 210px" id="dest-wrap">
         <span class="lbl" id="dest-lbl">Destination</span>
@@ -140,6 +159,8 @@
         <div class="pop hidden" id="dest-pop" role="group" aria-label="Destinations"></div>
       </div>
     </div>
+    <div id="chips" class="chips" aria-label="Chosen SKUs"></div>
+    <div id="note" class="lbl" role="status" aria-live="polite"></div>
     <div class="row">
       <div class="field-wrap">
         <span class="lbl" id="range-lbl">Date range (order date)</span>
@@ -228,7 +249,7 @@ const cvCell = (cv) => cv == null ? "\u2013" : (cv >= HIGH_PCT ? '<span class="r
 const db = (typeof supabase !== "undefined") ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 const S = {
   rows: [], loaded: false,
-  q: "", supplier: "", sku: "", dests: new Set(), allDests: [],
+  q: "", supplier: "", skus: new Set(), skuQuery: "", dests: new Set(), allDests: [],
   preset: "12m", from: "", to: "",
   view: "same", chartOn: false, sort: { key: "sku", dir: 1 }, shown: PAGE,
   selected: new Set(),
@@ -270,17 +291,96 @@ async function load() {
   }
 }
 
-function fillLists() {
-  const sups = [...new Set(S.rows.map((r) => r.supplier))].sort(sortStr);
-  $("sup").innerHTML = '<option value="">All suppliers</option>' + sups.map((s) => '<option value="' + esc(s) + '">' + esc(s) + "</option>").join("");
-  const skus = [...new Set(S.rows.map((r) => r.product_id))].sort(sortStr);
-  $("sku-list").innerHTML = skus.map((s) => '<option value="' + esc(s) + '"></option>').join("");
-  renderDestPop();
+// ---------------------------------------------------------------- dependent filters
+// Supplier, SKU and Destination narrow each other. "Ever" means everything loaded, whatever the date range,
+// so the choices don't shift as you move the dates. The SKU picker is a multi-select: S.skus is the chosen set.
+let IDX = null, supKey = null, skuKey = null, destKey = null, SKU_VIEW = [], CHIP_VIEW = [];
+const SKU_LIST_MAX = 200, CHIPS_MAX = 12;
+function buildIndexes() {
+  IDX = { skuSups: new Map(), supSkus: new Map(), pairDests: new Map(), skuDesc: new Map() };
+  const descDate = new Map();
+  for (const r of S.rows) {
+    if (!IDX.skuSups.has(r.product_id)) IDX.skuSups.set(r.product_id, new Set());
+    IDX.skuSups.get(r.product_id).add(r.supplier);
+    if (!IDX.supSkus.has(r.supplier)) IDX.supSkus.set(r.supplier, new Set());
+    IDX.supSkus.get(r.supplier).add(r.product_id);
+    const k = r.product_id + "\u0001" + r.supplier;
+    if (!IDX.pairDests.has(k)) IDX.pairDests.set(k, new Set());
+    IDX.pairDests.get(k).add(r.destination);
+    if (r.description && (!descDate.has(r.product_id) || r.order_date >= descDate.get(r.product_id))) { descDate.set(r.product_id, r.order_date); IDX.skuDesc.set(r.product_id, r.description); }
+  }
+  IDX.allSkus = [...IDX.skuSups.keys()].sort(sortStr);
+  IDX.allSups = [...IDX.supSkus.keys()].sort(sortStr);
 }
+const supplierSkus = (sup) => IDX.supSkus.get(sup) || new Set();
+const skuText = () => S.skus.size === 0 ? "All SKUs" : S.skus.size === 1 ? [...S.skus][0] : S.skus.size + " SKUs chosen";
+
+// every SKU the picker lists right now: the chosen supplier's SKUs (or all), plus anything already chosen, filtered by the search text
+function skuMatches() {
+  const pool = new Set(S.supplier ? supplierSkus(S.supplier) : IDX.allSkus);
+  S.skus.forEach((x) => pool.add(x));
+  const q = S.skuQuery.trim().toLowerCase();
+  return [...pool].filter((x) => !q || x.toLowerCase().includes(q) || (IDX.skuDesc.get(x) || "").toLowerCase().includes(q)).sort(sortStr);
+}
+function renderSkuOpts() {
+  const all = skuMatches(), shown = all.slice(0, SKU_LIST_MAX), have = S.supplier ? supplierSkus(S.supplier) : null;
+  SKU_VIEW = shown;
+  $("sku-opts").innerHTML = shown.map((x, i) => {
+    const d = IDX.skuDesc.get(x) || "", off = have && !have.has(x);
+    return '<label><input type="checkbox" data-s="' + i + '"' + (S.skus.has(x) ? " checked" : "") + '><span class="opt"><span class="sku">' + esc(x) + "</span>" + (d ? '<span class="desc">' + esc(d) + "</span>" : "") + (off ? '<span class="desc">' + esc(S.supplier) + " has never supplied this</span>" : "") + "</span></label>";
+  }).join("") || '<div class="lbl" style="padding:12px 8px">No SKUs match.</div>';
+  $("sku-all").textContent = (S.skuQuery.trim() ? "Select all matching" : "Select all") + " (" + all.length + ")";
+  $("sku-all").disabled = all.length === 0;
+  $("sku-more").textContent = all.length > shown.length ? "Showing the first " + shown.length + " of " + all.length + ". Type to narrow." : "";
+}
+function renderChips() {
+  const el = $("chips");
+  if (!S.skus.size) { el.innerHTML = ""; CHIP_VIEW = []; return; }
+  const list = [...S.skus].sort(sortStr), show = list.slice(0, CHIPS_MAX), have = S.supplier ? supplierSkus(S.supplier) : null;
+  CHIP_VIEW = show;
+  el.innerHTML = show.map((x, i) => {
+    const off = have && !have.has(x);
+    return '<span class="chip' + (off ? " off" : "") + '"' + (off ? ' title="' + esc(S.supplier) + ' has never supplied this SKU"' : "") + "><span>" + esc(x) + '</span><button type="button" data-rm="' + i + '" aria-label="Remove ' + esc(x) + '">\u00d7</button></span>';
+  }).join("") + (list.length > CHIPS_MAX ? '<span class="lbl">+' + (list.length - CHIPS_MAX) + " more</span>" : "") + '<button type="button" class="btn quiet" id="chips-clear">Clear SKUs</button>';
+}
+function destAvail(chosen) {
+  if (!(chosen && chosen.size) && !S.supplier) return S.allDests;
+  const out = new Set();
+  for (const [k, ds] of IDX.pairDests) {
+    const [sku, sup] = k.split("\u0001");
+    if (chosen && chosen.size && !chosen.has(sku)) continue;
+    if (S.supplier && sup !== S.supplier) continue;
+    ds.forEach((d) => out.add(d));
+  }
+  return [...out].sort(sortStr);
+}
+function refreshDependents() {
+  const chosen = S.skus.size ? S.skus : null;
+  // suppliers: the union of everyone who has ever supplied any chosen SKU, or everyone when none is chosen
+  let sups = IDX.allSups;
+  if (chosen) { const u = new Set(); chosen.forEach((x) => (IDX.skuSups.get(x) || []).forEach((y) => u.add(y))); sups = [...u].sort(sortStr); }
+  let note = "";
+  if (S.supplier && !sups.includes(S.supplier)) {
+    note = S.supplier + " has never supplied " + (chosen.size === 1 ? [...chosen][0] : "any of the chosen SKUs") + ", so the supplier filter was cleared.";
+    S.supplier = "";
+  }
+  const sk = sups.join("\u0002");
+  if (sk !== supKey) { supKey = sk; $("sup").innerHTML = '<option value="">All suppliers</option>' + sups.map((x) => '<option value="' + esc(x) + '">' + esc(x) + "</option>").join(""); }
+  $("sup").value = S.supplier;
+  $("sup-lbl").textContent = chosen ? "Supplier \u00b7 " + sups.length + (chosen.size === 1 ? " for this SKU" : " for the chosen SKUs") : "Supplier";
+  $("skubtn-text").textContent = skuText();
+  $("sku-lbl").textContent = S.supplier ? "SKU \u00b7 " + supplierSkus(S.supplier).size + " from this supplier" : "SKU";
+  if (S.supplier !== skuKey) { skuKey = S.supplier; renderSkuOpts(); }
+  renderChips();
+  const avail = destAvail(chosen), dk = avail.join("\u0002");
+  if (dk !== destKey) { destKey = dk; S.availDests = avail; renderDestPop(); } else $("dest-text").textContent = destLabel();
+  $("note").textContent = note;
+}
+function fillLists() { buildIndexes(); supKey = skuKey = destKey = null; S.availDests = S.allDests; refreshDependents(); }
 
 // ---------------------------------------------------------------- destination picker
 function destLabel() {
-  const n = S.allDests.length, k = S.dests.size;
+  const av = S.availDests || S.allDests, n = av.length, k = av.filter((d) => S.dests.has(d)).length;
   if (!n) return "All destinations";
   if (k === n) return "All destinations (" + n + ")";
   if (k === 0) return "No destinations";
@@ -289,10 +389,10 @@ function destLabel() {
 function renderDestPop() {
   const a = document.activeElement, pop = $("dest-pop");
   const keep = a && pop.contains(a) ? (a.id ? "#" + a.id : a.dataset.d != null ? '[data-d="' + a.dataset.d + '"]' : null) : null;
-  const all = S.dests.size === S.allDests.length;
+  const av = S.availDests || S.allDests, all = av.length > 0 && av.every((d) => S.dests.has(d));
   $("dest-pop").innerHTML =
-    '<label style="font-weight:600"><input type="checkbox" id="dest-all"' + (all ? " checked" : "") + '>Select all (' + S.allDests.length + ")</label><hr>" +
-    S.allDests.map((d, i) => '<label><input type="checkbox" data-d="' + i + '"' + (S.dests.has(d) ? " checked" : "") + ">" + esc(d) + "</label>").join("") +
+    '<label style="font-weight:600"><input type="checkbox" id="dest-all"' + (all ? " checked" : "") + '>Select all (' + av.length + ")</label><hr>" +
+    av.map((d, i) => '<label><input type="checkbox" data-d="' + i + '"' + (S.dests.has(d) ? " checked" : "") + ">" + esc(d) + "</label>").join("") +
     '<div style="display:flex;justify-content:space-between;gap:8px;padding-top:8px"><button type="button" class="btn quiet" id="dest-clear">Clear</button><button type="button" class="btn" id="dest-done">Done</button></div>';
   $("dest-text").textContent = destLabel();
   if (keep) { const n = pop.querySelector(keep); if (n) n.focus(); }
@@ -330,10 +430,10 @@ function derive() {
     const withDesc = [...g.rows].reverse().find((r) => r.description); g.desc = withDesc ? withDesc.description : "";
   }
   const terms = S.q.toLowerCase().split(/\s+/).filter(Boolean);
-  const skuQ = S.sku.trim().toLowerCase();
+  const skuSet = S.skus.size ? S.skus : null;
   const visible = [...groups.values()].filter((g) => {
     if (S.supplier && g.supplier !== S.supplier) return false;
-    if (skuQ && !g.sku.toLowerCase().includes(skuQ)) return false;
+    if (skuSet && !skuSet.has(g.sku)) return false;
     if (terms.length) { const hay = (g.sku + " " + g.desc + " " + g.supplier).toLowerCase(); if (!terms.every((t) => hay.includes(t))) return false; }
     return true;
   });
@@ -349,11 +449,12 @@ function derive() {
   const vis = new Set(visible.map((g) => g.key));
   S.selected = new Set([...S.selected].filter((k) => vis.has(k)));
   const selGroups = visible.filter((g) => S.selected.has(g.key));
-  // "All suppliers for the SKU": the SKU in focus is the one typed in the SKU box (exact), or the only SKU among the ticked rows
+  // "All suppliers for the SKU": the SKU in focus is the only SKU among the ticked rows, or the single chosen SKU
   let focusSku = null;
   const skuNames = new Map(); for (const g of groups.values()) skuNames.set(g.sku.toLowerCase(), g.sku);
-  if (skuQ && skuNames.has(skuQ)) focusSku = skuNames.get(skuQ);
-  else { const set = new Set(selGroups.map((g) => g.sku)); if (set.size === 1) focusSku = [...set][0]; }
+  const tickedSkus = new Set(selGroups.map((g) => g.sku));
+  if (tickedSkus.size === 1) focusSku = [...tickedSkus][0];
+  else if (S.skus.size === 1 && skuNames.has([...S.skus][0].toLowerCase())) focusSku = skuNames.get([...S.skus][0].toLowerCase());
   const focusGroups = focusSku ? [...groups.values()].filter((g) => g.sku === focusSku).sort((a, b) => b.st.n - a.st.n || sortStr(a.supplier, b.supplier)) : [];
   V = { base, groups, visible, selGroups, focusSku, focusGroups };
 }
@@ -436,7 +537,7 @@ function renderSummary() {
   const el = $("summary");
   if (!S.loaded || !S.rows.length) { el.innerHTML = ""; return; }
   if (S.view === "all") {
-    if (!V.focusSku) { el.innerHTML = '<div class="panel sum"><div class="lbl">Pick one SKU, by typing it in the SKU box or ticking one of its rows below, to compare every supplier we buy it from.</div></div>'; return; }
+    if (!V.focusSku) { el.innerHTML = '<div class="panel sum"><div class="lbl">' + (S.skus.size === 1 ? "No purchases of " + esc([...S.skus][0]) + " in the selected date range and destinations." : "Choose one SKU in the SKU picker, or tick one SKU\u2019s rows below, to compare every supplier we buy it from." + (S.skus.size > 1 ? " " + S.skus.size + " SKUs are chosen." : "")) + '</div></div>'; return; }
     const gs = V.focusGroups, p = pooled(gs), desc = gs.map((g) => g.desc).find(Boolean) || "";
     const byLatest = [...gs].filter((g) => g.st.latest != null).sort((a, b) => a.st.latest - b.st.latest), cheap = byLatest[0], dear = byLatest[byLatest.length - 1];
     const gap = gs.length > 1 ? (dear.st.latest / cheap.st.latest - 1) * 100 : null;
@@ -469,7 +570,7 @@ function renderSummary() {
 // what the chart will draw right now, or why it can't
 function chartPlan() {
   if (S.view === "all") {
-    if (!V.focusSku) return { err: "Pick one SKU first: type it in the SKU box or tick one of its rows." };
+    if (!V.focusSku) return { err: "Choose one SKU first: pick it in the SKU picker or tick one of its rows." };
     const gs = V.focusGroups.slice(0, MAX_LINES);
     return { mode: "lines", series: gs.map((g) => ({ label: g.supplier, rows: g.rows, st: g.st, g })), title: "Price paid per unit for " + V.focusSku + ", by supplier", subtitle: "Each marker is one purchase order line. Lines join purchases in date order.", note: V.focusGroups.length > MAX_LINES ? "Showing the " + MAX_LINES + " suppliers with the most purchases." : "" };
   }
@@ -487,7 +588,7 @@ function chartPlan() {
 function renderChart() {
   const el = $("chart"), btn = $("gen");
   const plan = S.loaded && S.rows.length ? chartPlan() : { err: "" };
-  $("gen-hint").textContent = S.view === "all" ? (V && V.focusSku ? "Comparing every supplier for " + V.focusSku + "." : "Pick one SKU to compare suppliers.") : (V && V.selGroups.length > MAX_LINES ? "More than " + MAX_LINES + " ticked: the chart ranks volatility." : "Tick up to " + MAX_LINES + " rows, then generate a chart.");
+  $("gen-hint").textContent = S.view === "all" ? (V && V.focusSku ? "Comparing every supplier for " + V.focusSku + "." : "Choose one SKU to compare suppliers.") : (V && V.selGroups.length > MAX_LINES ? "More than " + MAX_LINES + " ticked: the chart ranks volatility." : "Tick up to " + MAX_LINES + " rows, then generate a chart.");
   btn.disabled = !!plan.err && !S.chartOn;      // an open chart can always be hidden
   $("gen-text").textContent = S.chartOn ? "Hide chart" : "Generate chart";
   if (!S.chartOn) { el.innerHTML = ""; return; }
@@ -533,6 +634,7 @@ function focusSelector() {
 function update() {
   if (!S.loaded) return;
   const keep = focusSelector();
+  refreshDependents();
   derive(); renderSummary(); renderChart(); renderTable();
   if (keep) { const n = document.querySelector(keep); if (n) n.focus(); }
   $("dest-text").textContent = destLabel();
@@ -564,22 +666,41 @@ function downloadPng(svgEl, name) {
 let qTimer = null;
 $("q").addEventListener("input", (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.q = e.target.value; S.shown = PAGE; update(); }, 150); });
 $("sup").addEventListener("change", (e) => { S.supplier = e.target.value; S.shown = PAGE; update(); });
-$("sku").addEventListener("input", (e) => { S.sku = e.target.value; S.shown = PAGE; update(); });
+function setSkuOpen(open) {
+  $("sku-pop").classList.toggle("hidden", !open);
+  $("skubtn").setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) { setDestOpen(false); renderSkuOpts(); $("sku-q").focus(); }
+}
+$("skubtn").addEventListener("click", () => setSkuOpen($("sku-pop").classList.contains("hidden")));
+$("sku-q").addEventListener("input", (e) => { S.skuQuery = e.target.value; renderSkuOpts(); });
+$("sku-opts").addEventListener("change", (e) => { const x = SKU_VIEW[Number(e.target.dataset.s)]; if (x == null) return; if (e.target.checked) S.skus.add(x); else S.skus.delete(x); S.shown = PAGE; update(); });
+$("sku-all").addEventListener("click", () => { skuMatches().forEach((x) => S.skus.add(x)); renderSkuOpts(); S.shown = PAGE; update(); });
+$("sku-clear").addEventListener("click", () => { S.skus = new Set(); renderSkuOpts(); S.shown = PAGE; update(); });
+$("sku-done").addEventListener("click", () => { setSkuOpen(false); $("skubtn").focus(); });
+$("chips").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.id === "chips-clear") S.skus = new Set(); else if (b.dataset.rm != null) S.skus.delete(CHIP_VIEW[Number(b.dataset.rm)]); else return;
+  renderSkuOpts(); S.shown = PAGE; update(); $("skubtn").focus();
+});
 $("presets").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.p === "custom") { S.preset = "custom"; document.querySelectorAll("#presets button").forEach((x) => x.setAttribute("aria-pressed", x.dataset.p === "custom" ? "true" : "false")); } else applyPreset(b.dataset.p); S.shown = PAGE; update(); });
 const onDates = () => { S.from = $("from").value; S.to = $("to").value; S.preset = "custom"; document.querySelectorAll("#presets button").forEach((x) => x.setAttribute("aria-pressed", x.dataset.p === "custom" ? "true" : "false")); S.shown = PAGE; update(); };
 $("from").addEventListener("change", onDates); $("to").addEventListener("change", onDates);
 $("views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.view = b.dataset.v; update(); });
 $("gen").addEventListener("click", () => { S.chartOn = !S.chartOn; update(); if (S.chartOn) { const el = $("chart"); if (el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "nearest" }); } });
-$("dest").addEventListener("click", () => setDestOpen($("dest-pop").classList.contains("hidden")));
+$("dest").addEventListener("click", () => { const open = $("dest-pop").classList.contains("hidden"); if (open) setSkuOpen(false); setDestOpen(open); });
 $("dest-pop").addEventListener("change", (e) => {
-  if (e.target.id === "dest-all") S.dests = e.target.checked ? new Set(S.allDests) : new Set();
-  else if (e.target.dataset.d != null) { const d = S.allDests[Number(e.target.dataset.d)]; if (e.target.checked) S.dests.add(d); else S.dests.delete(d); }
+  if (e.target.id === "dest-all") S.availDests.forEach((d) => (e.target.checked ? S.dests.add(d) : S.dests.delete(d)));
+  else if (e.target.dataset.d != null) { const d = S.availDests[Number(e.target.dataset.d)]; if (e.target.checked) S.dests.add(d); else S.dests.delete(d); }
   renderDestPop(); S.shown = PAGE; update();
 });
-$("dest-pop").addEventListener("click", (e) => { if (e.target.id === "dest-clear") { S.dests = new Set(); renderDestPop(); update(); } if (e.target.id === "dest-done") { setDestOpen(false); $("dest").focus(); } });
+$("dest-pop").addEventListener("click", (e) => { if (e.target.id === "dest-clear") { S.availDests.forEach((d) => S.dests.delete(d)); renderDestPop(); update(); } if (e.target.id === "dest-done") { setDestOpen(false); $("dest").focus(); } });
 // composedPath, not e.target: a button inside the picker may have been re-drawn (and detached) by its own handler
-document.addEventListener("click", (e) => { if (!e.composedPath().includes($("dest-wrap"))) setDestOpen(false); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("dest-pop").classList.contains("hidden")) { setDestOpen(false); $("dest").focus(); } });
+document.addEventListener("click", (e) => { const path = e.composedPath(); if (!path.includes($("dest-wrap"))) setDestOpen(false); if (!path.includes($("sku-wrap"))) setSkuOpen(false); });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("dest-pop").classList.contains("hidden")) { setDestOpen(false); $("dest").focus(); }
+  if (!$("sku-pop").classList.contains("hidden")) { setSkuOpen(false); $("skubtn").focus(); }
+});
 $("thead").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-sort]");
   if (b) { const k = b.dataset.sort; S.sort = S.sort.key === k ? { key: k, dir: -S.sort.dir } : { key: k, dir: ["sku", "supplier"].includes(k) ? 1 : -1 }; update(); return; }
