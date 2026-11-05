@@ -292,32 +292,45 @@ async function load() {
 }
 
 // ---------------------------------------------------------------- dependent filters
-// Supplier, SKU and Destination narrow each other. "Ever" means everything loaded, whatever the date range,
+// Search, Supplier, SKU and Destination narrow each other. "Ever" means everything loaded, whatever the date range,
 // so the choices don't shift as you move the dates. The SKU picker is a multi-select: S.skus is the chosen set.
-let IDX = null, supKey = null, skuKey = null, destKey = null, SKU_VIEW = [], CHIP_VIEW = [];
+// A "pair" is one SKU bought from one supplier; Search matches a pair on its SKU, description and supplier name together.
+let IDX = null, SEARCH_TERMS = [], supKey = null, skuKey = null, destKey = null, SKU_VIEW = [], CHIP_VIEW = [];
 const SKU_LIST_MAX = 200, CHIPS_MAX = 12;
 function buildIndexes() {
-  IDX = { skuSups: new Map(), supSkus: new Map(), pairDests: new Map(), skuDesc: new Map() };
-  const descDate = new Map();
+  IDX = { skuSups: new Map(), supSkus: new Map(), skuDesc: new Map(), hay: new Map() };
+  const pairMap = new Map(), descDate = new Map();
   for (const r of S.rows) {
     if (!IDX.skuSups.has(r.product_id)) IDX.skuSups.set(r.product_id, new Set());
     IDX.skuSups.get(r.product_id).add(r.supplier);
     if (!IDX.supSkus.has(r.supplier)) IDX.supSkus.set(r.supplier, new Set());
     IDX.supSkus.get(r.supplier).add(r.product_id);
     const k = r.product_id + "\u0001" + r.supplier;
-    if (!IDX.pairDests.has(k)) IDX.pairDests.set(k, new Set());
-    IDX.pairDests.get(k).add(r.destination);
+    if (!pairMap.has(k)) pairMap.set(k, { key: k, sku: r.product_id, sup: r.supplier, dests: new Set() });
+    pairMap.get(k).dests.add(r.destination);
     if (r.description && (!descDate.has(r.product_id) || r.order_date >= descDate.get(r.product_id))) { descDate.set(r.product_id, r.order_date); IDX.skuDesc.set(r.product_id, r.description); }
   }
+  IDX.pairs = [...pairMap.values()];
+  for (const p of IDX.pairs) { p.hay = (p.sku + " " + (IDX.skuDesc.get(p.sku) || "") + " " + p.sup).toLowerCase(); IDX.hay.set(p.key, p.hay); }
   IDX.allSkus = [...IDX.skuSups.keys()].sort(sortStr);
   IDX.allSups = [...IDX.supSkus.keys()].sort(sortStr);
 }
+const hit = (hay) => SEARCH_TERMS.every((t) => hay.includes(t));
 const supplierSkus = (sup) => IDX.supSkus.get(sup) || new Set();
 const skuText = () => S.skus.size === 0 ? "All SKUs" : S.skus.size === 1 ? [...S.skus][0] : S.skus.size + " SKUs chosen";
 
-// every SKU the picker lists right now: the chosen supplier's SKUs (or all), plus anything already chosen, filtered by the search text
-function skuMatches() {
+// the SKUs the picker can offer: the chosen supplier's (or everyone's) that also match the Search; chosen ones are added on top so they can be unticked
+function skuPool() {
   const pool = new Set(S.supplier ? supplierSkus(S.supplier) : IDX.allSkus);
+  if (SEARCH_TERMS.length) {
+    const ok = new Set();
+    for (const p of IDX.pairs) if ((!S.supplier || p.sup === S.supplier) && hit(p.hay)) ok.add(p.sku);
+    for (const x of [...pool]) if (!ok.has(x)) pool.delete(x);
+  }
+  return pool;
+}
+function skuMatches() {
+  const pool = skuPool();
   S.skus.forEach((x) => pool.add(x));
   const q = S.skuQuery.trim().toLowerCase();
   return [...pool].filter((x) => !q || x.toLowerCase().includes(q) || (IDX.skuDesc.get(x) || "").toLowerCase().includes(q)).sort(sortStr);
@@ -344,19 +357,20 @@ function renderChips() {
   }).join("") + (list.length > CHIPS_MAX ? '<span class="lbl">+' + (list.length - CHIPS_MAX) + " more</span>" : "") + '<button type="button" class="btn quiet" id="chips-clear">Clear SKUs</button>';
 }
 function destAvail(chosen) {
-  if (!(chosen && chosen.size) && !S.supplier) return S.allDests;
+  if (!(chosen && chosen.size) && !S.supplier && !SEARCH_TERMS.length) return S.allDests;
   const out = new Set();
-  for (const [k, ds] of IDX.pairDests) {
-    const [sku, sup] = k.split("\u0001");
-    if (chosen && chosen.size && !chosen.has(sku)) continue;
-    if (S.supplier && sup !== S.supplier) continue;
-    ds.forEach((d) => out.add(d));
+  for (const p of IDX.pairs) {
+    if (chosen && chosen.size && !chosen.has(p.sku)) continue;
+    if (S.supplier && p.sup !== S.supplier) continue;
+    if (SEARCH_TERMS.length && !hit(p.hay)) continue;
+    p.dests.forEach((d) => out.add(d));
   }
   return [...out].sort(sortStr);
 }
 function refreshDependents() {
-  const chosen = S.skus.size ? S.skus : null;
-  // suppliers: the union of everyone who has ever supplied any chosen SKU, or everyone when none is chosen
+  SEARCH_TERMS = S.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const chosen = S.skus.size ? S.skus : null, searching = SEARCH_TERMS.length > 0;
+  // 1. suppliers allowed by the chosen SKUs alone: a supplier who has supplied none of them is cleared, with a note
   let sups = IDX.allSups;
   if (chosen) { const u = new Set(); chosen.forEach((x) => (IDX.skuSups.get(x) || []).forEach((y) => u.add(y))); sups = [...u].sort(sortStr); }
   let note = "";
@@ -364,13 +378,21 @@ function refreshDependents() {
     note = S.supplier + " has never supplied " + (chosen.size === 1 ? [...chosen][0] : "any of the chosen SKUs") + ", so the supplier filter was cleared.";
     S.supplier = "";
   }
-  const sk = sups.join("\u0002");
-  if (sk !== supKey) { supKey = sk; $("sup").innerHTML = '<option value="">All suppliers</option>' + sups.map((x) => '<option value="' + esc(x) + '">' + esc(x) + "</option>").join(""); }
+  // 2. the Search narrows the list further but never clears a supplier you picked: typing shouldn't undo your choices
+  if (searching) { const u = new Set(); for (const p of IDX.pairs) { if (chosen && !chosen.has(p.sku)) continue; if (hit(p.hay)) u.add(p.sup); } sups = [...u].sort(sortStr); }
+  let extra = "";
+  if (S.supplier && !sups.includes(S.supplier)) {
+    extra = S.supplier;
+    note = S.supplier + " has no purchases matching \u201c" + S.q.trim() + "\u201d" + (chosen ? " among the chosen SKUs" : "") + ". Clear the search or pick another supplier.";
+  }
+  const sk = sups.join("\u0002") + "\u0004" + extra;
+  if (sk !== supKey) { supKey = sk; $("sup").innerHTML = '<option value="">All suppliers</option>' + sups.map((x) => '<option value="' + esc(x) + '">' + esc(x) + "</option>").join("") + (extra ? '<option value="' + esc(extra) + '">' + esc(extra) + " (no matches)</option>" : ""); }
   $("sup").value = S.supplier;
-  $("sup-lbl").textContent = chosen ? "Supplier \u00b7 " + sups.length + (chosen.size === 1 ? " for this SKU" : " for the chosen SKUs") : "Supplier";
+  $("sup-lbl").textContent = chosen || searching ? "Supplier \u00b7 " + sups.length + (chosen && !searching ? (chosen.size === 1 ? " for this SKU" : " for the chosen SKUs") : " matching") : "Supplier";
   $("skubtn-text").textContent = skuText();
-  $("sku-lbl").textContent = S.supplier ? "SKU \u00b7 " + supplierSkus(S.supplier).size + " from this supplier" : "SKU";
-  if (S.supplier !== skuKey) { skuKey = S.supplier; renderSkuOpts(); }
+  $("sku-lbl").textContent = S.supplier || searching ? "SKU \u00b7 " + skuPool().size + (S.supplier && searching ? " from this supplier, matching" : S.supplier ? " from this supplier" : " matching") : "SKU";
+  const ok = S.supplier + "\u0003" + S.q.trim();
+  if (ok !== skuKey) { skuKey = ok; renderSkuOpts(); }
   renderChips();
   const avail = destAvail(chosen), dk = avail.join("\u0002");
   if (dk !== destKey) { destKey = dk; S.availDests = avail; renderDestPop(); } else $("dest-text").textContent = destLabel();
@@ -429,12 +451,11 @@ function derive() {
     g.rows.sort(byDate); g.st = statsOf(g.rows);
     const withDesc = [...g.rows].reverse().find((r) => r.description); g.desc = withDesc ? withDesc.description : "";
   }
-  const terms = S.q.toLowerCase().split(/\s+/).filter(Boolean);
   const skuSet = S.skus.size ? S.skus : null;
   const visible = [...groups.values()].filter((g) => {
     if (S.supplier && g.supplier !== S.supplier) return false;
     if (skuSet && !skuSet.has(g.sku)) return false;
-    if (terms.length) { const hay = (g.sku + " " + g.desc + " " + g.supplier).toLowerCase(); if (!terms.every((t) => hay.includes(t))) return false; }
+    if (SEARCH_TERMS.length && !hit(IDX.hay.get(g.key) || "")) return false;
     return true;
   });
   const { key, dir } = S.sort;
