@@ -146,7 +146,6 @@
         <button type="button" id="skubtn" class="field" aria-haspopup="true" aria-expanded="false" aria-labelledby="sku-lbl skubtn"><span id="skubtn-text">All SKUs</span>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
         <div class="pop hidden" id="sku-pop" role="group" aria-label="SKUs">
-          <input id="sku-q" class="field" type="search" placeholder="Type to find SKUs" aria-label="Find SKUs" autocomplete="off">
           <div class="pop-actions"><button type="button" class="btn quiet" id="sku-all">Select all</button><button type="button" class="btn quiet" id="sku-clear">Clear</button></div>
           <div id="sku-opts"></div>
           <div class="pop-foot"><span class="lbl" id="sku-more"></span><button type="button" class="btn" id="sku-done">Done</button></div>
@@ -160,6 +159,7 @@
       </div>
     </div>
     <div id="chips" class="chips" aria-label="Chosen SKUs"></div>
+    <div id="hint" class="lbl" role="status" aria-live="polite"></div>
     <div id="note" class="lbl" role="status" aria-live="polite"></div>
     <div class="row">
       <div class="field-wrap">
@@ -249,7 +249,7 @@ const cvCell = (cv) => cv == null ? "\u2013" : (cv >= HIGH_PCT ? '<span class="r
 const db = (typeof supabase !== "undefined") ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 const S = {
   rows: [], loaded: false,
-  q: "", supplier: "", skus: new Set(), skuQuery: "", dests: new Set(), allDests: [],
+  q: "", supplier: "", skus: new Set(), dests: new Set(), allDests: [],
   preset: "12m", from: "", to: "",
   view: "same", chartOn: false, sort: { key: "sku", dir: 1 }, shown: PAGE,
   selected: new Set(),
@@ -319,21 +319,23 @@ const hit = (hay) => SEARCH_TERMS.every((t) => hay.includes(t));
 const supplierSkus = (sup) => IDX.supSkus.get(sup) || new Set();
 const skuText = () => S.skus.size === 0 ? "All SKUs" : S.skus.size === 1 ? [...S.skus][0] : S.skus.size + " SKUs chosen";
 
+// SKUs with at least one pair that matches the Search (and the chosen supplier, if any); null when nothing is typed
+function searchSkuSet() {
+  if (!SEARCH_TERMS.length) return null;
+  const ok = new Set();
+  for (const p of IDX.pairs) if ((!S.supplier || p.sup === S.supplier) && hit(p.hay)) ok.add(p.sku);
+  return ok;
+}
 // the SKUs the picker can offer: the chosen supplier's (or everyone's) that also match the Search; chosen ones are added on top so they can be unticked
 function skuPool() {
-  const pool = new Set(S.supplier ? supplierSkus(S.supplier) : IDX.allSkus);
-  if (SEARCH_TERMS.length) {
-    const ok = new Set();
-    for (const p of IDX.pairs) if ((!S.supplier || p.sup === S.supplier) && hit(p.hay)) ok.add(p.sku);
-    for (const x of [...pool]) if (!ok.has(x)) pool.delete(x);
-  }
+  const pool = new Set(S.supplier ? supplierSkus(S.supplier) : IDX.allSkus), ok = searchSkuSet();
+  if (ok) for (const x of [...pool]) if (!ok.has(x)) pool.delete(x);
   return pool;
 }
 function skuMatches() {
   const pool = skuPool();
   S.skus.forEach((x) => pool.add(x));
-  const q = S.skuQuery.trim().toLowerCase();
-  return [...pool].filter((x) => !q || x.toLowerCase().includes(q) || (IDX.skuDesc.get(x) || "").toLowerCase().includes(q)).sort(sortStr);
+  return [...pool].sort(sortStr);
 }
 function renderSkuOpts() {
   const all = skuMatches(), shown = all.slice(0, SKU_LIST_MAX), have = S.supplier ? supplierSkus(S.supplier) : null;
@@ -342,9 +344,9 @@ function renderSkuOpts() {
     const d = IDX.skuDesc.get(x) || "", off = have && !have.has(x);
     return '<label><input type="checkbox" data-s="' + i + '"' + (S.skus.has(x) ? " checked" : "") + '><span class="opt"><span class="sku">' + esc(x) + "</span>" + (d ? '<span class="desc">' + esc(d) + "</span>" : "") + (off ? '<span class="desc">' + esc(S.supplier) + " has never supplied this</span>" : "") + "</span></label>";
   }).join("") || '<div class="lbl" style="padding:12px 8px">No SKUs match.</div>';
-  $("sku-all").textContent = (S.skuQuery.trim() ? "Select all matching" : "Select all") + " (" + all.length + ")";
+  $("sku-all").textContent = (SEARCH_TERMS.length ? "Select all matching" : "Select all") + " (" + all.length + ")";
   $("sku-all").disabled = all.length === 0;
-  $("sku-more").textContent = all.length > shown.length ? "Showing the first " + shown.length + " of " + all.length + ". Type to narrow." : "";
+  $("sku-more").textContent = all.length > shown.length ? "Showing the first " + shown.length + " of " + all.length + ". Use Search to narrow." : "";
 }
 function renderChips() {
   const el = $("chips");
@@ -397,6 +399,13 @@ function refreshDependents() {
   const avail = destAvail(chosen), dk = avail.join("\u0002");
   if (dk !== destKey) { destKey = dk; S.availDests = avail; renderDestPop(); } else $("dest-text").textContent = destLabel();
   $("note").textContent = note;
+  // the one confusing result a single search box can cause: chosen SKUs that the Search hides from the table
+  let hint = "";
+  if (searching && chosen) {
+    const ok = searchSkuSet(), hidden = [...chosen].filter((x) => !ok.has(x)).length;
+    if (hidden) hint = "Search is hiding " + hidden + " of your " + chosen.size + " chosen SKU" + (chosen.size === 1 ? "" : "s") + ". Clear the search to see " + (hidden === 1 ? "it" : "them") + ".";
+  }
+  $("hint").textContent = hint;
 }
 function fillLists() { buildIndexes(); supKey = skuKey = destKey = null; S.availDests = S.allDests; refreshDependents(); }
 
@@ -690,10 +699,9 @@ $("sup").addEventListener("change", (e) => { S.supplier = e.target.value; S.show
 function setSkuOpen(open) {
   $("sku-pop").classList.toggle("hidden", !open);
   $("skubtn").setAttribute("aria-expanded", open ? "true" : "false");
-  if (open) { setDestOpen(false); renderSkuOpts(); $("sku-q").focus(); }
+  if (open) { setDestOpen(false); renderSkuOpts(); const first = $("sku-opts").querySelector("input") || $("sku-done"); first.focus(); }
 }
 $("skubtn").addEventListener("click", () => setSkuOpen($("sku-pop").classList.contains("hidden")));
-$("sku-q").addEventListener("input", (e) => { S.skuQuery = e.target.value; renderSkuOpts(); });
 $("sku-opts").addEventListener("change", (e) => { const x = SKU_VIEW[Number(e.target.dataset.s)]; if (x == null) return; if (e.target.checked) S.skus.add(x); else S.skus.delete(x); S.shown = PAGE; update(); });
 $("sku-all").addEventListener("click", () => { skuMatches().forEach((x) => S.skus.add(x)); renderSkuOpts(); S.shown = PAGE; update(); });
 $("sku-clear").addEventListener("click", () => { S.skus = new Set(); renderSkuOpts(); S.shown = PAGE; update(); });
