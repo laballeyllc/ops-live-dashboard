@@ -9,118 +9,140 @@
 <style>
   /* Same palette as Ops Live and the KPI page so the pages read as one tool. */
   :root {
-    --bg: #1B1F23;
-    --panel: #22272C;
-    --panel-raised: #282E34;
-    --border: #2E343A;
-    --border-strong: #3A424A;
-    --text: #E8E6E1;
-    --text-muted: #9AA0A6;
-    --better: #4FB0A5;
-    --worse: #C1594A;
-    --worse-text: #E39A8D;
-    --freight: #D9A441;
-    --radius-s: 4px;
-    --radius-m: 8px;
+    --bg: #1B1F23; --panel: #22272C; --panel-raised: #282E34; --border: #2E343A; --border-strong: #3A424A;
+    --text: #E8E6E1; --text-muted: #9AA0A6; --better: #4FB0A5; --worse: #C1594A; --worse-text: #E39A8D; --freight: #D9A441;
+    --radius-s: 6px; --radius-m: 10px;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--text); }
-  body {
-    font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-    font-size: 15px; line-height: 1.45; font-variant-numeric: tabular-nums;
-  }
-  a { color: var(--text-muted); }
-  a:hover { color: var(--text); }
+  body { font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+  a { color: var(--text-muted); } a:hover { color: var(--text); }
   button, input, select { font: inherit; color: inherit; }
   :focus-visible { outline: 2px solid var(--freight); outline-offset: 2px; }
-  .wrap { max-width: 1120px; margin: 0 auto; padding: 24px 20px 64px; }
-  header.top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-  header.top h1 { font-size: 24px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 20px 64px; }
+  header.top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+  header.top h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
   header.top nav { display: flex; gap: 16px; align-items: baseline; color: var(--text-muted); font-size: 13px; flex-wrap: wrap; }
   .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-m); }
-  .lbl { font-size: 13px; color: var(--text-muted); }
+  .lbl, .help { font-size: 12px; color: var(--text-muted); }
   .hidden { display: none !important; }
+  section.block { margin-top: 14px; }
 
   /* ---- messages ---- */
   #status { margin-bottom: 12px; }
-  .msg { border: 1px solid var(--border-strong); border-radius: var(--radius-s); padding: 10px 12px; font-size: 14px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .msg { border: 1px solid var(--border-strong); border-radius: var(--radius-s); padding: 10px 12px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .msg.err { border-color: var(--worse); color: var(--worse-text); }
   .msg.info { color: var(--text-muted); }
 
-  /* ---- controls ---- */
-  .controls { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
-  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  /* ---- buttons and fields ---- */
   .field-wrap { display: flex; flex-direction: column; gap: 4px; position: relative; min-width: 0; }
-  .field {
-    width: 100%; min-height: 44px; background: var(--panel-raised); border: 1px solid var(--border);
-    border-radius: var(--radius-s); padding: 0 12px; color-scheme: dark; text-align: left;
-  }
+  .field-wrap > label.lbl, .field-wrap > span.lbl { font-weight: 600; color: var(--text); }
+  .field { width: 100%; min-height: 40px; background: var(--panel-raised); border: 1px solid var(--border-strong); border-radius: var(--radius-s); padding: 0 10px; color-scheme: dark; text-align: left; }
+  .field::placeholder { color: var(--text-muted); }
   button.field { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; }
-  .seg { display: flex; flex-wrap: wrap; gap: 4px; }
-  .seg button { min-height: 44px; background: none; border: 1px solid transparent; border-radius: var(--radius-s); padding: 0 14px; color: var(--text-muted); cursor: pointer; white-space: nowrap; }
-  .seg button:hover { color: var(--text); }
+  .field.mini { width: 76px; min-height: 34px; text-align: right; padding: 0 8px; }
+  .btn { min-height: 40px; border: 0; border-radius: var(--radius-s); padding: 0 18px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; background: var(--text); color: var(--bg); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn.quiet { background: var(--panel-raised); color: var(--text); border: 1px solid var(--border-strong); font-weight: 500; min-height: 36px; }
+  .seg { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-s); overflow-x: auto; background: var(--panel-raised); max-width: 100%; }
+  .seg button { min-height: 36px; padding: 0 13px; background: none; border: 0; border-right: 1px solid var(--border); color: var(--text-muted); cursor: pointer; white-space: nowrap; font-size: 13px; }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { color: var(--text); background: rgba(255, 255, 255, .05); }
   .seg button[aria-pressed="true"] { background: var(--text); color: var(--bg); font-weight: 600; }
-  .btn { min-height: 44px; border: 0; border-radius: var(--radius-s); padding: 0 18px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; background: var(--text); color: var(--bg); }
-  .btn:disabled { opacity: .45; cursor: not-allowed; }
-  .btn.quiet { background: var(--panel-raised); color: var(--text); border: 1px solid var(--border); font-weight: 500; }
-  .split { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 16px; }
-  .pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; width: 300px; max-width: 90vw; background: var(--panel-raised); border: 1px solid var(--border-strong); border-radius: var(--radius-m); padding: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.45); max-height: 60vh; overflow: auto; }
-  .pop label { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 8px; cursor: pointer; }
-  .pop input[type=checkbox], td input[type=checkbox], th input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--better); }
+  .check { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; cursor: pointer; font-size: 13px; }
+  .check input { width: 18px; height: 18px; accent-color: var(--better); }
+  .pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; width: 300px; max-width: 90vw; background: var(--panel-raised); border: 1px solid var(--border-strong); border-radius: var(--radius-m); padding: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .45); max-height: 60vh; overflow: auto; }
+  .pop label { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 8px; cursor: pointer; }
+  .pop input[type=checkbox], td input[type=checkbox], th input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--better); }
   .pop hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
   #sku-pop { width: 400px; }
   #sku-opts label { align-items: flex-start; padding: 8px; }
   #sku-opts .opt { display: flex; flex-direction: column; min-width: 0; }
-  #sku-opts .desc { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
-  .pop-actions { display: flex; gap: 8px; margin: 8px 0 4px; flex-wrap: wrap; }
+  #sku-opts .desc { font-size: 12px; color: var(--text-muted); }
+  .pop-actions { display: flex; gap: 8px; margin: 4px 0; flex-wrap: wrap; }
   .pop-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-top: 8px; }
   #skubtn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---- filters ---- */
+  .filters { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .filters-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
+  .f-search { grid-column: span 4; } .f-sel { grid-column: span 2; }
+  @media (max-width: 1000px) { .f-search { grid-column: span 12; } .f-sel { grid-column: span 6; } }
+  @media (max-width: 560px) { .f-sel { grid-column: span 12; } }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .chips:empty { display: none; }
-  .chip { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 4px 0 12px; background: var(--panel-raised); border: 1px solid var(--border-strong); border-radius: 999px; font-size: 13px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; min-height: 34px; padding: 0 4px 0 12px; background: var(--panel-raised); border: 1px solid var(--border-strong); border-radius: 999px; font-size: 13px; }
   .chip.off { opacity: .55; }
-  .chip button { min-width: 36px; min-height: 36px; background: none; border: 0; border-radius: 999px; cursor: pointer; font-size: 18px; line-height: 1; color: var(--text-muted); }
+  .chip button { min-width: 30px; min-height: 30px; background: none; border: 0; border-radius: 999px; cursor: pointer; font-size: 18px; line-height: 1; color: var(--text-muted); }
   .chip button:hover { color: var(--text); }
-  .good { color: var(--better); }
-  .movers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-  @media (max-width: 860px) { .movers { grid-template-columns: 1fr; } }
-  .movers h3, .jumps h3 { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--text-muted); }
-  .mover { display: flex; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; align-items: center; background: none; border: 0; border-bottom: 1px solid var(--border); color: inherit; text-align: left; cursor: pointer; padding: 6px 4px; font-size: 14px; }
+  #hint:empty, #note:empty { display: none; }
+  .settings { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 14px 40px; border-top: 1px solid var(--border); padding-top: 14px; align-items: start; }
+  .setting.dates { grid-column: 1 / -1; }
+  @media (max-width: 760px) { .settings { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+  @media (max-width: 560px) { .settings { grid-template-columns: minmax(0, 1fr); } }
+  .setting { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .s-title { font-size: 12px; font-weight: 600; }
+  .s-title .help { display: block; font-weight: 400; }
+  .s-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .s-row input[type=date] { width: 138px; min-height: 36px; }
+
+  /* ---- chart bar and summaries ---- */
+  .chartbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 12px 16px; }
+  .cb-left { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+  .cb-title { font-weight: 600; }
+  .sum { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .sum-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+  .sum-head h2, .chart-head h2 { font-size: 16px; font-weight: 600; margin: 0; }
+  .whatif { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+  .stat { background: var(--panel-raised); border: 1px solid var(--border); border-radius: var(--radius-m); padding: 10px 14px; }
+  .stat .k { font-size: 12px; color: var(--text-muted); }
+  .stat .v { font-size: 20px; font-weight: 600; margin-top: 1px; }
+  .stat .s { font-size: 12px; color: var(--text-muted); margin-top: 2px; overflow-wrap: anywhere; }
+
+  /* ---- overview tabs and lists ---- */
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 9px 12px; color: var(--text-muted); cursor: pointer; font-size: 13px; margin-bottom: -1px; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--freight); font-weight: 600; }
+  .movers > div { display: none; } .movers > div.on { display: block; }
+  .movers h3, .jumps h3 { font-size: 12px; font-weight: 500; margin: 0 0 4px; color: var(--text-muted); }
+  .jump-set { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; margin-bottom: 8px; }
+  .mover { display: flex; justify-content: space-between; gap: 12px; width: 100%; min-height: 40px; align-items: center; background: none; border: 0; border-bottom: 1px solid var(--border); color: inherit; text-align: left; cursor: pointer; padding: 6px 4px; font-size: 13px; }
   .mover:hover { background: var(--panel-raised); }
   .mover .r { text-align: right; white-space: nowrap; }
   .linkbtn { background: none; border: 0; padding: 4px 0; color: var(--text); font-weight: 600; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
   .linkbtn:hover { text-decoration-color: var(--text); }
-  .check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; font-size: 14px; }
-  .check input { width: 20px; height: 20px; accent-color: var(--better); }
 
-  /* ---- summary cards ---- */
-  section.block { margin-top: 16px; }
-  .sum { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-  .sum-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
-  .sum-head h2, .chart-head h2 { font-size: 16px; font-weight: 600; margin: 0; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-  .stat { background: var(--panel-raised); border: 1px solid var(--border); border-radius: var(--radius-m); padding: 12px 14px; }
-  .stat .k { font-size: 12px; color: var(--text-muted); }
-  .stat .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
-  .stat .s { font-size: 12px; color: var(--text-muted); margin-top: 2px; overflow-wrap: anywhere; }
-
-  /* ---- tables ---- */
+  /* ---- table ---- */
   .tbl-wrap { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; }
-  th { font-weight: 500; font-size: 12px; color: var(--text-muted); text-align: left; padding: 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table { border-collapse: collapse; width: 100%; min-width: 980px; font-size: 13px; }
+  th { font-weight: 500; font-size: 12px; color: var(--text-muted); text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--border-strong); white-space: nowrap; background: var(--panel); }
   th button { background: none; border: 0; padding: 4px 0; cursor: pointer; font-weight: 500; font-size: 12px; color: var(--text-muted); display: inline-flex; gap: 4px; align-items: center; }
   th button:hover { color: var(--text); }
   th[aria-sort] button { color: var(--text); }
-  td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; white-space: nowrap; }
+  td.supcell { max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
   th.n, td.n { text-align: right; }
   tr.sel td { background: var(--panel-raised); }
-  .sku { font-weight: 600; overflow-wrap: anywhere; }
-  .desc { font-size: 12px; color: var(--text-muted); max-width: 340px; overflow-wrap: anywhere; }
-  .amber { color: var(--freight); }
-  .red { color: var(--worse-text); }
-  .tag { font-size: 12px; }
-  .foot { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 10px 4px; align-items: center; }
+  td.skucell { min-width: 230px; max-width: 300px; }
+  .sku { font-weight: 600; }
+  .skuline { display: flex; align-items: baseline; gap: 8px; }
+  td.skucell .sku, td.skucell .desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.skucell .skuline .sku { min-width: 0; }
+  .desc { font-size: 12px; color: var(--text-muted); }
+  td.skucell .desc { max-width: 320px; }
+  .amber { color: var(--freight); } .red { color: var(--worse-text); } .good { color: var(--better); }
+  .tag { font-size: 11px; white-space: nowrap; }
+  .tag.amber { border: 1px solid var(--freight); border-radius: 999px; padding: 0 6px; }
   .mk { display: inline-flex; align-items: center; gap: 8px; }
+  .sup-table th:nth-child(1), .sup-table td:nth-child(1) { position: sticky; left: 0; z-index: 2; background: var(--panel); box-shadow: 1px 0 0 var(--border-strong); }
+  .sku-table th:nth-child(1), .sku-table td:nth-child(1) { position: sticky; left: 0; z-index: 2; background: var(--panel); width: 44px; }
+  .sku-table th:nth-child(2), .sku-table td:nth-child(2) { position: sticky; left: 44px; z-index: 2; background: var(--panel); box-shadow: 1px 0 0 var(--border-strong); }
+  .sku-table tr.sel td:nth-child(1), .sku-table tr.sel td:nth-child(2) { background: var(--panel-raised); }
+  @media (max-width: 700px) { .sku-table th:nth-child(2), .sku-table td:nth-child(2) { position: static; box-shadow: none; } td.skucell { min-width: 200px; } }
+  .tbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 14px 8px; }
+  .foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 10px 14px 4px; align-items: center; }
 
   /* ---- chart ---- */
   .chart-panel { padding: 16px; }
@@ -142,17 +164,18 @@
 
   <div id="status" role="status" aria-live="polite"></div>
 
-  <section class="panel controls" aria-label="Filters" id="controls">
-    <div class="row">
-      <div class="field-wrap" style="flex: 2 1 260px">
+  <section class="panel filters" aria-label="Filters" id="controls">
+    <div class="filters-grid">
+      <div class="field-wrap f-search">
         <label class="lbl" for="q">Search</label>
-        <input id="q" class="field" type="search" placeholder="SKU, description or supplier" autocomplete="off">
+        <input id="q" class="field" type="search" placeholder="SKU, description or supplier" autocomplete="off" aria-describedby="q-help">
+        <span class="help" id="q-help">Narrows the table and every list below to what matches.</span>
       </div>
-      <div class="field-wrap" style="flex: 1 1 180px">
+      <div class="field-wrap f-sel">
         <label class="lbl" for="sup" id="sup-lbl">Supplier</label>
         <select id="sup" class="field"><option value="">All suppliers</option></select>
       </div>
-      <div class="field-wrap" style="flex: 1 1 200px" id="sku-wrap">
+      <div class="field-wrap f-sel" id="sku-wrap">
         <span class="lbl" id="sku-lbl">SKU</span>
         <button type="button" id="skubtn" class="field" aria-haspopup="true" aria-expanded="false" aria-labelledby="sku-lbl skubtn"><span id="skubtn-text">All SKUs</span>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
@@ -162,92 +185,106 @@
           <div class="pop-foot"><span class="lbl" id="sku-more"></span><button type="button" class="btn" id="sku-done">Done</button></div>
         </div>
       </div>
-      <div class="field-wrap" style="flex: 1 1 210px" id="dest-wrap">
+      <div class="field-wrap f-sel" id="dest-wrap">
         <span class="lbl" id="dest-lbl">Destination</span>
         <button type="button" id="dest" class="field" aria-haspopup="true" aria-expanded="false" aria-labelledby="dest-lbl dest"><span id="dest-text">All destinations</span>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
         <div class="pop hidden" id="dest-pop" role="group" aria-label="Destinations"></div>
       </div>
-      <div class="field-wrap" style="flex: 1 1 190px">
+      <div class="field-wrap f-sel">
         <label class="lbl" for="cat" id="cat-lbl">Category</label>
         <select id="cat" class="field"><option value="">All categories</option></select>
       </div>
     </div>
     <div id="chips" class="chips" aria-label="Chosen SKUs"></div>
-    <div id="hint" class="lbl" role="status" aria-live="polite"></div>
-    <div id="note" class="lbl" role="status" aria-live="polite"></div>
-    <div class="row">
-      <div class="field-wrap">
-        <span class="lbl" id="range-lbl">Date range (order date)</span>
-        <div class="seg" id="presets" role="group" aria-labelledby="range-lbl">
-          <button type="button" data-p="90d">90 days</button>
-          <button type="button" data-p="6m">6 months</button>
-          <button type="button" data-p="12m">12 months</button>
-          <button type="button" data-p="24m">24 months</button>
-          <button type="button" data-p="all">All time</button>
-          <button type="button" data-p="custom">Custom</button>
+    <div id="hint" class="help" role="status" aria-live="polite"></div>
+    <div id="note" class="help" role="status" aria-live="polite"></div>
+
+    <div class="settings">
+      <div class="setting dates">
+        <div class="s-title">Dates <span class="help">order dates to include</span></div>
+        <div class="s-row">
+          <div class="seg" id="presets" role="group" aria-label="Date range">
+            <button type="button" data-p="90d">90 days</button>
+            <button type="button" data-p="6m">6 months</button>
+            <button type="button" data-p="12m">12 months</button>
+            <button type="button" data-p="24m">24 months</button>
+            <button type="button" data-p="all">All</button>
+            <button type="button" data-p="custom">Custom</button>
+          </div>
+          <label class="lbl" for="from">From</label><input id="from" class="field" type="date">
+          <label class="lbl" for="to">To</label><input id="to" class="field" type="date">
         </div>
       </div>
-      <div class="field-wrap"><label class="lbl" for="from">From</label><input id="from" class="field" type="date" style="width: 160px"></div>
-      <div class="field-wrap"><label class="lbl" for="to">To</label><input id="to" class="field" type="date" style="width: 160px"></div>
-      <div class="field-wrap">
-        <span class="lbl" id="cmp-lbl">Compare prices to</span>
+      <div class="setting">
+        <div class="s-title" id="cmp-lbl">Compare to <span class="help">for the "vs prior" columns</span></div>
         <div class="seg" id="cmps" role="group" aria-labelledby="cmp-lbl">
           <button type="button" data-c="prev">Previous period</button>
-          <button type="button" data-c="yoy">Same period last year</button>
+          <button type="button" data-c="yoy">Last year</button>
         </div>
       </div>
-    </div>
-    <div class="split">
-      <div class="field-wrap">
-        <span class="lbl" id="view-lbl">Price view</span>
-        <div class="seg" id="views" role="group" aria-labelledby="view-lbl">
-          <button type="button" data-v="same">Same supplier over time</button>
-          <button type="button" data-v="all">All suppliers for the SKU</button>
-        </div>
-      </div>
-      <div class="field-wrap">
-        <span class="lbl" id="basis-lbl">Price basis</span>
+      <div class="setting">
+        <div class="s-title" id="basis-lbl">Prices shown as <span class="help">landed cost adds freight and fees</span></div>
         <div class="seg" id="basis" role="group" aria-labelledby="basis-lbl">
           <button type="button" data-b="unit">Unit price</button>
           <button type="button" data-b="landed">Landed cost</button>
         </div>
       </div>
-      <label class="check"><input type="checkbox" id="single"> Single-source SKUs only</label>
-      <div class="row" style="align-items: center">
-        <span class="lbl" id="gen-hint"></span>
-        <button type="button" class="btn" id="gen">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 14 6.5 8.5 10 11.5 16 4"/><path d="M2 16h14"/></svg>
-          <span id="gen-text">Generate chart</span></button>
+      <div class="setting">
+        <div class="s-title">Single source <span class="help">SKUs bought from only one supplier</span></div>
+        <label class="check"><input type="checkbox" id="single"> Show only these</label>
       </div>
     </div>
+  </section>
+
+  <section class="block hidden" id="overview" aria-label="Spend and price changes">
+    <div class="panel sum">
+      <div class="sum-head">
+        <div><h2>Spend and price changes</h2><div class="help" id="ov-sub"></div></div>
+        <label class="whatif" for="exp-pct">What if prices rise by <input id="exp-pct" class="field mini" type="number" min="0" max="100" step="0.5" value="5"> % <span class="help">(changes the &ldquo;If prices rise&rdquo; figures)</span></label>
+      </div>
+      <div class="cards" id="ov-cards"></div>
+      <div class="tabs" id="ov-tabs" role="tablist" aria-label="Price change lists">
+        <button type="button" role="tab" data-t="up" aria-selected="true">Biggest increases</button>
+        <button type="button" role="tab" data-t="down" aria-selected="false">Biggest decreases</button>
+        <button type="button" role="tab" data-t="cheap" aria-selected="false">Cheaper elsewhere</button>
+        <button type="button" role="tab" data-t="jumps" aria-selected="false">Price jumps, last 30 days</button>
+      </div>
+      <div class="movers" id="ov-movers" role="tabpanel"></div>
+      <div class="jumps hidden" id="ov-jumps" role="tabpanel">
+        <div class="jump-set"><label for="alert-pct">Show purchases priced</label><input id="alert-pct" class="field mini" type="number" min="1" max="500" step="1" value="10"><span>% or more above the previous purchase</span></div>
+        <div id="ov-jumps-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel chartbar block" aria-label="Chart settings">
+    <div class="cb-left">
+      <span class="cb-title">Compare and chart</span>
+      <div class="seg" id="views" role="group" aria-label="What to compare">
+        <button type="button" data-v="same">Same supplier over time</button>
+        <button type="button" data-v="all">All suppliers for one SKU</button>
+      </div>
+      <span class="help" id="gen-hint"></span>
+    </div>
+    <button type="button" class="btn" id="gen">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 14 6.5 8.5 10 11.5 16 4"/><path d="M2 16h14"/></svg>
+      <span id="gen-text">Generate chart</span></button>
   </section>
 
   <section class="block" id="summary" aria-label="Selection summary"></section>
   <section class="block" id="chart" aria-label="Price chart"></section>
-  <section class="block hidden" id="overview" aria-label="Spend and price changes">
-    <div class="panel sum">
-      <div class="sum-head"><h2>Spend and price changes</h2><span class="lbl" id="ov-sub"></span></div>
-      <div class="row" style="gap: 20px; align-items: center">
-        <label class="check">If prices rise <input id="exp-pct" class="field" type="number" min="0" max="100" step="0.5" value="5" style="width: 84px; min-height: 36px"> %</label>
-        <label class="check">Flag price jumps of <input id="alert-pct" class="field" type="number" min="1" max="500" step="1" value="10" style="width: 84px; min-height: 36px"> % or more</label>
-      </div>
-      <div class="cards" id="ov-cards"></div>
-      <div class="movers" id="ov-movers"></div>
-      <div class="jumps" id="ov-jumps"></div>
-    </div>
-  </section>
 
-  <section class="panel block" id="table-panel" aria-label="SKUs and suppliers" style="padding: 4px 8px 12px">
-    <div class="row" style="padding: 8px 8px 4px; align-items: center; justify-content: space-between">
+  <section class="panel block" id="table-panel" aria-label="SKUs and suppliers" style="padding: 0 0 12px">
+    <div class="tbar">
       <div class="seg" id="modes" role="group" aria-label="What the table lists">
         <button type="button" data-m="skus">SKUs and suppliers</button>
         <button type="button" data-m="suppliers">Supplier scorecard</button>
       </div>
-      <span class="lbl" id="mode-note"></span>
+      <span class="help"><span id="count"></span> <span id="mode-note"></span></span>
     </div>
-    <div class="tbl-wrap"><table id="tbl"><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
-    <div class="foot"><span class="lbl" id="count"></span><span class="row" style="gap: 8px; align-items: center"><button type="button" class="btn quiet" id="more">Show more</button><button type="button" class="btn quiet" id="clear-sel">Clear ticks</button></span></div>
+    <div class="tbl-wrap"><table id="tbl" class="sku-table"><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+    <div class="foot"><button type="button" class="btn quiet" id="more">Show more</button><button type="button" class="btn quiet" id="clear-sel">Clear ticks</button></div>
   </section>
 </div>
 
@@ -305,7 +342,7 @@ const S = {
   preset: "12m", from: "", to: "",
   view: "same", chartOn: false, sort: { key: "effect", dir: -1 }, shown: PAGE,
   selected: new Set(),
-  listMode: "skus", supSort: { key: "spend", dir: -1 }, expPct: 5, alertPct: 10, chartKind: "time", sales: new Map(),
+  ovTab: "up", listMode: "skus", supSort: { key: "spend", dir: -1 }, expPct: 5, alertPct: 10, chartKind: "time", sales: new Map(),
 };
 let V = null;       // the current derived view (groups, visible rows, selection...)
 
@@ -688,6 +725,17 @@ function overviewData() {
            up: withPrior.filter((g) => g.effect > 0.5).sort((a, b) => b.effect - a.effect).slice(0, 5), down: withPrior.filter((g) => g.effect < -0.5).sort((a, b) => a.effect - b.effect).slice(0, 5),
            jumps: jumps.slice(0, 8), jumpCount: jumps.length };
 }
+// one list at a time: the tab you picked is shown, the others stay in the page but hidden
+function applyOvTab(o) {
+  const names = ["up", "down", "cheap", "jumps"];
+  document.querySelectorAll("#ov-tabs button").forEach((b) => {
+    b.setAttribute("aria-selected", b.dataset.t === S.ovTab ? "true" : "false");
+    if (o) { const n = { up: o.up.length, down: o.down.length, cheap: o.topSave.length, jumps: o.jumpCount }[b.dataset.t], base = { up: "Biggest increases", down: "Biggest decreases", cheap: "Cheaper elsewhere", jumps: "Price jumps, last 30 days" }[b.dataset.t]; b.textContent = base + " (" + n + ")"; }
+  });
+  [...$("ov-movers").children].forEach((p, i) => p.classList.toggle("on", names[i] === S.ovTab));
+  $("ov-movers").classList.toggle("hidden", S.ovTab === "jumps");
+  $("ov-jumps").classList.toggle("hidden", S.ovTab !== "jumps");
+}
 function renderOverview() {
   const el = $("overview");
   if (!S.loaded || !S.rows.length) { el.classList.add("hidden"); return; }
@@ -704,7 +752,8 @@ function renderOverview() {
   const list = (title, items, fn, empty) => "<div><h3>" + title + "</h3>" + (items.length ? items.map(fn).join("") : '<div class="lbl" style="padding:8px 4px">' + empty + "</div>") + "</div>";
   $("ov-movers").innerHTML = list("Biggest increases", o.up, mv, S.from ? "None." : "Pick a date range.") + list("Biggest decreases", o.down, mv, S.from ? "None." : "Pick a date range.") +
     list("Cheaper elsewhere", o.topSave, (t) => '<button type="button" class="mover" data-q="' + esc(t.sku) + '"><span><b>' + esc(t.sku) + '</b> <span class="lbl">cheapest: ' + esc(t.cheapest) + '</span></span><span class="r">' + moneyWhole(t.saving) + "</span></button>", "No SKU here is bought from more than one supplier.");
-  $("ov-jumps").innerHTML = "<h3>Price jumps in the last 30 days (" + S.alertPct + "% or more above the previous purchase)</h3>" + (o.jumps.length ?
+  applyOvTab(o);
+  $("ov-jumps-list").innerHTML = "<h3>Price jumps in the last 30 days (" + S.alertPct + "% or more above the previous purchase)</h3>" + (o.jumps.length ?
     o.jumps.map((j) => '<button type="button" class="mover" data-q="' + esc(j.sku) + '"><span><b>' + esc(j.sku) + '</b> <span class="lbl">' + esc(j.supplier) + " \u00b7 " + fmtDate(j.date) + '</span></span><span class="r">' + money(j.prev) + " \u2192 " + money(j.price) + " (" + signPct(j.pct) + ") \u00b7 " + signMoney(j.dollars) + "</span></button>").join("") +
     (o.jumpCount > o.jumps.length ? '<div class="lbl" style="padding:8px 4px">and ' + (o.jumpCount - o.jumps.length) + " more</div>" : "") : '<div class="lbl" style="padding:8px 4px">None.</div>');
 }
@@ -726,6 +775,7 @@ function supplierRows() {
   });
 }
 function renderSupplierTable() {
+  $("tbl").className = "sup-table";
   const rows = supplierRows(), { key, dir } = S.supSort;
   rows.sort((a, b) => {
     const x = a[key], y = b[key];
@@ -814,7 +864,7 @@ function renderSummary() {
     return;
   }
   const sg = V.selGroups;
-  if (!sg.length) { el.innerHTML = '<div class="panel sum"><div class="lbl">Tick one or more rows below to see their standard deviation and generate a chart.</div></div>'; return; }
+  if (!sg.length) { el.innerHTML = ""; return; }      // the chart bar above already says what to do
   if (sg.length === 1) {
     const g = sg[0], s = g.st;
     el.innerHTML = '<div class="panel sum"><div class="sum-head"><h2>Selection: ' + esc(g.sku) + ", " + esc(g.supplier) + '</h2><span class="lbl">1 row selected \u00b7 ' + s.n + " purchase" + (s.n === 1 ? "" : "s") + " in range</span></div><div class=\"cards\">" +
@@ -855,7 +905,7 @@ function chartPlan() {
 function renderChart() {
   const el = $("chart"), btn = $("gen");
   const plan = S.loaded && S.rows.length ? chartPlan() : { err: "" };
-  $("gen-hint").textContent = S.view === "all" ? (V && V.focusSku ? "Comparing every supplier for " + V.focusSku + "." : "Choose one SKU to compare suppliers.") : (V && V.selGroups.length > MAX_LINES ? "More than " + MAX_LINES + " ticked: the chart ranks volatility." : "Tick up to " + MAX_LINES + " rows, then generate a chart.");
+  $("gen-hint").textContent = S.view === "all" ? (V && V.focusSku ? "Comparing every supplier for " + V.focusSku + "." : "Choose one SKU to compare suppliers.") : (V && V.selGroups.length > MAX_LINES ? "More than " + MAX_LINES + " ticked: the chart ranks volatility." : V && V.selGroups.length ? V.selGroups.length + " row" + (V.selGroups.length === 1 ? "" : "s") + " ticked." : "Tick up to " + MAX_LINES + " rows, then generate a chart.");
   btn.disabled = !!plan.err && !S.chartOn;      // an open chart can always be hidden
   $("gen-text").textContent = S.chartOn ? "Hide chart" : "Generate chart";
   if (!S.chartOn) { el.innerHTML = ""; return; }
@@ -870,12 +920,12 @@ function renderChart() {
   $("dl-csv").onclick = () => downloadCsv(plan);
 }
 
-const COLS = [["sku", "SKU"], ["supplier", "Supplier"], ["n", "Purchases"], ["latest", "Latest"], ["mean", "Average"], ["hi", "Low \u2013 high"], ["sd", "Std dev"], ["cv", "Variation"], ["chg", "Vs prior period"], ["effect", "Price effect"], ["spend", "Spend"], ["change", "First \u2192 latest"]];
+const COLS = [["sku", "SKU"], ["supplier", "Supplier"], ["n", "Purchases"], ["latest", "Latest"], ["mean", "Average"], ["hi", "Low \u2013 high"], ["sd", "Std dev"], ["cv", "Variation"], ["chg", "Vs prior"], ["effect", "Price effect"], ["spend", "Spend"]];
 const effCell = (v) => v == null ? "\u2013" : v > 0.5 ? '<span class="amber">' + signMoney(v) + "</span>" : v < -0.5 ? '<span class="good">' + signMoney(v) + "</span>" : "$0";
 function spark(g, col) {
   const p = g.rows.map((r) => r.px), lo = Math.min(...p), hi = Math.max(...p), span = hi - lo || 1;
   const pts = p.map((v, i) => (2 + 68 * i / Math.max(1, p.length - 1)).toFixed(1) + "," + (20 - 16 * (v - lo) / span).toFixed(1)).join(" ");
-  return '<svg width="72" height="24" viewBox="0 0 72 24" role="img" aria-label="Price trend for ' + esc(g.sku) + ", " + esc(g.supplier) + '">' + (p.length > 1 ? '<polyline points="' + pts + '" fill="none" stroke="' + col + '" stroke-width="1.6" stroke-linejoin="round"/>' : '<circle cx="36" cy="12" r="3" fill="' + col + '"/>') + "</svg>";
+  return '<svg width="64" height="24" viewBox="0 0 72 24" role="img" aria-label="Price trend for ' + esc(g.sku) + ", " + esc(g.supplier) + '">' + (p.length > 1 ? '<polyline points="' + pts + '" fill="none" stroke="' + col + '" stroke-width="1.6" stroke-linejoin="round"/>' : '<circle cx="36" cy="12" r="3" fill="' + col + '"/>') + "</svg>";
 }
 function renderTable() {
   document.querySelectorAll("#modes button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.m === S.listMode ? "true" : "false"));
@@ -883,6 +933,7 @@ function renderTable() {
   $("table-panel").classList.toggle("hidden", !S.loaded || !S.rows.length);
 }
 function renderSkuTable() {
+  $("tbl").className = "sku-table";
   $("mode-note").textContent = "";
   const shown = V.visible.slice(0, S.shown);
   const allTicked = shown.length > 0 && shown.every((g) => S.selected.has(g.key));
@@ -892,8 +943,8 @@ function renderSkuTable() {
   }).join("") + "<th scope=\"col\">Trend</th></tr>";
   $("tbody").innerHTML = shown.map((g, i) => {
     const s = g.st, sel = S.selected.has(g.key), col = s.cv != null && s.cv >= HIGH_PCT ? "#C1594A" : s.cv != null && s.cv >= WATCH_PCT ? "#D9A441" : "#4FB0A5";
-    return '<tr' + (sel ? ' class="sel"' : "") + '><td><input type="checkbox" data-i="' + i + '"' + (sel ? " checked" : "") + ' aria-label="Select ' + esc(g.sku) + ", " + esc(g.supplier) + '"></td><td><div class="sku">' + esc(g.sku) + '</div><div class="desc">' + esc(g.desc) + "</div>" + (g.single ? '<div class="tag amber">Single source</div>' : "") + "</td><td>" + esc(g.supplier) + '</td><td class="n">' + s.n + '</td><td class="n">' + money(s.latest) + '</td><td class="n">' + money(s.mean) + '</td><td class="n">' + money(s.lo) + " \u2013 " + money(s.hi) + '</td><td class="n">' + moneySd(s.sd) + '</td><td class="n">' + cvCell(s.cv) + '</td><td class="n">' + signPct(g.chg) + '</td><td class="n">' + effCell(g.effect) + '</td><td class="n">' + moneyWhole(g.spend) + '</td><td class="n">' + signPct(s.change) + "</td><td>" + spark(g, col) + "</td></tr>";
-  }).join("") || '<tr><td colspan="14" class="lbl" style="padding:20px 10px">' + (S.rows.length ? "No rows match these filters." : "") + "</td></tr>";
+    return '<tr' + (sel ? ' class="sel"' : "") + '><td><input type="checkbox" data-i="' + i + '"' + (sel ? " checked" : "") + ' aria-label="Select ' + esc(g.sku) + ", " + esc(g.supplier) + '"></td><td class="skucell"><div class="skuline"><span class="sku" title="' + esc(g.sku) + '">' + esc(g.sku) + "</span>" + (g.single ? '<span class="tag amber">Single source</span>' : "") + '</div><div class="desc" title="' + esc(g.desc) + '">' + esc(g.desc) + "</div></td><td class=\"supcell\" title=\"" + esc(g.supplier) + "\">" + esc(g.supplier) + '</td><td class="n">' + s.n + '</td><td class="n">' + money(s.latest) + '</td><td class="n">' + money(s.mean) + '</td><td class="n">' + money(s.lo) + " \u2013 " + money(s.hi) + '</td><td class="n">' + moneySd(s.sd) + '</td><td class="n">' + cvCell(s.cv) + '</td><td class="n">' + signPct(g.chg) + '</td><td class="n">' + effCell(g.effect) + '</td><td class="n">' + moneyWhole(g.spend) + "</td><td>" + spark(g, col) + "</td></tr>";
+  }).join("") || '<tr><td colspan="13" class="lbl" style="padding:20px 10px">' + (S.rows.length ? "No rows match these filters." : "") + "</td></tr>";
   $("count").textContent = V.visible.length ? "Showing 1\u2013" + shown.length + " of " + V.visible.length + " SKU and supplier pairs (" + V.base.length + " purchase lines in range)." : "";
   $("more").classList.toggle("hidden", V.visible.length <= S.shown);
   $("clear-sel").classList.toggle("hidden", !S.selected.size);
@@ -972,6 +1023,7 @@ $("cat").addEventListener("change", (e) => { S.category = e.target.value; S.show
 $("single").addEventListener("change", (e) => { S.single = e.target.checked; S.shown = PAGE; update(); });
 $("basis").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.basis = b.dataset.b; applyBasis(); update(); });
 $("cmps").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.compare = b.dataset.c; update(); });
+$("ov-tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-t]"); if (!b) return; S.ovTab = b.dataset.t; applyOvTab(); });
 $("modes").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.listMode = b.dataset.m; update(); });
 $("exp-pct").addEventListener("input", (e) => { const v = Number(e.target.value); S.expPct = isFinite(v) && v >= 0 ? v : 0; update(); });
 $("alert-pct").addEventListener("input", (e) => { const v = Number(e.target.value); S.alertPct = isFinite(v) && v > 0 ? v : 10; update(); });
