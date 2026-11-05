@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supplier pricing</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  /* Same palette as Ops Live and the KPI page so the pages read as one tool. */
+  :root {
+    --bg: #1B1F23;
+    --panel: #22272C;
+    --panel-raised: #282E34;
+    --border: #2E343A;
+    --border-strong: #3A424A;
+    --text: #E8E6E1;
+    --text-muted: #9AA0A6;
+    --better: #4FB0A5;
+    --worse: #C1594A;
+    --worse-text: #E39A8D;
+    --freight: #D9A441;
+    --radius-s: 4px;
+    --radius-m: 8px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-size: 15px; line-height: 1.45; font-variant-numeric: tabular-nums;
+  }
+  a { color: var(--text-muted); }
+  a:hover { color: var(--text); }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--freight); outline-offset: 2px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 24px 20px 64px; }
+  header.top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+  header.top h1 { font-size: 24px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  header.top nav { display: flex; gap: 16px; align-items: baseline; color: var(--text-muted); font-size: 13px; flex-wrap: wrap; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-m); }
+  .lbl { font-size: 13px; color: var(--text-muted); }
+  .hidden { display: none !important; }
+
+  /* ---- messages ---- */
+  #status { margin-bottom: 12px; }
+  .msg { border: 1px solid var(--border-strong); border-radius: var(--radius-s); padding: 10px 12px; font-size: 14px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .msg.err { border-color: var(--worse); color: var(--worse-text); }
+  .msg.info { color: var(--text-muted); }
+
+  /* ---- controls ---- */
+  .controls { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .field-wrap { display: flex; flex-direction: column; gap: 4px; position: relative; min-width: 0; }
+  .field {
+    width: 100%; min-height: 44px; background: var(--panel-raised); border: 1px solid var(--border);
+    border-radius: var(--radius-s); padding: 0 12px; color-scheme: dark; text-align: left;
+  }
+  button.field { display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; }
+  .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+  .seg button { min-height: 44px; background: none; border: 1px solid transparent; border-radius: var(--radius-s); padding: 0 14px; color: var(--text-muted); cursor: pointer; white-space: nowrap; }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--text); color: var(--bg); font-weight: 600; }
+  .btn { min-height: 44px; border: 0; border-radius: var(--radius-s); padding: 0 18px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; background: var(--text); color: var(--bg); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.quiet { background: var(--panel-raised); color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+  .split { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; border-top: 1px solid var(--border); padding-top: 16px; }
+  .pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; width: 300px; max-width: 90vw; background: var(--panel-raised); border: 1px solid var(--border-strong); border-radius: var(--radius-m); padding: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.45); max-height: 60vh; overflow: auto; }
+  .pop label { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 8px; cursor: pointer; }
+  .pop input[type=checkbox], td input[type=checkbox], th input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--better); }
+  .pop hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+
+  /* ---- summary cards ---- */
+  section.block { margin-top: 16px; }
+  .sum { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .sum-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+  .sum-head h2, .chart-head h2 { font-size: 16px; font-weight: 600; margin: 0; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .stat { background: var(--panel-raised); border: 1px solid var(--border); border-radius: var(--radius-m); padding: 12px 14px; }
+  .stat .k { font-size: 12px; color: var(--text-muted); }
+  .stat .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .stat .s { font-size: 12px; color: var(--text-muted); margin-top: 2px; overflow-wrap: anywhere; }
+
+  /* ---- tables ---- */
+  .tbl-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th { font-weight: 500; font-size: 12px; color: var(--text-muted); text-align: left; padding: 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th button { background: none; border: 0; padding: 4px 0; cursor: pointer; font-weight: 500; font-size: 12px; color: var(--text-muted); display: inline-flex; gap: 4px; align-items: center; }
+  th button:hover { color: var(--text); }
+  th[aria-sort] button { color: var(--text); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th.n, td.n { text-align: right; }
+  tr.sel td { background: var(--panel-raised); }
+  .sku { font-weight: 600; overflow-wrap: anywhere; }
+  .desc { font-size: 12px; color: var(--text-muted); max-width: 340px; overflow-wrap: anywhere; }
+  .amber { color: var(--freight); }
+  .red { color: var(--worse-text); }
+  .tag { font-size: 12px; }
+  .foot { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 10px 4px; align-items: center; }
+  .mk { display: inline-flex; align-items: center; gap: 8px; }
+
+  /* ---- chart ---- */
+  .chart-panel { padding: 16px; }
+  .chart-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; margin-bottom: 12px; }
+  .chart-box svg { width: 100%; height: auto; display: block; }
+  .chart-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>Supplier pricing</h1>
+    <nav>
+      <span id="data-note"></span>
+      <a href="/">Ops Live</a>
+      <a href="/kpi.html">KPI Summary</a>
+    </nav>
+  </header>
+
+  <div id="status" role="status" aria-live="polite"></div>
+
+  <section class="panel controls" aria-label="Filters" id="controls">
+    <div class="row">
+      <div class="field-wrap" style="flex: 2 1 260px">
+        <label class="lbl" for="q">Search</label>
+        <input id="q" class="field" type="search" placeholder="SKU, description or supplier" autocomplete="off">
+      </div>
+      <div class="field-wrap" style="flex: 1 1 180px">
+        <label class="lbl" for="sup">Supplier</label>
+        <select id="sup" class="field"><option value="">All suppliers</option></select>
+      </div>
+      <div class="field-wrap" style="flex: 1 1 200px">
+        <label class="lbl" for="sku">SKU</label>
+        <input id="sku" class="field" list="sku-list" placeholder="All SKUs" autocomplete="off">
+        <datalist id="sku-list"></datalist>
+      </div>
+      <div class="field-wrap" style="flex: 1 1 210px" id="dest-wrap">
+        <span class="lbl" id="dest-lbl">Destination</span>
+        <button type="button" id="dest" class="field" aria-haspopup="true" aria-expanded="false" aria-labelledby="dest-lbl dest"><span id="dest-text">All destinations</span>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
+        <div class="pop hidden" id="dest-pop" role="group" aria-label="Destinations"></div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field-wrap">
+        <span class="lbl" id="range-lbl">Date range (order date)</span>
+        <div class="seg" id="presets" role="group" aria-labelledby="range-lbl">
+          <button type="button" data-p="90d">90 days</button>
+          <button type="button" data-p="6m">6 months</button>
+          <button type="button" data-p="12m">12 months</button>
+          <button type="button" data-p="24m">24 months</button>
+          <button type="button" data-p="all">All time</button>
+          <button type="button" data-p="custom">Custom</button>
+        </div>
+      </div>
+      <div class="field-wrap"><label class="lbl" for="from">From</label><input id="from" class="field" type="date" style="width: 160px"></div>
+      <div class="field-wrap"><label class="lbl" for="to">To</label><input id="to" class="field" type="date" style="width: 160px"></div>
+    </div>
+    <div class="split">
+      <div class="field-wrap">
+        <span class="lbl" id="view-lbl">Price view</span>
+        <div class="seg" id="views" role="group" aria-labelledby="view-lbl">
+          <button type="button" data-v="same">Same supplier over time</button>
+          <button type="button" data-v="all">All suppliers for the SKU</button>
+        </div>
+      </div>
+      <div class="row" style="align-items: center">
+        <span class="lbl" id="gen-hint"></span>
+        <button type="button" class="btn" id="gen">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 14 6.5 8.5 10 11.5 16 4"/><path d="M2 16h14"/></svg>
+          <span id="gen-text">Generate chart</span></button>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="summary" aria-label="Selection summary"></section>
+  <section class="block" id="chart" aria-label="Price chart"></section>
+
+  <section class="panel block" id="table-panel" aria-label="SKUs and suppliers" style="padding: 4px 8px 12px">
+    <div class="tbl-wrap"><table id="tbl"><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
+    <div class="foot"><span class="lbl" id="count"></span><span class="row" style="gap: 8px; align-items: center"><button type="button" class="btn quiet" id="more">Show more</button><button type="button" class="btn quiet" id="clear-sel">Clear ticks</button></span></div>
+  </section>
+</div>
+
+<script>
+// The anon key is the public, read-only key; netlify-build.sh injects it
+// at deploy time, same as site/index.html and site/kpi.html.
+const SUPABASE_URL = "https://pdflsmequzgpeuodnxyg.supabase.co";
+const SUPABASE_ANON_KEY = "YOUR_ANON_KEY_HERE";
+
+// Cutoffs for the Watch and High flags, as variation (std dev / average price) in percent.
+const WATCH_PCT = 10, HIGH_PCT = 15;
+const MAX_LINES = 8;        // more selected rows than this and Generate chart draws the volatility ranking
+const RANK_ROWS = 25;       // the ranking shows the most volatile rows up to this many
+const PAGE = 100;           // table rows shown at a time
+
+// ---------------------------------------------------------------- helpers
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const NONE = "(no destination)";
+
+const money = (v) => v == null || isNaN(v) ? "\u2013" : "$" + v.toLocaleString("en-US", { minimumFractionDigits: Math.abs(v) < 0.2 ? 3 : 2, maximumFractionDigits: Math.abs(v) < 0.2 ? 3 : 2 });
+const moneySd = (v) => { if (v == null || isNaN(v)) return "\u2013"; const d = Math.abs(v) < 0.2 ? 4 : Math.abs(v) < 1 ? 3 : 2; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }); };
+const pct = (v) => v == null || isNaN(v) ? "\u2013" : v.toFixed(1) + "%";
+const signPct = (v) => v == null || isNaN(v) ? "\u2013" : (v >= 0 ? "+" : "\u2212") + Math.abs(v).toFixed(1) + "%";
+const parts = (iso) => iso.split("-").map(Number);
+const fmtDate = (iso) => { const [y, m, d] = parts(iso); return MONTHS[m - 1] + " " + d + ", " + y; };
+const utc = (iso) => { const [y, m, d] = parts(iso); return Date.UTC(y, m - 1, d); };
+const isoOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+const addDays = (iso, n) => isoOf(utc(iso) + n * 86400000);
+function addMonths(iso, n) { const [y, m, d] = parts(iso); const dt = new Date(Date.UTC(y, m - 1 + n, 1)); const last = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0)).getUTCDate(); dt.setUTCDate(Math.min(d, last)); return dt.toISOString().slice(0, 10); }
+function todayIso() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+const sortStr = (a, b) => String(a).localeCompare(String(b), "en", { numeric: true, sensitivity: "base" });
+const median = (a) => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
+
+function statsOf(rowsByDate) {
+  const p = rowsByDate.map((r) => r.unit_price), n = p.length;
+  const mean = p.reduce((a, b) => a + b, 0) / n;
+  const sd = n > 1 ? Math.sqrt(p.reduce((a, b) => a + (b - mean) * (b - mean), 0) / (n - 1)) : null;   // sample std dev
+  const first = p[0], latest = p[n - 1];
+  return { n, mean, sd, cv: sd == null ? null : sd / mean * 100, lo: Math.min(...p), hi: Math.max(...p), first, latest, change: n > 1 ? (latest / first - 1) * 100 : null, lastDate: rowsByDate[n - 1].order_date };
+}
+const byDate = (a, b) => a.order_date < b.order_date ? -1 : a.order_date > b.order_date ? 1 : (a.line_key < b.line_key ? -1 : 1);
+const flag = (cv) => cv == null ? "" : cv >= HIGH_PCT ? '<span class="tag red">High</span>' : cv >= WATCH_PCT ? '<span class="tag amber">Watch</span>' : "";
+const cvCell = (cv) => cv == null ? "\u2013" : (cv >= HIGH_PCT ? '<span class="red">' + pct(cv) + "</span> " : cv >= WATCH_PCT ? '<span class="amber">' + pct(cv) + "</span> " : pct(cv) + " ") + flag(cv);
+
+// ---------------------------------------------------------------- state
+const db = (typeof supabase !== "undefined") ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const S = {
+  rows: [], loaded: false,
+  q: "", supplier: "", sku: "", dests: new Set(), allDests: [],
+  preset: "12m", from: "", to: "",
+  view: "same", chartOn: false, sort: { key: "sku", dir: 1 }, shown: PAGE,
+  selected: new Set(),
+};
+let V = null;       // the current derived view (groups, visible rows, selection...)
+
+// ---------------------------------------------------------------- loading
+async function fetchAll() {
+  const out = []; let start = 0;
+  for (;;) {
+    const { data, error } = await db.from("supplier_prices").select("*").order("line_key").range(start, start + 999);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) break;
+    start += 1000;
+  }
+  return out;
+}
+
+async function load() {
+  $("status").innerHTML = '<div class="msg info">Loading prices\u2026</div>';
+  try {
+    if (!db) throw new Error("The Supabase library did not load. Check the connection and reload.");
+    const raw = await fetchAll();
+    S.rows = raw.map((r) => ({ ...r, unit_price: Number(r.unit_price), quantity: r.quantity == null ? null : Number(r.quantity), quantity_received: r.quantity_received == null ? null : Number(r.quantity_received), destination: r.destination || NONE }))
+                .filter((r) => isFinite(r.unit_price) && r.unit_price > 0 && r.order_date);
+    S.loaded = true;
+    S.allDests = [...new Set(S.rows.map((r) => r.destination))].sort(sortStr);
+    S.dests = new Set(S.allDests);
+    fillLists();
+    const newest = S.rows.reduce((m, r) => r.updated_at && r.updated_at > m ? r.updated_at : m, "");
+    $("data-note").textContent = newest ? "Prices as of " + new Date(newest).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + " CT" : "";
+    $("status").innerHTML = S.rows.length ? "" : '<div class="msg info">No purchase lines yet. The daily pull from Finale fills this page; once it has run, reload.</div>';
+    applyPreset(S.preset);
+    update();
+  } catch (e) {
+    $("status").innerHTML = '<div class="msg err"><span>Couldn\u2019t load supplier prices: ' + esc(e.message || e) + '</span><button type="button" class="btn quiet" id="retry">Try again</button></div>';
+    $("retry").onclick = load;
+  }
+}
+
+function fillLists() {
+  const sups = [...new Set(S.rows.map((r) => r.supplier))].sort(sortStr);
+  $("sup").innerHTML = '<option value="">All suppliers</option>' + sups.map((s) => '<option value="' + esc(s) + '">' + esc(s) + "</option>").join("");
+  const skus = [...new Set(S.rows.map((r) => r.product_id))].sort(sortStr);
+  $("sku-list").innerHTML = skus.map((s) => '<option value="' + esc(s) + '"></option>').join("");
+  renderDestPop();
+}
+
+// ---------------------------------------------------------------- destination picker
+function destLabel() {
+  const n = S.allDests.length, k = S.dests.size;
+  if (!n) return "All destinations";
+  if (k === n) return "All destinations (" + n + ")";
+  if (k === 0) return "No destinations";
+  return k + " of " + n + " destinations";
+}
+function renderDestPop() {
+  const a = document.activeElement, pop = $("dest-pop");
+  const keep = a && pop.contains(a) ? (a.id ? "#" + a.id : a.dataset.d != null ? '[data-d="' + a.dataset.d + '"]' : null) : null;
+  const all = S.dests.size === S.allDests.length;
+  $("dest-pop").innerHTML =
+    '<label style="font-weight:600"><input type="checkbox" id="dest-all"' + (all ? " checked" : "") + '>Select all (' + S.allDests.length + ")</label><hr>" +
+    S.allDests.map((d, i) => '<label><input type="checkbox" data-d="' + i + '"' + (S.dests.has(d) ? " checked" : "") + ">" + esc(d) + "</label>").join("") +
+    '<div style="display:flex;justify-content:space-between;gap:8px;padding-top:8px"><button type="button" class="btn quiet" id="dest-clear">Clear</button><button type="button" class="btn" id="dest-done">Done</button></div>';
+  $("dest-text").textContent = destLabel();
+  if (keep) { const n = pop.querySelector(keep); if (n) n.focus(); }
+}
+function setDestOpen(open) {
+  $("dest-pop").classList.toggle("hidden", !open);
+  $("dest").setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+// ---------------------------------------------------------------- date range
+function applyPreset(p) {
+  S.preset = p;
+  const t = todayIso();
+  if (p === "90d") { S.from = addDays(t, -90); S.to = t; }
+  else if (p === "6m") { S.from = addMonths(t, -6); S.to = t; }
+  else if (p === "12m") { S.from = addMonths(t, -12); S.to = t; }
+  else if (p === "24m") { S.from = addMonths(t, -24); S.to = t; }
+  else if (p === "all") { S.from = ""; S.to = ""; }
+  $("from").value = S.from; $("to").value = S.to;
+  document.querySelectorAll("#presets button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.p === p ? "true" : "false"));
+}
+
+// ---------------------------------------------------------------- derive
+function derive() {
+  const inRange = (r) => (!S.from || r.order_date >= S.from) && (!S.to || r.order_date <= S.to) && S.dests.has(r.destination);
+  const base = S.rows.filter(inRange);
+  const groups = new Map();
+  for (const r of base) {
+    const k = r.product_id + "\u0001" + r.supplier;
+    if (!groups.has(k)) groups.set(k, { key: k, sku: r.product_id, supplier: r.supplier, rows: [] });
+    groups.get(k).rows.push(r);
+  }
+  for (const g of groups.values()) {
+    g.rows.sort(byDate); g.st = statsOf(g.rows);
+    const withDesc = [...g.rows].reverse().find((r) => r.description); g.desc = withDesc ? withDesc.description : "";
+  }
+  const terms = S.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const skuQ = S.sku.trim().toLowerCase();
+  const visible = [...groups.values()].filter((g) => {
+    if (S.supplier && g.supplier !== S.supplier) return false;
+    if (skuQ && !g.sku.toLowerCase().includes(skuQ)) return false;
+    if (terms.length) { const hay = (g.sku + " " + g.desc + " " + g.supplier).toLowerCase(); if (!terms.every((t) => hay.includes(t))) return false; }
+    return true;
+  });
+  const { key, dir } = S.sort;
+  const val = (g) => ({ sku: g.sku, supplier: g.supplier, n: g.st.n, latest: g.st.latest, mean: g.st.mean, hi: g.st.hi, sd: g.st.sd, cv: g.st.cv, change: g.st.change })[key];
+  visible.sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x == null && y == null) return sortStr(a.sku, b.sku);
+    if (x == null) return 1; if (y == null) return -1;
+    const c = typeof x === "string" ? sortStr(x, y) : x - y;
+    return c ? c * dir : sortStr(a.sku, b.sku);
+  });
+  const vis = new Set(visible.map((g) => g.key));
+  S.selected = new Set([...S.selected].filter((k) => vis.has(k)));
+  const selGroups = visible.filter((g) => S.selected.has(g.key));
+  // "All suppliers for the SKU": the SKU in focus is the one typed in the SKU box (exact), or the only SKU among the ticked rows
+  let focusSku = null;
+  const skuNames = new Map(); for (const g of groups.values()) skuNames.set(g.sku.toLowerCase(), g.sku);
+  if (skuQ && skuNames.has(skuQ)) focusSku = skuNames.get(skuQ);
+  else { const set = new Set(selGroups.map((g) => g.sku)); if (set.size === 1) focusSku = [...set][0]; }
+  const focusGroups = focusSku ? [...groups.values()].filter((g) => g.sku === focusSku).sort((a, b) => b.st.n - a.st.n || sortStr(a.supplier, b.supplier)) : [];
+  V = { base, groups, visible, selGroups, focusSku, focusGroups };
+}
+
+// ---------------------------------------------------------------- chart helpers
+const COLORS = ["#4FB0A5", "#D9A441", "#7FB2E5", "#B8A4E3", "#E58C7B", "#B5D67A", "#E59BC1", "#9FB4C7"];
+function markerSvg(shape, color, x, y, big) {
+  const s = big ? 5 : 4;
+  const m = shape % 4;
+  if (m === 0) return '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + s + '" fill="' + color + '"/>';
+  if (m === 1) return '<rect x="' + (x - s).toFixed(1) + '" y="' + (y - s).toFixed(1) + '" width="' + 2 * s + '" height="' + 2 * s + '" fill="' + color + '"/>';
+  if (m === 2) return '<polygon points="' + x.toFixed(1) + "," + (y - s - 1).toFixed(1) + " " + (x + s + 1).toFixed(1) + "," + (y + s).toFixed(1) + " " + (x - s - 1).toFixed(1) + "," + (y + s).toFixed(1) + '" fill="' + color + '"/>';
+  return '<polygon points="' + x.toFixed(1) + "," + (y - s - 1).toFixed(1) + " " + (x + s + 1).toFixed(1) + "," + y.toFixed(1) + " " + x.toFixed(1) + "," + (y + s + 1).toFixed(1) + " " + (x - s - 1).toFixed(1) + "," + y.toFixed(1) + '" fill="' + color + '"/>';
+}
+function niceTicks(lo, hi, count) {
+  if (lo === hi) { lo *= 0.95; hi *= 1.05; if (lo === hi) { lo -= 1; hi += 1; } }
+  const pad = (hi - lo) * 0.06; lo = Math.max(0, lo - pad); hi += pad;
+  const step0 = (hi - lo) / count, mag = Math.pow(10, Math.floor(Math.log10(step0))), norm = step0 / mag;
+  const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+  const ticks = []; for (let v = Math.floor(lo / step) * step; v <= Math.ceil(hi / step) * step + step / 2; v += step) ticks.push(+v.toFixed(10));
+  return { ticks, step };
+}
+const tickFmt = (v, step) => "$" + v.toLocaleString("en-US", { minimumFractionDigits: step >= 1 ? 0 : Math.min(4, Math.max(2, Math.ceil(-Math.log10(step)))), maximumFractionDigits: step >= 1 ? 0 : Math.min(4, Math.max(2, Math.ceil(-Math.log10(step)))) });
+const FONT = "IBM Plex Sans, system-ui, sans-serif";
+const txt = (x, y, s, o) => '<text x="' + x + '" y="' + y + '" font-family="' + FONT + '" font-size="' + ((o && o.size) || 12) + '" fill="' + ((o && o.fill) || "#9AA0A6") + '"' + (o && o.anchor ? ' text-anchor="' + o.anchor + '"' : "") + (o && o.weight ? ' font-weight="' + o.weight + '"' : "") + (o && o.halo ? ' stroke="#22272C" stroke-width="3" paint-order="stroke"' : "") + ">" + esc(s) + "</text>";
+
+function lineChartSvg(series, title) {
+  const W = 1060, L = 64, R = 170, T = 14, B = 38, PH = 320, legendH = series.length * 22 + 14, H = T + PH + B + legendH;
+  const all = series.flatMap((s) => s.rows);
+  let t0 = Math.min(...all.map((r) => utc(r.order_date))), t1 = Math.max(...all.map((r) => utc(r.order_date)));
+  if (t0 === t1) { t0 -= 15 * 86400000; t1 += 15 * 86400000; }
+  const { ticks, step } = niceTicks(Math.min(...all.map((r) => r.unit_price)), Math.max(...all.map((r) => r.unit_price)), 5);
+  const lo = ticks[0], hi = ticks[ticks.length - 1];
+  const X = (iso) => L + (W - L - R) * ((utc(iso) - t0) / (t1 - t0));
+  const Y = (p) => T + PH * (1 - (p - lo) / (hi - lo));
+  const o = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + esc(title) + '"><rect width="' + W + '" height="' + H + '" fill="#22272C"/>'];
+  for (const v of ticks) { const y = Y(v); o.push('<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) + '" stroke="#2E343A"/>' + txt(L - 10, (y + 4).toFixed(1), tickFmt(v, step), { anchor: "end" })); }
+  // month ticks, thinned so they never crowd
+  const d0 = new Date(t0), months = []; let cur = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() + 1, 1);
+  while (cur <= t1) { months.push(cur); const c = new Date(cur); cur = Date.UTC(c.getUTCFullYear(), c.getUTCMonth() + 1, 1); }
+  const every = Math.max(1, Math.ceil(months.length / 8));
+  months.forEach((ms, i) => { if (i % every) return; const c = new Date(ms), x = X(isoOf(ms)); o.push('<line x1="' + x.toFixed(1) + '" y1="' + (T + PH) + '" x2="' + x.toFixed(1) + '" y2="' + (T + PH + 5) + '" stroke="#9AA0A6"/>' + txt(x.toFixed(1), T + PH + 20, MONTHS[c.getUTCMonth()] + " \u2019" + String(c.getUTCFullYear()).slice(2), { anchor: "middle" })); });
+  const ends = [];
+  series.forEach((s, i) => {
+    const col = COLORS[i % COLORS.length];
+    if (s.rows.length > 1) o.push('<polyline points="' + s.rows.map((r) => X(r.order_date).toFixed(1) + "," + Y(r.unit_price).toFixed(1)).join(" ") + '" fill="none" stroke="' + col + '" stroke-width="2" stroke-linejoin="round"/>');
+    for (const r of s.rows) o.push("<g>" + "<title>" + esc(s.label + " \u00b7 " + fmtDate(r.order_date) + " \u00b7 " + money(r.unit_price) + " \u00b7 PO " + r.po_id) + "</title>" + markerSvg(i, col, X(r.order_date), Y(r.unit_price)) + "</g>");
+    const last = s.rows[s.rows.length - 1]; ends.push({ y: Y(last.unit_price), x: X(last.order_date), label: s.label, i });
+  });
+  ends.sort((a, b) => a.y - b.y); for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 16) ends[k].y = ends[k - 1].y + 16;
+  for (const e of ends) { const col = COLORS[e.i % COLORS.length]; o.push(markerSvg(e.i, col, e.x + 16, e.y, true) + txt((e.x + 28).toFixed(1), (e.y + 4).toFixed(1), e.label.length > 22 ? e.label.slice(0, 21) + "\u2026" : e.label, { fill: "#E8E6E1", size: 13, halo: true })); }
+  series.forEach((s, i) => { const y = T + PH + B + 12 + i * 22, col = COLORS[i % COLORS.length], st = s.st; o.push(markerSvg(i, col, L + 6, y - 4, true) + txt(L + 22, y, s.label + "   " + st.n + " purchase" + (st.n === 1 ? "" : "s") + " \u00b7 average " + money(st.mean) + " \u00b7 std dev " + moneySd(st.sd) + (st.cv == null ? "" : " \u00b7 variation " + pct(st.cv)), { fill: "#E8E6E1", size: 13 })); });
+  o.push("</svg>"); return o.join("");
+}
+
+function rankingSvg(items, title) {
+  const W = 1060, LBL = 300, BAR0 = LBL + 14, BARW = 440, RH = 34, T = 34, H = T + items.length * RH + 40;
+  const maxCv = Math.max(...items.map((g) => g.st.cv || 0)), scale = Math.max(25, Math.ceil(maxCv / 5) * 5);
+  const o = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + esc(title) + '"><rect width="' + W + '" height="' + H + '" fill="#22272C"/>'];
+  const tx = BAR0 + BARW * WATCH_PCT / scale;
+  o.push('<line x1="' + tx + '" y1="' + (T - 8) + '" x2="' + tx + '" y2="' + (T + items.length * RH) + '" stroke="#9AA0A6" stroke-dasharray="4 4"/>' + txt(tx, T - 14, WATCH_PCT + "%", { anchor: "middle", size: 11 }));
+  items.forEach((g, i) => {
+    const y = T + i * RH, cv = g.st.cv || 0, col = cv >= HIGH_PCT ? "#C1594A" : cv >= WATCH_PCT ? "#D9A441" : "#4FB0A5";
+    o.push('<line x1="0" y1="' + (y + RH) + '" x2="' + W + '" y2="' + (y + RH) + '" stroke="#2E343A"/>');
+    o.push(txt(0, y + 15, g.sku.length > 34 ? g.sku.slice(0, 33) + "\u2026" : g.sku, { fill: "#E8E6E1", size: 13, weight: 600 }) + txt(0, y + 29, g.supplier.slice(0, 40) + " \u00b7 " + g.st.n + " purchases", { size: 11 }));
+    o.push('<rect x="' + BAR0 + '" y="' + (y + 8) + '" width="' + BARW + '" height="18" rx="4" fill="#282E34"/><rect x="' + BAR0 + '" y="' + (y + 8) + '" width="' + Math.max(2, BARW * cv / scale).toFixed(1) + '" height="18" rx="4" fill="' + col + '"/>');
+    o.push(txt(BAR0 + BARW + 14, y + 22, g.st.cv == null ? "\u2013" : pct(cv), { fill: "#E8E6E1", size: 13, weight: 600 }) + txt(BAR0 + BARW + 74, y + 22, cv >= HIGH_PCT ? "High" : cv >= WATCH_PCT ? "Watch" : "Steady", { fill: cv >= HIGH_PCT ? "#E39A8D" : cv >= WATCH_PCT ? "#D9A441" : "#9AA0A6", size: 12 }) + txt(BAR0 + BARW + 130, y + 22, "std dev " + moneySd(g.st.sd), { size: 12 }));
+  });
+  o.push(txt(0, H - 12, "Variation = standard deviation \u00f7 average price, so SKUs of different cost compare fairly. Dashed line: " + WATCH_PCT + "%.", { size: 11 }));
+  o.push("</svg>"); return o.join("");
+}
+
+// ---------------------------------------------------------------- render: summary, chart, table
+const stat = (k, v, s) => '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + (s || "") + "</div></div>";
+const marker = (i) => '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">' + markerSvg(i, COLORS[i % COLORS.length], 8, 8, true) + "</svg>";
+
+function pooled(groups) { const rows = groups.flatMap((g) => g.rows).sort(byDate); return statsOf(rows); }
+
+function renderSummary() {
+  const el = $("summary");
+  if (!S.loaded || !S.rows.length) { el.innerHTML = ""; return; }
+  if (S.view === "all") {
+    if (!V.focusSku) { el.innerHTML = '<div class="panel sum"><div class="lbl">Pick one SKU, by typing it in the SKU box or ticking one of its rows below, to compare every supplier we buy it from.</div></div>'; return; }
+    const gs = V.focusGroups, p = pooled(gs), desc = gs.map((g) => g.desc).find(Boolean) || "";
+    const byLatest = [...gs].filter((g) => g.st.latest != null).sort((a, b) => a.st.latest - b.st.latest), cheap = byLatest[0], dear = byLatest[byLatest.length - 1];
+    const gap = gs.length > 1 ? (dear.st.latest / cheap.st.latest - 1) * 100 : null;
+    const rowsHtml = gs.map((g, i) => '<tr><td><span class="mk">' + marker(i) + esc(g.supplier) + '</span></td><td class="n">' + g.st.n + '</td><td class="n">' + money(g.st.latest) + '</td><td class="n">' + money(g.st.mean) + '</td><td class="n">' + money(g.st.lo) + " \u2013 " + money(g.st.hi) + '</td><td class="n">' + moneySd(g.st.sd) + '</td><td class="n">' + cvCell(g.st.cv) + '</td><td class="n">' + signPct(g.st.change) + '</td><td class="n">' + fmtDate(g.st.lastDate) + "</td></tr>").join("") +
+      '<tr class="sel"><td><strong>All suppliers</strong></td><td class="n">' + p.n + '</td><td class="n">\u2013</td><td class="n">' + money(p.mean) + '</td><td class="n">' + money(p.lo) + " \u2013 " + money(p.hi) + '</td><td class="n">' + moneySd(p.sd) + '</td><td class="n">' + cvCell(p.cv) + '</td><td class="n">\u2013</td><td class="n">' + fmtDate(p.lastDate) + "</td></tr>";
+    el.innerHTML = '<div class="panel sum"><div class="sum-head"><h2>' + esc(V.focusSku) + (desc ? ": " + esc(desc) : "") + '</h2><span class="lbl">' + gs.length + " supplier" + (gs.length === 1 ? "" : "s") + " \u00b7 " + p.n + " purchase" + (p.n === 1 ? "" : "s") + " in range</span></div>" +
+      '<div class="cards">' + stat("Standard deviation", moneySd(p.sd), "all suppliers pooled") + stat("Variation", pct(p.cv), "std dev \u00f7 average price") + stat("Average price", money(p.mean), "per unit, all suppliers") + stat("Low \u2013 high", money(p.lo) + " \u2013 " + money(p.hi), "spread " + pct((p.hi / p.lo - 1) * 100)) +
+      stat("Latest price gap", gap == null ? "\u2013" : "+" + gap.toFixed(1) + "%", gap == null ? "only one supplier" : esc(dear.supplier) + " " + money(dear.st.latest) + " vs " + esc(cheap.supplier) + " " + money(cheap.st.latest)) + stat("Suppliers", String(gs.length), gs.map((g) => esc(g.supplier)).join(", ")) + "</div></div>" +
+      '<div class="panel block" style="padding:4px 8px 8px"><div class="tbl-wrap"><table><thead><tr><th>Supplier</th><th class="n">Purchases</th><th class="n">Latest</th><th class="n">Average</th><th class="n">Low \u2013 high</th><th class="n">Std dev</th><th class="n">Variation</th><th class="n">First \u2192 latest</th><th class="n">Last purchase</th></tr></thead><tbody>' + rowsHtml + "</tbody></table></div></div>";
+    return;
+  }
+  const sg = V.selGroups;
+  if (!sg.length) { el.innerHTML = '<div class="panel sum"><div class="lbl">Tick one or more rows below to see their standard deviation and generate a chart.</div></div>'; return; }
+  if (sg.length === 1) {
+    const g = sg[0], s = g.st;
+    el.innerHTML = '<div class="panel sum"><div class="sum-head"><h2>Selection: ' + esc(g.sku) + ", " + esc(g.supplier) + '</h2><span class="lbl">1 row selected \u00b7 ' + s.n + " purchase" + (s.n === 1 ? "" : "s") + " in range</span></div><div class=\"cards\">" +
+      stat("Standard deviation", moneySd(s.sd), s.sd == null ? "needs 2 or more purchases" : "sample, across the purchases") + stat("Variation", pct(s.cv), "std dev \u00f7 average price") + stat("Average price", money(s.mean), "per unit") + stat("Low \u2013 high", money(s.lo) + " \u2013 " + money(s.hi), "spread " + pct((s.hi / s.lo - 1) * 100)) +
+      stat("First \u2192 latest", signPct(s.change), money(s.first) + " \u2192 " + money(s.latest)) + stat("Last purchase", fmtDate(s.lastDate), esc(g.supplier)) + "</div></div>";
+    return;
+  }
+  const withCv = sg.filter((g) => g.st.cv != null), top = [...withCv].sort((a, b) => b.st.cv - a.st.cv)[0], med = median(withCv.map((g) => g.st.cv));
+  const changes = sg.filter((g) => g.st.change != null), big = [...changes].sort((a, b) => b.st.change - a.st.change)[0];
+  const sameSku = new Set(sg.map((g) => g.sku)).size === 1, p = sameSku ? pooled(sg) : null;
+  el.innerHTML = '<div class="panel sum"><div class="sum-head"><h2>Selection: ' + sg.length + ' rows</h2><span class="lbl">Ticked in the table \u00b7 ' + esc(S.from ? fmtDate(S.from) : "start") + " to " + esc(S.to ? fmtDate(S.to) : "today") + "</span></div><div class=\"cards\">" +
+    stat("Rows selected", String(sg.length), "of " + V.visible.length + " shown") + (p ? stat("Standard deviation", moneySd(p.sd), "the ticked suppliers pooled") + stat("Variation", pct(p.cv), "std dev \u00f7 average price") : "") +
+    stat("Most volatile", top ? pct(top.st.cv) : "\u2013", top ? esc(top.sku) + ", " + esc(top.supplier) : "needs 2 or more purchases") + stat("Median variation", pct(med), "across the selected rows") + stat("Rows at " + WATCH_PCT + "% or more", withCv.filter((g) => g.st.cv >= WATCH_PCT).length + " of " + withCv.length, "flagged Watch or High") +
+    stat("Largest increase", big ? signPct(big.st.change) : "\u2013", big ? esc(big.sku) + ", " + esc(big.supplier) : "") + "</div></div>";
+}
+
+// what the chart will draw right now, or why it can't
+function chartPlan() {
+  if (S.view === "all") {
+    if (!V.focusSku) return { err: "Pick one SKU first: type it in the SKU box or tick one of its rows." };
+    const gs = V.focusGroups.slice(0, MAX_LINES);
+    return { mode: "lines", series: gs.map((g) => ({ label: g.supplier, rows: g.rows, st: g.st, g })), title: "Price paid per unit for " + V.focusSku + ", by supplier", subtitle: "Each marker is one purchase order line. Lines join purchases in date order.", note: V.focusGroups.length > MAX_LINES ? "Showing the " + MAX_LINES + " suppliers with the most purchases." : "" };
+  }
+  const sg = V.selGroups;
+  if (!sg.length) return { err: "Tick at least one row to chart it." };
+  if (sg.length > MAX_LINES) {
+    const items = sg.filter((g) => g.st.cv != null).sort((a, b) => b.st.cv - a.st.cv).slice(0, RANK_ROWS);
+    if (!items.length) return { err: "None of the ticked rows has two or more purchases yet, so there is no variation to rank." };
+    return { mode: "rank", items, all: sg, title: "Price volatility ranking of " + sg.length + " selected rows", subtitle: "Most volatile first. More than " + MAX_LINES + " rows ticked, so this ranks them instead of drawing lines.", note: sg.length > items.length ? "Showing the " + items.length + " most volatile." : "" };
+  }
+  const sameSku = new Set(sg.map((g) => g.sku)).size === 1, sameSup = new Set(sg.map((g) => g.supplier)).size === 1;
+  return { mode: "lines", series: sg.map((g) => ({ label: sameSku ? g.supplier : sameSup ? g.sku : g.sku + " \u00b7 " + g.supplier, rows: g.rows, st: g.st, g })), title: "Price paid per unit over time", subtitle: "Each marker is one purchase order line. Lines join purchases in date order.", note: "" };
+}
+
+function renderChart() {
+  const el = $("chart"), btn = $("gen");
+  const plan = S.loaded && S.rows.length ? chartPlan() : { err: "" };
+  $("gen-hint").textContent = S.view === "all" ? (V && V.focusSku ? "Comparing every supplier for " + V.focusSku + "." : "Pick one SKU to compare suppliers.") : (V && V.selGroups.length > MAX_LINES ? "More than " + MAX_LINES + " ticked: the chart ranks volatility." : "Tick up to " + MAX_LINES + " rows, then generate a chart.");
+  btn.disabled = !!plan.err && !S.chartOn;      // an open chart can always be hidden
+  $("gen-text").textContent = S.chartOn ? "Hide chart" : "Generate chart";
+  if (!S.chartOn) { el.innerHTML = ""; return; }
+  if (plan.err) { el.innerHTML = '<div class="panel chart-panel"><div class="lbl">' + esc(plan.err) + "</div></div>"; return; }
+  const svg = plan.mode === "lines" ? lineChartSvg(plan.series, plan.title) : rankingSvg(plan.items, plan.title);
+  el.innerHTML = '<div class="panel chart-panel"><div class="chart-head"><h2>' + esc(plan.title) + '</h2><span class="lbl">' + esc(plan.subtitle) + (plan.note ? " " + esc(plan.note) : "") + '</span></div><div class="chart-box" id="chart-box">' + svg + '</div><div class="chart-actions"><button type="button" class="btn quiet" id="dl-img">Download chart image</button><button type="button" class="btn quiet" id="dl-csv">Download data (CSV)</button></div></div>';
+  $("dl-img").onclick = () => downloadPng($("chart-box").querySelector("svg"), "supplier-pricing-chart");
+  $("dl-csv").onclick = () => downloadCsv(plan);
+}
+
+const COLS = [["sku", "SKU"], ["supplier", "Supplier"], ["n", "Purchases"], ["latest", "Latest"], ["mean", "Average"], ["hi", "Low \u2013 high"], ["sd", "Std dev"], ["cv", "Variation"], ["change", "First \u2192 latest"]];
+function spark(g, col) {
+  const p = g.rows.map((r) => r.unit_price), lo = Math.min(...p), hi = Math.max(...p), span = hi - lo || 1;
+  const pts = p.map((v, i) => (2 + 68 * i / Math.max(1, p.length - 1)).toFixed(1) + "," + (20 - 16 * (v - lo) / span).toFixed(1)).join(" ");
+  return '<svg width="72" height="24" viewBox="0 0 72 24" role="img" aria-label="Price trend for ' + esc(g.sku) + ", " + esc(g.supplier) + '">' + (p.length > 1 ? '<polyline points="' + pts + '" fill="none" stroke="' + col + '" stroke-width="1.6" stroke-linejoin="round"/>' : '<circle cx="36" cy="12" r="3" fill="' + col + '"/>') + "</svg>";
+}
+function renderTable() {
+  const shown = V.visible.slice(0, S.shown);
+  const allTicked = shown.length > 0 && shown.every((g) => S.selected.has(g.key));
+  $("thead").innerHTML = "<tr><th><input type=\"checkbox\" id=\"tick-all\" aria-label=\"Tick all rows shown\"" + (allTicked ? " checked" : "") + "></th>" + COLS.map(([k, label]) => {
+    const on = S.sort.key === k, num = !["sku", "supplier"].includes(k);
+    return '<th scope="col" class="' + (num ? "n" : "") + '"' + (on ? ' aria-sort="' + (S.sort.dir > 0 ? "ascending" : "descending") + '"' : "") + '><button type="button" data-sort="' + k + '">' + esc(label) + (on ? (S.sort.dir > 0 ? " \u25b2" : " \u25bc") : "") + "</button></th>";
+  }).join("") + "<th scope=\"col\">Trend</th></tr>";
+  $("tbody").innerHTML = shown.map((g, i) => {
+    const s = g.st, sel = S.selected.has(g.key), col = s.cv != null && s.cv >= HIGH_PCT ? "#C1594A" : s.cv != null && s.cv >= WATCH_PCT ? "#D9A441" : "#4FB0A5";
+    return '<tr' + (sel ? ' class="sel"' : "") + '><td><input type="checkbox" data-i="' + i + '"' + (sel ? " checked" : "") + ' aria-label="Select ' + esc(g.sku) + ", " + esc(g.supplier) + '"></td><td><div class="sku">' + esc(g.sku) + '</div><div class="desc">' + esc(g.desc) + "</div></td><td>" + esc(g.supplier) + '</td><td class="n">' + s.n + '</td><td class="n">' + money(s.latest) + '</td><td class="n">' + money(s.mean) + '</td><td class="n">' + money(s.lo) + " \u2013 " + money(s.hi) + '</td><td class="n">' + moneySd(s.sd) + '</td><td class="n">' + cvCell(s.cv) + '</td><td class="n">' + signPct(s.change) + "</td><td>" + spark(g, col) + "</td></tr>";
+  }).join("") || '<tr><td colspan="11" class="lbl" style="padding:20px 10px">' + (S.rows.length ? "No rows match these filters." : "") + "</td></tr>";
+  $("count").textContent = V.visible.length ? "Showing 1\u2013" + shown.length + " of " + V.visible.length + " SKU and supplier pairs (" + V.base.length + " purchase lines in range)." : "";
+  $("more").classList.toggle("hidden", V.visible.length <= S.shown);
+  $("clear-sel").classList.toggle("hidden", !S.selected.size);
+  $("table-panel").classList.toggle("hidden", !S.loaded || !S.rows.length);
+}
+
+// Every change redraws the table, which would drop keyboard focus; put it back on the same control.
+function focusSelector() {
+  const a = document.activeElement;
+  if (!a || !a.closest || !a.closest("#thead, #tbody")) return null;
+  if (a.id) return "#" + a.id;
+  if (a.dataset && a.dataset.sort) return '#thead [data-sort="' + a.dataset.sort + '"]';
+  if (a.dataset && a.dataset.i != null) return '#tbody [data-i="' + a.dataset.i + '"]';
+  return null;
+}
+function update() {
+  if (!S.loaded) return;
+  const keep = focusSelector();
+  derive(); renderSummary(); renderChart(); renderTable();
+  if (keep) { const n = document.querySelector(keep); if (n) n.focus(); }
+  $("dest-text").textContent = destLabel();
+  document.querySelectorAll("#views button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === S.view ? "true" : "false"));
+}
+
+// ---------------------------------------------------------------- downloads
+function saveBlob(blob, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
+const csvCell = (v) => { let s = v == null ? "" : String(v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+function downloadCsv(plan) {
+  const lines = [];
+  if (plan.mode === "lines") {
+    lines.push(["SKU", "Description", "Supplier", "Destination", "PO", "Order date", "Unit price", "Quantity ordered", "Quantity received"]);
+    for (const s of plan.series) for (const r of s.rows) lines.push([r.product_id, r.description || "", r.supplier, r.destination === NONE ? "" : r.destination, r.po_id, r.order_date, r.unit_price, r.quantity, r.quantity_received]);
+  } else {
+    lines.push(["SKU", "Description", "Supplier", "Purchases", "Latest", "Average", "Low", "High", "Std dev", "Variation %", "First to latest %"]);
+    for (const g of plan.all) lines.push([g.sku, g.desc, g.supplier, g.st.n, g.st.latest, g.st.mean, g.st.lo, g.st.hi, g.st.sd, g.st.cv, g.st.change]);
+  }
+  saveBlob(new Blob(["\ufeff" + lines.map((l) => l.map(csvCell).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" }), "supplier-pricing-" + todayIso() + ".csv");
+}
+function downloadPng(svgEl, name) {
+  const vb = svgEl.viewBox.baseVal, scale = 2, xml = new XMLSerializer().serializeToString(svgEl);
+  const img = new Image();
+  img.onload = () => { const c = document.createElement("canvas"); c.width = vb.width * scale; c.height = vb.height * scale; const x = c.getContext("2d"); x.fillStyle = "#22272C"; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height); c.toBlob((b) => saveBlob(b, name + "-" + todayIso() + ".png"), "image/png"); };
+  img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(xml);
+}
+
+// ---------------------------------------------------------------- events
+let qTimer = null;
+$("q").addEventListener("input", (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.q = e.target.value; S.shown = PAGE; update(); }, 150); });
+$("sup").addEventListener("change", (e) => { S.supplier = e.target.value; S.shown = PAGE; update(); });
+$("sku").addEventListener("input", (e) => { S.sku = e.target.value; S.shown = PAGE; update(); });
+$("presets").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.p === "custom") { S.preset = "custom"; document.querySelectorAll("#presets button").forEach((x) => x.setAttribute("aria-pressed", x.dataset.p === "custom" ? "true" : "false")); } else applyPreset(b.dataset.p); S.shown = PAGE; update(); });
+const onDates = () => { S.from = $("from").value; S.to = $("to").value; S.preset = "custom"; document.querySelectorAll("#presets button").forEach((x) => x.setAttribute("aria-pressed", x.dataset.p === "custom" ? "true" : "false")); S.shown = PAGE; update(); };
+$("from").addEventListener("change", onDates); $("to").addEventListener("change", onDates);
+$("views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.view = b.dataset.v; update(); });
+$("gen").addEventListener("click", () => { S.chartOn = !S.chartOn; update(); if (S.chartOn) { const el = $("chart"); if (el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "nearest" }); } });
+$("dest").addEventListener("click", () => setDestOpen($("dest-pop").classList.contains("hidden")));
+$("dest-pop").addEventListener("change", (e) => {
+  if (e.target.id === "dest-all") S.dests = e.target.checked ? new Set(S.allDests) : new Set();
+  else if (e.target.dataset.d != null) { const d = S.allDests[Number(e.target.dataset.d)]; if (e.target.checked) S.dests.add(d); else S.dests.delete(d); }
+  renderDestPop(); S.shown = PAGE; update();
+});
+$("dest-pop").addEventListener("click", (e) => { if (e.target.id === "dest-clear") { S.dests = new Set(); renderDestPop(); update(); } if (e.target.id === "dest-done") { setDestOpen(false); $("dest").focus(); } });
+// composedPath, not e.target: a button inside the picker may have been re-drawn (and detached) by its own handler
+document.addEventListener("click", (e) => { if (!e.composedPath().includes($("dest-wrap"))) setDestOpen(false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("dest-pop").classList.contains("hidden")) { setDestOpen(false); $("dest").focus(); } });
+$("thead").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-sort]");
+  if (b) { const k = b.dataset.sort; S.sort = S.sort.key === k ? { key: k, dir: -S.sort.dir } : { key: k, dir: ["sku", "supplier"].includes(k) ? 1 : -1 }; update(); return; }
+  if (e.target.id === "tick-all") { const shown = V.visible.slice(0, S.shown); if (e.target.checked) shown.forEach((g) => S.selected.add(g.key)); else shown.forEach((g) => S.selected.delete(g.key)); update(); }
+});
+$("tbody").addEventListener("change", (e) => { const i = e.target.dataset.i; if (i == null) return; const g = V.visible.slice(0, S.shown)[Number(i)]; if (!g) return; if (e.target.checked) S.selected.add(g.key); else S.selected.delete(g.key); update(); });
+$("more").addEventListener("click", () => { S.shown += PAGE; update(); });
+$("clear-sel").addEventListener("click", () => { S.selected = new Set(); update(); });
+
+applyPreset(S.preset);
+load();
+</script>
+</body>
+</html>

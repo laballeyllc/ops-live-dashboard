@@ -1,0 +1,46 @@
+# Supplier pricing pull (pull_supplier_prices.py) -> supplier_prices table in Supabase.
+#
+# Once a day, early morning. Prices change slowly, so there is no reason to
+# run it more often. GitHub's own scheduler can run late or skip under load
+# (the other workflows here are triggered by cron-job.org for that reason);
+# if you see gaps, point a cron-job.org job at this workflow's dispatch API.
+#
+# Run it by hand any time: Actions tab -> Supplier Prices -> Run workflow.
+name: Supplier Prices
+
+on:
+  schedule:
+    - cron: "15 9 * * *"     # ~4 AM Central, clear of the KPI nightly run at 8:30 UTC
+  workflow_dispatch:
+    inputs:
+      history_days:
+        description: "How many days of POs to keep (default 731, about two years)"
+        default: "731"
+
+concurrency:
+  group: supplier-prices
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pull_supplier_prices.py
+        env:
+          PYTHONUNBUFFERED: "1"
+          FINALE_API_KEY: ${{ secrets.FINALE_API_KEY }}
+          FINALE_API_SECRET: ${{ secrets.FINALE_API_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FINALE_SUPPLIER_PRICES_REPORT_URL: ${{ vars.FINALE_SUPPLIER_PRICES_REPORT_URL }}
+        run: python pull_supplier_prices.py --history-days "${{ inputs.history_days || '731' }}"
