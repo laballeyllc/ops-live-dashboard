@@ -81,6 +81,17 @@
   .chip.off { opacity: .55; }
   .chip button { min-width: 36px; min-height: 36px; background: none; border: 0; border-radius: 999px; cursor: pointer; font-size: 18px; line-height: 1; color: var(--text-muted); }
   .chip button:hover { color: var(--text); }
+  .good { color: var(--better); }
+  .movers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 860px) { .movers { grid-template-columns: 1fr; } }
+  .movers h3, .jumps h3 { font-size: 13px; font-weight: 600; margin: 0 0 4px; color: var(--text-muted); }
+  .mover { display: flex; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; align-items: center; background: none; border: 0; border-bottom: 1px solid var(--border); color: inherit; text-align: left; cursor: pointer; padding: 6px 4px; font-size: 14px; }
+  .mover:hover { background: var(--panel-raised); }
+  .mover .r { text-align: right; white-space: nowrap; }
+  .linkbtn { background: none; border: 0; padding: 4px 0; color: var(--text); font-weight: 600; text-align: left; cursor: pointer; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+  .linkbtn:hover { text-decoration-color: var(--text); }
+  .check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; font-size: 14px; }
+  .check input { width: 20px; height: 20px; accent-color: var(--better); }
 
   /* ---- summary cards ---- */
   section.block { margin-top: 16px; }
@@ -157,6 +168,10 @@
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6"/></svg></button>
         <div class="pop hidden" id="dest-pop" role="group" aria-label="Destinations"></div>
       </div>
+      <div class="field-wrap" style="flex: 1 1 190px">
+        <label class="lbl" for="cat" id="cat-lbl">Category</label>
+        <select id="cat" class="field"><option value="">All categories</option></select>
+      </div>
     </div>
     <div id="chips" class="chips" aria-label="Chosen SKUs"></div>
     <div id="hint" class="lbl" role="status" aria-live="polite"></div>
@@ -175,6 +190,13 @@
       </div>
       <div class="field-wrap"><label class="lbl" for="from">From</label><input id="from" class="field" type="date" style="width: 160px"></div>
       <div class="field-wrap"><label class="lbl" for="to">To</label><input id="to" class="field" type="date" style="width: 160px"></div>
+      <div class="field-wrap">
+        <span class="lbl" id="cmp-lbl">Compare prices to</span>
+        <div class="seg" id="cmps" role="group" aria-labelledby="cmp-lbl">
+          <button type="button" data-c="prev">Previous period</button>
+          <button type="button" data-c="yoy">Same period last year</button>
+        </div>
+      </div>
     </div>
     <div class="split">
       <div class="field-wrap">
@@ -184,6 +206,14 @@
           <button type="button" data-v="all">All suppliers for the SKU</button>
         </div>
       </div>
+      <div class="field-wrap">
+        <span class="lbl" id="basis-lbl">Price basis</span>
+        <div class="seg" id="basis" role="group" aria-labelledby="basis-lbl">
+          <button type="button" data-b="unit">Unit price</button>
+          <button type="button" data-b="landed">Landed cost</button>
+        </div>
+      </div>
+      <label class="check"><input type="checkbox" id="single"> Single-source SKUs only</label>
       <div class="row" style="align-items: center">
         <span class="lbl" id="gen-hint"></span>
         <button type="button" class="btn" id="gen">
@@ -195,8 +225,27 @@
 
   <section class="block" id="summary" aria-label="Selection summary"></section>
   <section class="block" id="chart" aria-label="Price chart"></section>
+  <section class="block hidden" id="overview" aria-label="Spend and price changes">
+    <div class="panel sum">
+      <div class="sum-head"><h2>Spend and price changes</h2><span class="lbl" id="ov-sub"></span></div>
+      <div class="row" style="gap: 20px; align-items: center">
+        <label class="check">If prices rise <input id="exp-pct" class="field" type="number" min="0" max="100" step="0.5" value="5" style="width: 84px; min-height: 36px"> %</label>
+        <label class="check">Flag price jumps of <input id="alert-pct" class="field" type="number" min="1" max="500" step="1" value="10" style="width: 84px; min-height: 36px"> % or more</label>
+      </div>
+      <div class="cards" id="ov-cards"></div>
+      <div class="movers" id="ov-movers"></div>
+      <div class="jumps" id="ov-jumps"></div>
+    </div>
+  </section>
 
   <section class="panel block" id="table-panel" aria-label="SKUs and suppliers" style="padding: 4px 8px 12px">
+    <div class="row" style="padding: 8px 8px 4px; align-items: center; justify-content: space-between">
+      <div class="seg" id="modes" role="group" aria-label="What the table lists">
+        <button type="button" data-m="skus">SKUs and suppliers</button>
+        <button type="button" data-m="suppliers">Supplier scorecard</button>
+      </div>
+      <span class="lbl" id="mode-note"></span>
+    </div>
     <div class="tbl-wrap"><table id="tbl"><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
     <div class="foot"><span class="lbl" id="count"></span><span class="row" style="gap: 8px; align-items: center"><button type="button" class="btn quiet" id="more">Show more</button><button type="button" class="btn quiet" id="clear-sel">Clear ticks</button></span></div>
   </section>
@@ -222,6 +271,9 @@ const NONE = "(no destination)";
 
 const money = (v) => v == null || isNaN(v) ? "\u2013" : "$" + v.toLocaleString("en-US", { minimumFractionDigits: Math.abs(v) < 0.2 ? 3 : 2, maximumFractionDigits: Math.abs(v) < 0.2 ? 3 : 2 });
 const moneySd = (v) => { if (v == null || isNaN(v)) return "\u2013"; const d = Math.abs(v) < 0.2 ? 4 : Math.abs(v) < 1 ? 3 : 2; return "$" + v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }); };
+const moneyWhole = (v) => v == null || isNaN(v) ? "\u2013" : "$" + Math.round(v).toLocaleString("en-US");
+const signMoney = (v) => v == null || isNaN(v) ? "\u2013" : (v >= 0 ? "+" : "\u2212") + "$" + Math.round(Math.abs(v)).toLocaleString("en-US");
+const NOCAT = "(no category)";
 const pct = (v) => v == null || isNaN(v) ? "\u2013" : v.toFixed(1) + "%";
 const signPct = (v) => v == null || isNaN(v) ? "\u2013" : (v >= 0 ? "+" : "\u2212") + Math.abs(v).toFixed(1) + "%";
 const parts = (iso) => iso.split("-").map(Number);
@@ -235,7 +287,7 @@ const sortStr = (a, b) => String(a).localeCompare(String(b), "en", { numeric: tr
 const median = (a) => { const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; };
 
 function statsOf(rowsByDate) {
-  const p = rowsByDate.map((r) => r.unit_price), n = p.length;
+  const p = rowsByDate.map((r) => r.px), n = p.length;
   const mean = p.reduce((a, b) => a + b, 0) / n;
   const sd = n > 1 ? Math.sqrt(p.reduce((a, b) => a + (b - mean) * (b - mean), 0) / (n - 1)) : null;   // sample std dev
   const first = p[0], latest = p[n - 1];
@@ -249,10 +301,11 @@ const cvCell = (cv) => cv == null ? "\u2013" : (cv >= HIGH_PCT ? '<span class="r
 const db = (typeof supabase !== "undefined") ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 const S = {
   rows: [], loaded: false,
-  q: "", supplier: "", skus: new Set(), dests: new Set(), allDests: [],
+  q: "", supplier: "", skus: new Set(), category: "", single: false, basis: "unit", compare: "prev", dests: new Set(), allDests: [],
   preset: "12m", from: "", to: "",
-  view: "same", chartOn: false, sort: { key: "sku", dir: 1 }, shown: PAGE,
+  view: "same", chartOn: false, sort: { key: "effect", dir: -1 }, shown: PAGE,
   selected: new Set(),
+  listMode: "skus", supSort: { key: "spend", dir: -1 }, expPct: 5, alertPct: 10, chartKind: "time", sales: new Map(),
 };
 let V = null;       // the current derived view (groups, visible rows, selection...)
 
@@ -274,9 +327,23 @@ async function load() {
   try {
     if (!db) throw new Error("The Supabase library did not load. Check the connection and reload.");
     const raw = await fetchAll();
-    S.rows = raw.map((r) => ({ ...r, unit_price: Number(r.unit_price), quantity: r.quantity == null ? null : Number(r.quantity), quantity_received: r.quantity_received == null ? null : Number(r.quantity_received), destination: r.destination || NONE }))
-                .filter((r) => isFinite(r.unit_price) && r.unit_price > 0 && r.order_date);
+    S.rows = raw.map((r) => {
+      const price = Number(r.unit_price), landed = r.landed_cost_per_unit == null ? null : Number(r.landed_cost_per_unit);
+      const ordered = r.quantity == null ? null : Number(r.quantity), received = r.quantity_received == null ? null : Number(r.quantity_received);
+      return { ...r, unit_price: price, landed: landed > 0 ? landed : null, quantity: ordered, quantity_received: received, qty: received > 0 ? received : (ordered || 0),
+               destination: r.destination || NONE, category: r.category || "", px: price };
+    }).filter((r) => isFinite(r.unit_price) && r.unit_price > 0 && r.order_date);
     S.loaded = true;
+    applyBasis();
+    S.sales = new Map();
+    try {      // the sales view is optional: without it the margin cards just don't appear
+      for (let start = 0; ; start += 1000) {
+        const { data, error } = await db.from("supplier_sales_12m").select("*").range(start, start + 999);
+        if (error || !data) break;
+        data.forEach((r) => S.sales.set(r.product_id, { units: Number(r.units_12m), dollars: Number(r.dollars_12m) }));
+        if (data.length < 1000) break;
+      }
+    } catch (e) { /* no sales data */ }
     S.allDests = [...new Set(S.rows.map((r) => r.destination))].sort(sortStr);
     S.dests = new Set(S.allDests);
     fillLists();
@@ -291,15 +358,18 @@ async function load() {
   }
 }
 
+// Landed cost view: the estimate Finale makes (price plus freight and fees). A line with no estimate keeps its unit price.
+function applyBasis() { for (const r of S.rows) r.px = S.basis === "landed" && r.landed ? r.landed : r.unit_price; }
+
 // ---------------------------------------------------------------- dependent filters
 // Search, Supplier, SKU and Destination narrow each other. "Ever" means everything loaded, whatever the date range,
 // so the choices don't shift as you move the dates. The SKU picker is a multi-select: S.skus is the chosen set.
 // A "pair" is one SKU bought from one supplier; Search matches a pair on its SKU, description and supplier name together.
-let IDX = null, SEARCH_TERMS = [], supKey = null, skuKey = null, destKey = null, SKU_VIEW = [], CHIP_VIEW = [];
+let IDX = null, SEARCH_TERMS = [], supKey = null, catKey = null, skuKey = null, destKey = null, SKU_VIEW = [], CHIP_VIEW = [];
 const SKU_LIST_MAX = 200, CHIPS_MAX = 12;
 function buildIndexes() {
-  IDX = { skuSups: new Map(), supSkus: new Map(), skuDesc: new Map(), hay: new Map() };
-  const pairMap = new Map(), descDate = new Map();
+  IDX = { skuSups: new Map(), supSkus: new Map(), skuDesc: new Map(), skuCat: new Map(), hay: new Map() };
+  const pairMap = new Map(), descDate = new Map(), catDate = new Map();
   for (const r of S.rows) {
     if (!IDX.skuSups.has(r.product_id)) IDX.skuSups.set(r.product_id, new Set());
     IDX.skuSups.get(r.product_id).add(r.supplier);
@@ -309,9 +379,13 @@ function buildIndexes() {
     if (!pairMap.has(k)) pairMap.set(k, { key: k, sku: r.product_id, sup: r.supplier, dests: new Set() });
     pairMap.get(k).dests.add(r.destination);
     if (r.description && (!descDate.has(r.product_id) || r.order_date >= descDate.get(r.product_id))) { descDate.set(r.product_id, r.order_date); IDX.skuDesc.set(r.product_id, r.description); }
+    if (r.category && (!catDate.has(r.product_id) || r.order_date >= catDate.get(r.product_id))) { catDate.set(r.product_id, r.order_date); IDX.skuCat.set(r.product_id, r.category); }
   }
+  IDX.rowsByKey = new Map();
+  for (const r of S.rows) { const k = r.product_id + "\u0001" + r.supplier; if (!IDX.rowsByKey.has(k)) IDX.rowsByKey.set(k, []); IDX.rowsByKey.get(k).push(r); }
+  for (const rs of IDX.rowsByKey.values()) rs.sort(byDate);
   IDX.pairs = [...pairMap.values()];
-  for (const p of IDX.pairs) { p.hay = (p.sku + " " + (IDX.skuDesc.get(p.sku) || "") + " " + p.sup).toLowerCase(); IDX.hay.set(p.key, p.hay); }
+  for (const p of IDX.pairs) { p.hay = (p.sku + " " + (IDX.skuDesc.get(p.sku) || "") + " " + p.sup).toLowerCase(); p.cat = IDX.skuCat.get(p.sku) || NOCAT; IDX.hay.set(p.key, p.hay); }
   IDX.allSkus = [...IDX.skuSups.keys()].sort(sortStr);
   IDX.allSups = [...IDX.supSkus.keys()].sort(sortStr);
 }
@@ -319,19 +393,26 @@ const hit = (hay) => SEARCH_TERMS.every((t) => hay.includes(t));
 const supplierSkus = (sup) => IDX.supSkus.get(sup) || new Set();
 const skuText = () => S.skus.size === 0 ? "All SKUs" : S.skus.size === 1 ? [...S.skus][0] : S.skus.size + " SKUs chosen";
 
-// SKUs with at least one pair that matches the Search (and the chosen supplier, if any); null when nothing is typed
-function searchSkuSet() {
-  if (!SEARCH_TERMS.length) return null;
-  const ok = new Set();
-  for (const p of IDX.pairs) if ((!S.supplier || p.sup === S.supplier) && hit(p.hay)) ok.add(p.sku);
-  return ok;
+// The SKUs the other filters are narrowed to: the ones chosen in the SKU picker, or, with none chosen, the SKUs of the rows you've ticked.
+function scopeSkus() {
+  if (S.skus.size) return { set: S.skus, kind: "chosen" };
+  const t = new Set(); for (const k of S.selected) t.add(k.split("\u0001")[0]);
+  return t.size ? { set: t, kind: "ticked" } : null;
 }
-// the SKUs the picker can offer: the chosen supplier's (or everyone's) that also match the Search; chosen ones are added on top so they can be unticked
-function skuPool() {
-  const pool = new Set(S.supplier ? supplierSkus(S.supplier) : IDX.allSkus), ok = searchSkuSet();
-  if (ok) for (const x of [...pool]) if (!ok.has(x)) pool.delete(x);
-  return pool;
+// One rule for every list: a SKU-and-supplier pair "passes" if it is in scope and matches Search, Supplier, Category and Single-source,
+// except for the filter being listed (so a list never narrows itself away).
+function pairPass(p, scope, skip) {
+  if (scope && !scope.has(p.sku)) return false;
+  if (SEARCH_TERMS.length && !hit(p.hay)) return false;
+  if (skip !== "sup" && S.supplier && p.sup !== S.supplier) return false;
+  if (skip !== "cat" && S.category && p.cat !== S.category) return false;
+  if (S.single && IDX.skuSups.get(p.sku).size !== 1) return false;
+  return true;
 }
+const anyFilter = () => SEARCH_TERMS.length > 0 || !!S.supplier || !!S.category || S.single;
+// SKUs that survive the filters (not counting the SKU choice itself)
+function visibleSkuSet() { const ok = new Set(); for (const p of IDX.pairs) if (pairPass(p, null, null)) ok.add(p.sku); return ok; }
+function skuPool() { return anyFilter() ? visibleSkuSet() : new Set(IDX.allSkus); }
 function skuMatches() {
   const pool = skuPool();
   S.skus.forEach((x) => pool.add(x));
@@ -344,7 +425,7 @@ function renderSkuOpts() {
     const d = IDX.skuDesc.get(x) || "", off = have && !have.has(x);
     return '<label><input type="checkbox" data-s="' + i + '"' + (S.skus.has(x) ? " checked" : "") + '><span class="opt"><span class="sku">' + esc(x) + "</span>" + (d ? '<span class="desc">' + esc(d) + "</span>" : "") + (off ? '<span class="desc">' + esc(S.supplier) + " has never supplied this</span>" : "") + "</span></label>";
   }).join("") || '<div class="lbl" style="padding:12px 8px">No SKUs match.</div>';
-  $("sku-all").textContent = (SEARCH_TERMS.length ? "Select all matching" : "Select all") + " (" + all.length + ")";
+  $("sku-all").textContent = (SEARCH_TERMS.length || S.category || S.single ? "Select all matching" : "Select all") + " (" + all.length + ")";
   $("sku-all").disabled = all.length === 0;
   $("sku-more").textContent = all.length > shown.length ? "Showing the first " + shown.length + " of " + all.length + ". Use Search to narrow." : "";
 }
@@ -358,56 +439,56 @@ function renderChips() {
     return '<span class="chip' + (off ? " off" : "") + '"' + (off ? ' title="' + esc(S.supplier) + ' has never supplied this SKU"' : "") + "><span>" + esc(x) + '</span><button type="button" data-rm="' + i + '" aria-label="Remove ' + esc(x) + '">\u00d7</button></span>';
   }).join("") + (list.length > CHIPS_MAX ? '<span class="lbl">+' + (list.length - CHIPS_MAX) + " more</span>" : "") + '<button type="button" class="btn quiet" id="chips-clear">Clear SKUs</button>';
 }
-function destAvail(chosen) {
-  if (!(chosen && chosen.size) && !S.supplier && !SEARCH_TERMS.length) return S.allDests;
+function destAvail(scope) {
+  if (!scope && !anyFilter()) return S.allDests;
   const out = new Set();
-  for (const p of IDX.pairs) {
-    if (chosen && chosen.size && !chosen.has(p.sku)) continue;
-    if (S.supplier && p.sup !== S.supplier) continue;
-    if (SEARCH_TERMS.length && !hit(p.hay)) continue;
-    p.dests.forEach((d) => out.add(d));
-  }
+  for (const p of IDX.pairs) if (pairPass(p, scope, null)) p.dests.forEach((d) => out.add(d));
   return [...out].sort(sortStr);
 }
+// why a list came up empty, in words: "matching 'x' and in Bottles and among single-source SKUs"
+const whyNone = (scope, skipCat) => [SEARCH_TERMS.length ? "matching \u201c" + S.q.trim() + "\u201d" : "", !skipCat && S.category ? "in " + S.category : "", S.single ? "among single-source SKUs" : "", scope ? (scope.kind === "chosen" ? "among the chosen SKUs" : "among the ticked SKUs") : ""].filter(Boolean).join(" and ");
 function refreshDependents() {
   SEARCH_TERMS = S.q.toLowerCase().split(/\s+/).filter(Boolean);
-  const chosen = S.skus.size ? S.skus : null, searching = SEARCH_TERMS.length > 0;
-  // 1. suppliers allowed by the chosen SKUs alone: a supplier who has supplied none of them is cleared, with a note
-  let sups = IDX.allSups;
-  if (chosen) { const u = new Set(); chosen.forEach((x) => (IDX.skuSups.get(x) || []).forEach((y) => u.add(y))); sups = [...u].sort(sortStr); }
+  const sc = scopeSkus(), scope = sc ? sc.set : null, chosen = S.skus.size ? S.skus : null, searching = SEARCH_TERMS.length > 0;
+  // 1. a supplier who has supplied none of the CHOSEN SKUs is cleared, with a note (you picked those SKUs, so the supplier can't apply)
   let note = "";
-  if (S.supplier && !sups.includes(S.supplier)) {
-    note = S.supplier + " has never supplied " + (chosen.size === 1 ? [...chosen][0] : "any of the chosen SKUs") + ", so the supplier filter was cleared.";
-    S.supplier = "";
+  if (S.supplier && chosen) {
+    const ever = new Set(); chosen.forEach((x) => (IDX.skuSups.get(x) || []).forEach((y) => ever.add(y)));
+    if (!ever.has(S.supplier)) { note = S.supplier + " has never supplied " + (chosen.size === 1 ? [...chosen][0] : "any of the chosen SKUs") + ", so the supplier filter was cleared."; S.supplier = ""; }
   }
-  // 2. the Search narrows the list further but never clears a supplier you picked: typing shouldn't undo your choices
-  if (searching) { const u = new Set(); for (const p of IDX.pairs) { if (chosen && !chosen.has(p.sku)) continue; if (hit(p.hay)) u.add(p.sup); } sups = [...u].sort(sortStr); }
-  let extra = "";
-  if (S.supplier && !sups.includes(S.supplier)) {
-    extra = S.supplier;
-    note = S.supplier + " has no purchases matching \u201c" + S.q.trim() + "\u201d" + (chosen ? " among the chosen SKUs" : "") + ". Clear the search or pick another supplier.";
-  }
-  const sk = sups.join("\u0002") + "\u0004" + extra;
-  if (sk !== supKey) { supKey = sk; $("sup").innerHTML = '<option value="">All suppliers</option>' + sups.map((x) => '<option value="' + esc(x) + '">' + esc(x) + "</option>").join("") + (extra ? '<option value="' + esc(extra) + '">' + esc(extra) + " (no matches)</option>" : ""); }
+  // 2. every other narrowing (Search, Category, Single-source, ticked rows) shrinks the lists but never clears what you picked
+  const sups = new Set(), cats = new Set();
+  for (const p of IDX.pairs) { if (pairPass(p, scope, "sup")) sups.add(p.sup); if (pairPass(p, scope, "cat")) cats.add(p.cat); }
+  const supList = [...sups].sort(sortStr), catList = [...cats].sort(sortStr);
+  let extra = "", extraCat = "";
+  if (S.supplier && !sups.has(S.supplier)) { extra = S.supplier; note = S.supplier + " has no purchases " + whyNone(scope) + ". Clear a filter or pick another supplier."; }
+  if (S.category && !cats.has(S.category)) { extraCat = S.category; note = (note ? note + " " : "") + "No purchases in " + S.category + (whyNone(scope, true) ? " " + whyNone(scope, true) : "") + ". Clear a filter or pick another category."; }
+  const sk = supList.join("\u0002") + "\u0004" + extra;
+  if (sk !== supKey) { supKey = sk; $("sup").innerHTML = '<option value="">All suppliers</option>' + supList.map((x) => '<option value="' + esc(x) + '">' + esc(x) + "</option>").join("") + (extra ? '<option value="' + esc(extra) + '">' + esc(extra) + " (no matches)</option>" : ""); }
   $("sup").value = S.supplier;
-  $("sup-lbl").textContent = chosen || searching ? "Supplier \u00b7 " + sups.length + (chosen && !searching ? (chosen.size === 1 ? " for this SKU" : " for the chosen SKUs") : " matching") : "Supplier";
+  const ck = catList.join("\u0002") + "\u0004" + extraCat;
+  if (ck !== catKey) { catKey = ck; $("cat").innerHTML = '<option value="">All categories</option>' + catList.map((x) => '<option value="' + esc(x) + '">' + esc(x) + "</option>").join("") + (extraCat ? '<option value="' + esc(extraCat) + '">' + esc(extraCat) + " (no matches)</option>" : ""); }
+  $("cat").value = S.category;
+  const narrowed = !!scope || searching || !!S.category || S.single, scopeOnly = !!scope && !searching && !S.category && !S.single;
+  $("sup-lbl").textContent = narrowed ? "Supplier \u00b7 " + supList.length + (scopeOnly ? (sc.kind === "chosen" ? (scope.size === 1 ? " for this SKU" : " for the chosen SKUs") : (scope.size === 1 ? " for the ticked SKU" : " for the ticked SKUs")) : " matching") : "Supplier";
   $("skubtn-text").textContent = skuText();
-  $("sku-lbl").textContent = S.supplier || searching ? "SKU \u00b7 " + skuPool().size + (S.supplier && searching ? " from this supplier, matching" : S.supplier ? " from this supplier" : " matching") : "SKU";
-  const ok = S.supplier + "\u0003" + S.q.trim();
+  const poolSize = skuPool().size, others = searching || !!S.category || S.single;
+  $("sku-lbl").textContent = S.supplier || others ? "SKU \u00b7 " + poolSize + (S.supplier && others ? " from this supplier, matching" : S.supplier ? " from this supplier" : " matching") : "SKU";
+  const ok = S.supplier + "\u0003" + S.q.trim() + "\u0003" + S.category + (S.single ? "1" : "0");
   if (ok !== skuKey) { skuKey = ok; renderSkuOpts(); }
   renderChips();
-  const avail = destAvail(chosen), dk = avail.join("\u0002");
+  const avail = destAvail(scope), dk = avail.join("\u0002");
   if (dk !== destKey) { destKey = dk; S.availDests = avail; renderDestPop(); } else $("dest-text").textContent = destLabel();
   $("note").textContent = note;
-  // the one confusing result a single search box can cause: chosen SKUs that the Search hides from the table
+  // the one confusing result the filters can cause: chosen SKUs that they hide from the table
   let hint = "";
-  if (searching && chosen) {
-    const ok = searchSkuSet(), hidden = [...chosen].filter((x) => !ok.has(x)).length;
-    if (hidden) hint = "Search is hiding " + hidden + " of your " + chosen.size + " chosen SKU" + (chosen.size === 1 ? "" : "s") + ". Clear the search to see " + (hidden === 1 ? "it" : "them") + ".";
+  if (chosen && anyFilter()) {
+    const ok2 = visibleSkuSet(), hidden = [...chosen].filter((x) => !ok2.has(x)).length;
+    if (hidden) hint = (S.category || S.single || S.supplier ? "The filters are" : "Search is") + " hiding " + hidden + " of your " + chosen.size + " chosen SKU" + (chosen.size === 1 ? "" : "s") + ". Clear " + (S.category || S.single || S.supplier ? "them" : "the search") + " to see " + (hidden === 1 ? "it" : "them") + ".";
   }
   $("hint").textContent = hint;
 }
-function fillLists() { buildIndexes(); supKey = skuKey = destKey = null; S.availDests = S.allDests; refreshDependents(); }
+function fillLists() { buildIndexes(); supKey = catKey = skuKey = destKey = null; S.availDests = S.allDests; refreshDependents(); }
 
 // ---------------------------------------------------------------- destination picker
 function destLabel() {
@@ -447,6 +528,11 @@ function applyPreset(p) {
 }
 
 // ---------------------------------------------------------------- derive
+function priorWindow() {
+  if (!S.from) return null;                                          // "All time" has nothing before it
+  const to = S.to || todayIso(), len = Math.round((utc(to) - utc(S.from)) / 86400000) + 1;
+  return S.compare === "yoy" ? { from: addMonths(S.from, -12), to: addMonths(to, -12) } : { from: addDays(S.from, -len), to: addDays(S.from, -1) };
+}
 function derive() {
   const inRange = (r) => (!S.from || r.order_date >= S.from) && (!S.to || r.order_date <= S.to) && S.dests.has(r.destination);
   const base = S.rows.filter(inRange);
@@ -456,19 +542,33 @@ function derive() {
     if (!groups.has(k)) groups.set(k, { key: k, sku: r.product_id, supplier: r.supplier, rows: [] });
     groups.get(k).rows.push(r);
   }
+  // the comparison period: the stretch just before the selected dates (or the same dates a year earlier)
+  const pw = priorWindow(), priorMap = new Map();
+  if (pw) for (const r of S.rows) {
+    if (r.order_date < pw.from || r.order_date > pw.to || !S.dests.has(r.destination)) continue;
+    const k = r.product_id + "\u0001" + r.supplier;
+    if (!priorMap.has(k)) priorMap.set(k, { n: 0, sum: 0 });
+    const e = priorMap.get(k); e.n++; e.sum += r.px;
+  }
   for (const g of groups.values()) {
     g.rows.sort(byDate); g.st = statsOf(g.rows);
     const withDesc = [...g.rows].reverse().find((r) => r.description); g.desc = withDesc ? withDesc.description : "";
+    g.qty = g.rows.reduce((a, r) => a + r.qty, 0); g.spend = g.rows.reduce((a, r) => a + r.px * r.qty, 0);
+    g.cat = IDX.skuCat.get(g.sku) || NOCAT; g.sources = IDX.skuSups.get(g.sku).size; g.single = g.sources === 1;
+    const pe = priorMap.get(g.key); g.priorMean = pe ? pe.sum / pe.n : null;
+    g.chg = pe ? (g.st.mean / g.priorMean - 1) * 100 : null; g.effect = pe ? (g.st.mean - g.priorMean) * g.qty : null;
   }
   const skuSet = S.skus.size ? S.skus : null;
   const visible = [...groups.values()].filter((g) => {
     if (S.supplier && g.supplier !== S.supplier) return false;
     if (skuSet && !skuSet.has(g.sku)) return false;
     if (SEARCH_TERMS.length && !hit(IDX.hay.get(g.key) || "")) return false;
+    if (S.category && g.cat !== S.category) return false;
+    if (S.single && !g.single) return false;
     return true;
   });
   const { key, dir } = S.sort;
-  const val = (g) => ({ sku: g.sku, supplier: g.supplier, n: g.st.n, latest: g.st.latest, mean: g.st.mean, hi: g.st.hi, sd: g.st.sd, cv: g.st.cv, change: g.st.change })[key];
+  const val = (g) => ({ sku: g.sku, supplier: g.supplier, n: g.st.n, latest: g.st.latest, mean: g.st.mean, hi: g.st.hi, sd: g.st.sd, cv: g.st.cv, change: g.st.change, chg: g.chg, effect: g.effect, spend: g.spend, sources: g.sources })[key];
   visible.sort((a, b) => {
     const x = val(a), y = val(b);
     if (x == null && y == null) return sortStr(a.sku, b.sku);
@@ -476,8 +576,9 @@ function derive() {
     const c = typeof x === "string" ? sortStr(x, y) : x - y;
     return c ? c * dir : sortStr(a.sku, b.sku);
   });
-  const vis = new Set(visible.map((g) => g.key));
+  const vis = new Set(visible.map((g) => g.key)), tickedBefore = S.selected.size;
   S.selected = new Set([...S.selected].filter((k) => vis.has(k)));
+  S.pruned = S.selected.size !== tickedBefore;       // ticked rows the filters now hide are let go; update() then refreshes the lists once more
   const selGroups = visible.filter((g) => S.selected.has(g.key));
   // "All suppliers for the SKU": the SKU in focus is the only SKU among the ticked rows, or the single chosen SKU
   let focusSku = null;
@@ -516,7 +617,7 @@ function lineChartSvg(series, title) {
   const all = series.flatMap((s) => s.rows);
   let t0 = Math.min(...all.map((r) => utc(r.order_date))), t1 = Math.max(...all.map((r) => utc(r.order_date)));
   if (t0 === t1) { t0 -= 15 * 86400000; t1 += 15 * 86400000; }
-  const { ticks, step } = niceTicks(Math.min(...all.map((r) => r.unit_price)), Math.max(...all.map((r) => r.unit_price)), 5);
+  const { ticks, step } = niceTicks(Math.min(...all.map((r) => r.px)), Math.max(...all.map((r) => r.px)), 5);
   const lo = ticks[0], hi = ticks[ticks.length - 1];
   const X = (iso) => L + (W - L - R) * ((utc(iso) - t0) / (t1 - t0));
   const Y = (p) => T + PH * (1 - (p - lo) / (hi - lo));
@@ -530,9 +631,9 @@ function lineChartSvg(series, title) {
   const ends = [];
   series.forEach((s, i) => {
     const col = COLORS[i % COLORS.length];
-    if (s.rows.length > 1) o.push('<polyline points="' + s.rows.map((r) => X(r.order_date).toFixed(1) + "," + Y(r.unit_price).toFixed(1)).join(" ") + '" fill="none" stroke="' + col + '" stroke-width="2" stroke-linejoin="round"/>');
-    for (const r of s.rows) o.push("<g>" + "<title>" + esc(s.label + " \u00b7 " + fmtDate(r.order_date) + " \u00b7 " + money(r.unit_price) + " \u00b7 PO " + r.po_id) + "</title>" + markerSvg(i, col, X(r.order_date), Y(r.unit_price)) + "</g>");
-    const last = s.rows[s.rows.length - 1]; ends.push({ y: Y(last.unit_price), x: X(last.order_date), label: s.label, i });
+    if (s.rows.length > 1) o.push('<polyline points="' + s.rows.map((r) => X(r.order_date).toFixed(1) + "," + Y(r.px).toFixed(1)).join(" ") + '" fill="none" stroke="' + col + '" stroke-width="2" stroke-linejoin="round"/>');
+    for (const r of s.rows) o.push("<g>" + "<title>" + esc(s.label + " \u00b7 " + fmtDate(r.order_date) + " \u00b7 " + money(r.px) + " \u00b7 PO " + r.po_id) + "</title>" + markerSvg(i, col, X(r.order_date), Y(r.unit_price)) + "</g>");
+    const last = s.rows[s.rows.length - 1]; ends.push({ y: Y(last.px), x: X(last.order_date), label: s.label, i });
   });
   ends.sort((a, b) => a.y - b.y); for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 16) ends[k].y = ends[k - 1].y + 16;
   for (const e of ends) { const col = COLORS[e.i % COLORS.length]; o.push(markerSvg(e.i, col, e.x + 16, e.y, true) + txt((e.x + 28).toFixed(1), (e.y + 4).toFixed(1), e.label.length > 22 ? e.label.slice(0, 21) + "\u2026" : e.label, { fill: "#E8E6E1", size: 13, halo: true })); }
@@ -557,10 +658,141 @@ function rankingSvg(items, title) {
   o.push("</svg>"); return o.join("");
 }
 
+// ---------------------------------------------------------------- overview: spend, price effect, exposure, savings, movers, jumps
+function overviewData() {
+  const vis = V.visible, withPrior = vis.filter((g) => g.effect != null);
+  const bySku = new Map();
+  for (const g of V.groups.values()) { if (!bySku.has(g.sku)) bySku.set(g.sku, []); bySku.get(g.sku).push(g); }
+  let savings = 0, multi = 0; const topSave = [];
+  for (const sku of new Set(vis.map((g) => g.sku))) {
+    const sv = savingsFor(bySku.get(sku) || []); if (!sv) continue;
+    multi++; if (sv.dollars > 0.5) { savings += sv.dollars; topSave.push({ sku, saving: sv.dollars, cheapest: sv.supplier }); }
+  }
+  topSave.sort((a, b) => b.saving - a.saving);
+  const single = vis.filter((g) => g.single);
+  // new price jumps: a purchase in the last 30 days priced at least alertPct above the previous purchase of that SKU from that supplier
+  const since = addDays(todayIso(), -30), jumps = [];
+  for (const rowsAll of IDX.rowsByKey.values()) {
+    const rows = rowsAll.filter((r) => S.dests.has(r.destination));
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i]; if (r.order_date < since) continue;
+      let prev = null; for (let j = i - 1; j >= 0; j--) if (rows[j].order_date < r.order_date) { prev = rows[j]; break; }
+      if (!prev) continue;
+      const p = (r.px / prev.px - 1) * 100;
+      if (p >= S.alertPct) jumps.push({ sku: r.product_id, supplier: r.supplier, date: r.order_date, prev: prev.px, price: r.px, pct: p, dollars: (r.px - prev.px) * r.qty });
+    }
+  }
+  jumps.sort((a, b) => b.dollars - a.dollars);
+  return { spend: sumOf(vis, (g) => g.spend), effect: sumOf(withPrior, (g) => g.effect), nPrior: withPrior.length, nAll: vis.length, exposure: sumOf(vis, exposureOf), savings, multi, topSave: topSave.slice(0, 5),
+           single: single.length, singleSpend: sumOf(single, (g) => g.spend),
+           up: withPrior.filter((g) => g.effect > 0.5).sort((a, b) => b.effect - a.effect).slice(0, 5), down: withPrior.filter((g) => g.effect < -0.5).sort((a, b) => a.effect - b.effect).slice(0, 5),
+           jumps: jumps.slice(0, 8), jumpCount: jumps.length };
+}
+function renderOverview() {
+  const el = $("overview");
+  if (!S.loaded || !S.rows.length) { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden");
+  const o = overviewData(), basis = S.basis === "landed" ? "landed cost" : "unit price";
+  $("ov-sub").textContent = V.visible.length + " SKU and supplier pairs \u00b7 " + (S.from ? fmtDate(S.from) : "all history") + " to " + (S.to ? fmtDate(S.to) : "today");
+  $("ov-cards").innerHTML =
+    stat("Spend", moneyWhole(o.spend), basis + " \u00d7 quantity, in the selected dates") +
+    stat("Price effect vs prior period", S.from ? signMoney(o.effect) : "\u2013", S.from ? o.nPrior + " of " + o.nAll + " pairs have a price in " + (S.compare === "yoy" ? "the same dates last year" : "the period just before") + ". Positive means costs went up." : "Pick a date range to compare.") +
+    stat("If prices rise " + S.expPct + "%", moneyWhole(o.exposure), "a year at the last 12 months' volumes and latest prices") +
+    stat("Saved at the cheapest supplier", moneyWhole(o.savings), o.multi + " SKU" + (o.multi === 1 ? "" : "s") + " bought from 2 or more suppliers. Ignores lead time, minimums and quality.") +
+    stat("Single-source spend", o.spend ? pct(o.singleSpend / o.spend * 100) : "\u2013", moneyWhole(o.singleSpend) + " on " + o.single + " pair" + (o.single === 1 ? "" : "s") + " with one supplier ever");
+  const mv = (g) => '<button type="button" class="mover" data-q="' + esc(g.sku) + '"><span><b>' + esc(g.sku) + '</b> <span class="lbl">' + esc(g.supplier) + '</span></span><span class="r">' + signPct(g.chg) + " \u00b7 " + effCell(g.effect) + "</span></button>";
+  const list = (title, items, fn, empty) => "<div><h3>" + title + "</h3>" + (items.length ? items.map(fn).join("") : '<div class="lbl" style="padding:8px 4px">' + empty + "</div>") + "</div>";
+  $("ov-movers").innerHTML = list("Biggest increases", o.up, mv, S.from ? "None." : "Pick a date range.") + list("Biggest decreases", o.down, mv, S.from ? "None." : "Pick a date range.") +
+    list("Cheaper elsewhere", o.topSave, (t) => '<button type="button" class="mover" data-q="' + esc(t.sku) + '"><span><b>' + esc(t.sku) + '</b> <span class="lbl">cheapest: ' + esc(t.cheapest) + '</span></span><span class="r">' + moneyWhole(t.saving) + "</span></button>", "No SKU here is bought from more than one supplier.");
+  $("ov-jumps").innerHTML = "<h3>Price jumps in the last 30 days (" + S.alertPct + "% or more above the previous purchase)</h3>" + (o.jumps.length ?
+    o.jumps.map((j) => '<button type="button" class="mover" data-q="' + esc(j.sku) + '"><span><b>' + esc(j.sku) + '</b> <span class="lbl">' + esc(j.supplier) + " \u00b7 " + fmtDate(j.date) + '</span></span><span class="r">' + money(j.prev) + " \u2192 " + money(j.price) + " (" + signPct(j.pct) + ") \u00b7 " + signMoney(j.dollars) + "</span></button>").join("") +
+    (o.jumpCount > o.jumps.length ? '<div class="lbl" style="padding:8px 4px">and ' + (o.jumpCount - o.jumps.length) + " more</div>" : "") : '<div class="lbl" style="padding:8px 4px">None.</div>');
+}
+
+// ---------------------------------------------------------------- supplier scorecard
+const SUPCOLS = [["supplier", "Supplier"], ["spend", "Spend"], ["share", "Share of spend"], ["skus", "SKUs"], ["lines", "Purchases"], ["cv", "Typical variation"], ["singleSpend", "Single-source spend"], ["infull", "In full"], ["ontime", "On time"], ["lead", "Lead time"]];
+function supplierRows() {
+  const by = new Map();
+  for (const g of V.visible) { if (!by.has(g.supplier)) by.set(g.supplier, []); by.get(g.supplier).push(g); }
+  const total = sumOf(V.visible, (g) => g.spend);
+  return [...by].map(([supplier, gs]) => {
+    const rows = gs.flatMap((g) => g.rows), cvs = gs.map((g) => g.st.cv).filter((v) => v != null), spend = sumOf(gs, (g) => g.spend);
+    const ordered = rows.filter((r) => r.quantity_received > 0 && r.quantity > 0), full = ordered.filter((r) => r.quantity_received >= r.quantity - 1e-9).length;
+    const dated = rows.filter((r) => r.eta && r.received_date), early = dated.filter((r) => r.received_date <= r.eta).length;
+    const lead = rows.filter((r) => r.received_date).map((r) => (utc(r.received_date) - utc(r.order_date)) / 86400000);
+    return { supplier, spend, share: total ? spend / total * 100 : null, skus: new Set(gs.map((g) => g.sku)).size, lines: sumOf(gs, (g) => g.st.n), cv: median(cvs),
+             singleSpend: sumOf(gs.filter((g) => g.single), (g) => g.spend), infull: ordered.length ? full / ordered.length * 100 : null, infullN: [full, ordered.length],
+             ontime: dated.length ? early / dated.length * 100 : null, ontimeN: [early, dated.length], lead: lead.length ? sumOf(lead, (x) => x) / lead.length : null };
+  });
+}
+function renderSupplierTable() {
+  const rows = supplierRows(), { key, dir } = S.supSort;
+  rows.sort((a, b) => {
+    const x = a[key], y = b[key];
+    if (x == null && y == null) return sortStr(a.supplier, b.supplier);
+    if (x == null) return 1; if (y == null) return -1;
+    const c = typeof x === "string" ? sortStr(x, y) : x - y;
+    return c ? c * dir : sortStr(a.supplier, b.supplier);
+  });
+  V.supRows = rows;
+  $("thead").innerHTML = "<tr>" + SUPCOLS.map(([k, label]) => {
+    const on = S.supSort.key === k, num = k !== "supplier";
+    return '<th scope="col" class="' + (num ? "n" : "") + '"' + (on ? ' aria-sort="' + (S.supSort.dir > 0 ? "ascending" : "descending") + '"' : "") + '><button type="button" data-ssort="' + k + '">' + esc(label) + (on ? (S.supSort.dir > 0 ? " \u25b2" : " \u25bc") : "") + "</button></th>";
+  }).join("") + "</tr>";
+  const rate = (v, n) => v == null ? "\u2013" : pct(v) + '<div class="desc">' + n[0] + " of " + n[1] + " lines</div>";
+  $("tbody").innerHTML = rows.map((r, i) => "<tr><td><button type=\"button\" class=\"linkbtn\" data-sup=\"" + i + "\">" + esc(r.supplier) + "</button></td><td class=\"n\">" + moneyWhole(r.spend) + '</td><td class="n">' + pct(r.share) + '</td><td class="n">' + r.skus + '</td><td class="n">' + r.lines + '</td><td class="n">' + cvCell(r.cv) + '</td><td class="n">' + moneyWhole(r.singleSpend) + '</td><td class="n">' + rate(r.infull, r.infullN) + '</td><td class="n">' + rate(r.ontime, r.ontimeN) + '</td><td class="n">' + (r.lead == null ? "\u2013" : r.lead.toFixed(1) + " days") + "</td></tr>").join("") ||
+    '<tr><td colspan="10" class="lbl" style="padding:20px 10px">No rows match these filters.</td></tr>';
+  $("count").textContent = rows.length ? rows.length + " supplier" + (rows.length === 1 ? "" : "s") + ". In full = received at least what was ordered. On time = received on or before the ETA. Lead time = order date to received date." : "";
+  $("more").classList.add("hidden"); $("clear-sel").classList.add("hidden");
+  $("mode-note").textContent = "Respects the search, filters, dates and destinations above.";
+}
+
+// ---------------------------------------------------------------- price vs order size
+function scatterSvg(series, title) {
+  const W = 1060, L = 64, R = 40, T = 14, B = 52, PH = 320, legendH = series.length * 22 + 14, H = T + PH + B + legendH;
+  const pts = series.flatMap((s) => s.rows).filter((r) => r.qty > 0);
+  if (!pts.length) return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' 80" role="img" aria-label="' + esc(title) + '"><rect width="' + W + '" height="80" fill="#22272C"/>' + txt(20, 44, "No quantities are recorded for these purchase lines.", { fill: "#E8E6E1", size: 14 }) + "</svg>";
+  const qs = pts.map((r) => r.qty), qmin = Math.min(...qs), qmax = Math.max(...qs), logX = qmax / qmin > 20;
+  const { ticks, step } = niceTicks(Math.min(...pts.map((r) => r.px)), Math.max(...pts.map((r) => r.px)), 5), lo = ticks[0], hi = ticks[ticks.length - 1];
+  const xTicks = []; let X;
+  if (logX) { const a = Math.floor(Math.log10(qmin)), b = Math.ceil(Math.log10(qmax)); X = (q) => L + (W - L - R) * ((Math.log10(q) - a) / ((b - a) || 1)); for (let e = a; e <= b; e++) xTicks.push(Math.pow(10, e)); }
+  else { const xt = niceTicks(0, qmax, 6), x1 = xt.ticks[xt.ticks.length - 1]; X = (q) => L + (W - L - R) * (q / x1); xt.ticks.forEach((v) => xTicks.push(v)); }
+  const Y = (p) => T + PH * (1 - (p - lo) / (hi - lo));
+  const o = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + esc(title) + '"><rect width="' + W + '" height="' + H + '" fill="#22272C"/>'];
+  for (const v of ticks) { const y = Y(v); o.push('<line x1="' + L + '" y1="' + y.toFixed(1) + '" x2="' + (W - R) + '" y2="' + y.toFixed(1) + '" stroke="#2E343A"/>' + txt(L - 10, (y + 4).toFixed(1), tickFmt(v, step), { anchor: "end" })); }
+  for (const v of xTicks) { const x = X(v); if (x < L - 1 || x > W - R + 1) continue; o.push('<line x1="' + x.toFixed(1) + '" y1="' + (T + PH) + '" x2="' + x.toFixed(1) + '" y2="' + (T + PH + 5) + '" stroke="#9AA0A6"/>' + txt(x.toFixed(1), T + PH + 20, v.toLocaleString("en-US"), { anchor: "middle" })); }
+  o.push(txt((L + W - R) / 2, T + PH + 42, "Quantity on the order line" + (logX ? " (log scale)" : ""), { anchor: "middle", size: 12 }));
+  series.forEach((s, i) => { const col = COLORS[i % COLORS.length]; for (const r of s.rows) if (r.qty > 0) o.push("<g><title>" + esc(s.label + " \u00b7 " + fmtDate(r.order_date) + " \u00b7 " + Math.round(r.qty).toLocaleString("en-US") + " \u00d7 " + money(r.px) + " \u00b7 PO " + r.po_id) + "</title>" + markerSvg(i, col, X(r.qty), Y(r.px)) + "</g>"); });
+  series.forEach((s, i) => { const y = T + PH + B + 12 + i * 22, col = COLORS[i % COLORS.length], q = s.rows.filter((r) => r.qty > 0); o.push(markerSvg(i, col, L + 6, y - 4, true) + txt(L + 22, y, s.label + "   " + s.st.n + " purchase" + (s.st.n === 1 ? "" : "s") + " \u00b7 average order " + Math.round(q.length ? sumOf(q, (r) => r.qty) / q.length : 0).toLocaleString("en-US") + " \u00b7 average price " + money(s.st.mean), { fill: "#E8E6E1", size: 13 })); });
+  o.push("</svg>"); return o.join("");
+}
+
 // ---------------------------------------------------------------- render: summary, chart, table
 const stat = (k, v, s) => '<div class="stat"><div class="k">' + k + '</div><div class="v">' + v + '</div><div class="s">' + (s || "") + "</div></div>";
 const marker = (i) => '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">' + markerSvg(i, COLORS[i % COLORS.length], 8, 8, true) + "</svg>";
 
+// ---------------------------------------------------------------- spend, exposure, savings, margin
+const sumOf = (a, f) => a.reduce((x, y) => x + f(y), 0);
+const pairRows = (g) => (IDX.rowsByKey.get(g.key) || []).filter((r) => S.dests.has(r.destination));
+// a year of buying at the last 12 months' volumes and the latest price, times the "if prices rise" percentage
+function exposureOf(g) {
+  const rows = pairRows(g); if (!rows.length) return 0;
+  const t12 = addMonths(todayIso(), -12);
+  return rows[rows.length - 1].px * rows.filter((r) => r.order_date >= t12).reduce((a, r) => a + r.qty, 0) * S.expPct / 100;
+}
+// what the purchases of one SKU would have cost less had every line gone at the cheapest supplier's average price
+function savingsFor(gs) {
+  if (gs.length < 2) return null;
+  const ref = Math.min(...gs.map((g) => g.st.mean));
+  return { ref, supplier: gs.find((g) => g.st.mean === ref).supplier, dollars: sumOf(gs, (g) => sumOf(g.rows, (r) => Math.max(0, r.px - ref) * r.qty)) };
+}
+function marginCards(sku, cost) {
+  const sl = S.sales.get(sku);
+  if (!sl || !(sl.units > 0) || !(sl.dollars > 0)) return "";
+  const sell = sl.dollars / sl.units, m = (sell - cost) / sell * 100, x = S.expPct / 100, m2 = (sell - cost * (1 + x)) / sell * 100, hit = sl.units * cost * x;
+  return stat("Resale margin", pct(m), "sells at " + money(sell) + " (" + Math.round(sl.units).toLocaleString("en-US") + " units, last 12 months) against " + money(cost)) +
+         stat("Margin if cost rises " + S.expPct + "%", pct(m2), "profit down about " + moneyWhole(hit) + " a year");
+}
 function pooled(groups) { const rows = groups.flatMap((g) => g.rows).sort(byDate); return statsOf(rows); }
 
 function renderSummary() {
@@ -570,12 +802,14 @@ function renderSummary() {
     if (!V.focusSku) { el.innerHTML = '<div class="panel sum"><div class="lbl">' + (S.skus.size === 1 ? "No purchases of " + esc([...S.skus][0]) + " in the selected date range and destinations." : "Choose one SKU in the SKU picker, or tick one SKU\u2019s rows below, to compare every supplier we buy it from." + (S.skus.size > 1 ? " " + S.skus.size + " SKUs are chosen." : "")) + '</div></div>'; return; }
     const gs = V.focusGroups, p = pooled(gs), desc = gs.map((g) => g.desc).find(Boolean) || "";
     const byLatest = [...gs].filter((g) => g.st.latest != null).sort((a, b) => a.st.latest - b.st.latest), cheap = byLatest[0], dear = byLatest[byLatest.length - 1];
-    const gap = gs.length > 1 ? (dear.st.latest / cheap.st.latest - 1) * 100 : null;
+    const gap = gs.length > 1 ? (dear.st.latest / cheap.st.latest - 1) * 100 : null, sv = savingsFor(gs);
     const rowsHtml = gs.map((g, i) => '<tr><td><span class="mk">' + marker(i) + esc(g.supplier) + '</span></td><td class="n">' + g.st.n + '</td><td class="n">' + money(g.st.latest) + '</td><td class="n">' + money(g.st.mean) + '</td><td class="n">' + money(g.st.lo) + " \u2013 " + money(g.st.hi) + '</td><td class="n">' + moneySd(g.st.sd) + '</td><td class="n">' + cvCell(g.st.cv) + '</td><td class="n">' + signPct(g.st.change) + '</td><td class="n">' + fmtDate(g.st.lastDate) + "</td></tr>").join("") +
       '<tr class="sel"><td><strong>All suppliers</strong></td><td class="n">' + p.n + '</td><td class="n">\u2013</td><td class="n">' + money(p.mean) + '</td><td class="n">' + money(p.lo) + " \u2013 " + money(p.hi) + '</td><td class="n">' + moneySd(p.sd) + '</td><td class="n">' + cvCell(p.cv) + '</td><td class="n">\u2013</td><td class="n">' + fmtDate(p.lastDate) + "</td></tr>";
     el.innerHTML = '<div class="panel sum"><div class="sum-head"><h2>' + esc(V.focusSku) + (desc ? ": " + esc(desc) : "") + '</h2><span class="lbl">' + gs.length + " supplier" + (gs.length === 1 ? "" : "s") + " \u00b7 " + p.n + " purchase" + (p.n === 1 ? "" : "s") + " in range</span></div>" +
       '<div class="cards">' + stat("Standard deviation", moneySd(p.sd), "all suppliers pooled") + stat("Variation", pct(p.cv), "std dev \u00f7 average price") + stat("Average price", money(p.mean), "per unit, all suppliers") + stat("Low \u2013 high", money(p.lo) + " \u2013 " + money(p.hi), "spread " + pct((p.hi / p.lo - 1) * 100)) +
-      stat("Latest price gap", gap == null ? "\u2013" : "+" + gap.toFixed(1) + "%", gap == null ? "only one supplier" : esc(dear.supplier) + " " + money(dear.st.latest) + " vs " + esc(cheap.supplier) + " " + money(cheap.st.latest)) + stat("Suppliers", String(gs.length), gs.map((g) => esc(g.supplier)).join(", ")) + "</div></div>" +
+      stat("Latest price gap", gap == null ? "\u2013" : "+" + gap.toFixed(1) + "%", gap == null ? "only one supplier" : esc(dear.supplier) + " " + money(dear.st.latest) + " vs " + esc(cheap.supplier) + " " + money(cheap.st.latest)) + stat("Suppliers", String(gs.length), gs.map((g) => esc(g.supplier)).join(", ")) +
+      stat("Spend", moneyWhole(sumOf(gs, (g) => g.spend)), "on this SKU in the selected dates") + (sv ? stat("Saved at the cheapest supplier", moneyWhole(sv.dollars), "had every line gone to " + esc(sv.supplier) + " at its average " + money(sv.ref)) : "") +
+      marginCards(V.focusSku, gs.flatMap((g) => g.rows).sort(byDate).pop().px) + "</div></div>" +
       '<div class="panel block" style="padding:4px 8px 8px"><div class="tbl-wrap"><table><thead><tr><th>Supplier</th><th class="n">Purchases</th><th class="n">Latest</th><th class="n">Average</th><th class="n">Low \u2013 high</th><th class="n">Std dev</th><th class="n">Variation</th><th class="n">First \u2192 latest</th><th class="n">Last purchase</th></tr></thead><tbody>' + rowsHtml + "</tbody></table></div></div>";
     return;
   }
@@ -585,7 +819,9 @@ function renderSummary() {
     const g = sg[0], s = g.st;
     el.innerHTML = '<div class="panel sum"><div class="sum-head"><h2>Selection: ' + esc(g.sku) + ", " + esc(g.supplier) + '</h2><span class="lbl">1 row selected \u00b7 ' + s.n + " purchase" + (s.n === 1 ? "" : "s") + " in range</span></div><div class=\"cards\">" +
       stat("Standard deviation", moneySd(s.sd), s.sd == null ? "needs 2 or more purchases" : "sample, across the purchases") + stat("Variation", pct(s.cv), "std dev \u00f7 average price") + stat("Average price", money(s.mean), "per unit") + stat("Low \u2013 high", money(s.lo) + " \u2013 " + money(s.hi), "spread " + pct((s.hi / s.lo - 1) * 100)) +
-      stat("First \u2192 latest", signPct(s.change), money(s.first) + " \u2192 " + money(s.latest)) + stat("Last purchase", fmtDate(s.lastDate), esc(g.supplier)) + "</div></div>";
+      stat("First \u2192 latest", signPct(s.change), money(s.first) + " \u2192 " + money(s.latest)) + stat("Last purchase", fmtDate(s.lastDate), esc(g.supplier)) +
+      stat("Spend", moneyWhole(g.spend), Math.round(g.qty).toLocaleString("en-US") + " units in the selected dates") + stat("Vs prior period", g.chg == null ? "\u2013" : signPct(g.chg), g.effect == null ? "no purchases in the earlier period" : signMoney(g.effect) + " on this period's volume") +
+      stat("If the price rises " + S.expPct + "%", moneyWhole(exposureOf(g)), "a year at the last 12 months' volumes") + marginCards(g.sku, s.latest) + "</div></div>";
     return;
   }
   const withCv = sg.filter((g) => g.st.cv != null), top = [...withCv].sort((a, b) => b.st.cv - a.st.cv)[0], med = median(withCv.map((g) => g.st.cv));
@@ -594,7 +830,8 @@ function renderSummary() {
   el.innerHTML = '<div class="panel sum"><div class="sum-head"><h2>Selection: ' + sg.length + ' rows</h2><span class="lbl">Ticked in the table \u00b7 ' + esc(S.from ? fmtDate(S.from) : "start") + " to " + esc(S.to ? fmtDate(S.to) : "today") + "</span></div><div class=\"cards\">" +
     stat("Rows selected", String(sg.length), "of " + V.visible.length + " shown") + (p ? stat("Standard deviation", moneySd(p.sd), "the ticked suppliers pooled") + stat("Variation", pct(p.cv), "std dev \u00f7 average price") : "") +
     stat("Most volatile", top ? pct(top.st.cv) : "\u2013", top ? esc(top.sku) + ", " + esc(top.supplier) : "needs 2 or more purchases") + stat("Median variation", pct(med), "across the selected rows") + stat("Rows at " + WATCH_PCT + "% or more", withCv.filter((g) => g.st.cv >= WATCH_PCT).length + " of " + withCv.length, "flagged Watch or High") +
-    stat("Largest increase", big ? signPct(big.st.change) : "\u2013", big ? esc(big.sku) + ", " + esc(big.supplier) : "") + "</div></div>";
+    stat("Largest increase", big ? signPct(big.st.change) : "\u2013", big ? esc(big.sku) + ", " + esc(big.supplier) : "") +
+    stat("Spend", moneyWhole(sumOf(sg, (g) => g.spend)), "on the selected rows") + stat("Price effect vs prior", sg.some((g) => g.effect != null) ? signMoney(sumOf(sg.filter((g) => g.effect != null), (g) => g.effect)) : "\u2013", "across the rows with an earlier price") + "</div></div>";
 }
 
 // what the chart will draw right now, or why it can't
@@ -623,19 +860,30 @@ function renderChart() {
   $("gen-text").textContent = S.chartOn ? "Hide chart" : "Generate chart";
   if (!S.chartOn) { el.innerHTML = ""; return; }
   if (plan.err) { el.innerHTML = '<div class="panel chart-panel"><div class="lbl">' + esc(plan.err) + "</div></div>"; return; }
-  const svg = plan.mode === "lines" ? lineChartSvg(plan.series, plan.title) : rankingSvg(plan.items, plan.title);
-  el.innerHTML = '<div class="panel chart-panel"><div class="chart-head"><h2>' + esc(plan.title) + '</h2><span class="lbl">' + esc(plan.subtitle) + (plan.note ? " " + esc(plan.note) : "") + '</span></div><div class="chart-box" id="chart-box">' + svg + '</div><div class="chart-actions"><button type="button" class="btn quiet" id="dl-img">Download chart image</button><button type="button" class="btn quiet" id="dl-csv">Download data (CSV)</button></div></div>';
+  const size = plan.mode === "lines" && S.chartKind === "size";
+  const title = size ? (S.view === "all" ? "Price paid per unit for " + V.focusSku + ", by order size" : "Price paid per unit by order size") : plan.title;
+  const subtitle = size ? "Each marker is one purchase order line; bigger orders sit further right." : plan.subtitle;
+  const svg = plan.mode === "lines" ? (size ? scatterSvg(plan.series, title) : lineChartSvg(plan.series, title)) : rankingSvg(plan.items, plan.title);
+  const kinds = plan.mode === "lines" ? '<div class="seg" id="ckinds" role="group" aria-label="Chart type"><button type="button" data-k="time" aria-pressed="' + (!size) + '">Price over time</button><button type="button" data-k="size" aria-pressed="' + size + '">Price vs order size</button></div>' : "";
+  el.innerHTML = '<div class="panel chart-panel"><div class="chart-head"><h2>' + esc(title) + '</h2><span class="lbl">' + esc(subtitle) + (plan.note ? " " + esc(plan.note) : "") + "</span>" + kinds + '</div><div class="chart-box" id="chart-box">' + svg + '</div><div class="chart-actions"><button type="button" class="btn quiet" id="dl-img">Download chart image</button><button type="button" class="btn quiet" id="dl-csv">Download data (CSV)</button></div></div>';
   $("dl-img").onclick = () => downloadPng($("chart-box").querySelector("svg"), "supplier-pricing-chart");
   $("dl-csv").onclick = () => downloadCsv(plan);
 }
 
-const COLS = [["sku", "SKU"], ["supplier", "Supplier"], ["n", "Purchases"], ["latest", "Latest"], ["mean", "Average"], ["hi", "Low \u2013 high"], ["sd", "Std dev"], ["cv", "Variation"], ["change", "First \u2192 latest"]];
+const COLS = [["sku", "SKU"], ["supplier", "Supplier"], ["n", "Purchases"], ["latest", "Latest"], ["mean", "Average"], ["hi", "Low \u2013 high"], ["sd", "Std dev"], ["cv", "Variation"], ["chg", "Vs prior period"], ["effect", "Price effect"], ["spend", "Spend"], ["change", "First \u2192 latest"]];
+const effCell = (v) => v == null ? "\u2013" : v > 0.5 ? '<span class="amber">' + signMoney(v) + "</span>" : v < -0.5 ? '<span class="good">' + signMoney(v) + "</span>" : "$0";
 function spark(g, col) {
-  const p = g.rows.map((r) => r.unit_price), lo = Math.min(...p), hi = Math.max(...p), span = hi - lo || 1;
+  const p = g.rows.map((r) => r.px), lo = Math.min(...p), hi = Math.max(...p), span = hi - lo || 1;
   const pts = p.map((v, i) => (2 + 68 * i / Math.max(1, p.length - 1)).toFixed(1) + "," + (20 - 16 * (v - lo) / span).toFixed(1)).join(" ");
   return '<svg width="72" height="24" viewBox="0 0 72 24" role="img" aria-label="Price trend for ' + esc(g.sku) + ", " + esc(g.supplier) + '">' + (p.length > 1 ? '<polyline points="' + pts + '" fill="none" stroke="' + col + '" stroke-width="1.6" stroke-linejoin="round"/>' : '<circle cx="36" cy="12" r="3" fill="' + col + '"/>') + "</svg>";
 }
 function renderTable() {
+  document.querySelectorAll("#modes button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.m === S.listMode ? "true" : "false"));
+  if (S.listMode === "suppliers") renderSupplierTable(); else renderSkuTable();
+  $("table-panel").classList.toggle("hidden", !S.loaded || !S.rows.length);
+}
+function renderSkuTable() {
+  $("mode-note").textContent = "";
   const shown = V.visible.slice(0, S.shown);
   const allTicked = shown.length > 0 && shown.every((g) => S.selected.has(g.key));
   $("thead").innerHTML = "<tr><th><input type=\"checkbox\" id=\"tick-all\" aria-label=\"Tick all rows shown\"" + (allTicked ? " checked" : "") + "></th>" + COLS.map(([k, label]) => {
@@ -644,8 +892,8 @@ function renderTable() {
   }).join("") + "<th scope=\"col\">Trend</th></tr>";
   $("tbody").innerHTML = shown.map((g, i) => {
     const s = g.st, sel = S.selected.has(g.key), col = s.cv != null && s.cv >= HIGH_PCT ? "#C1594A" : s.cv != null && s.cv >= WATCH_PCT ? "#D9A441" : "#4FB0A5";
-    return '<tr' + (sel ? ' class="sel"' : "") + '><td><input type="checkbox" data-i="' + i + '"' + (sel ? " checked" : "") + ' aria-label="Select ' + esc(g.sku) + ", " + esc(g.supplier) + '"></td><td><div class="sku">' + esc(g.sku) + '</div><div class="desc">' + esc(g.desc) + "</div></td><td>" + esc(g.supplier) + '</td><td class="n">' + s.n + '</td><td class="n">' + money(s.latest) + '</td><td class="n">' + money(s.mean) + '</td><td class="n">' + money(s.lo) + " \u2013 " + money(s.hi) + '</td><td class="n">' + moneySd(s.sd) + '</td><td class="n">' + cvCell(s.cv) + '</td><td class="n">' + signPct(s.change) + "</td><td>" + spark(g, col) + "</td></tr>";
-  }).join("") || '<tr><td colspan="11" class="lbl" style="padding:20px 10px">' + (S.rows.length ? "No rows match these filters." : "") + "</td></tr>";
+    return '<tr' + (sel ? ' class="sel"' : "") + '><td><input type="checkbox" data-i="' + i + '"' + (sel ? " checked" : "") + ' aria-label="Select ' + esc(g.sku) + ", " + esc(g.supplier) + '"></td><td><div class="sku">' + esc(g.sku) + '</div><div class="desc">' + esc(g.desc) + "</div>" + (g.single ? '<div class="tag amber">Single source</div>' : "") + "</td><td>" + esc(g.supplier) + '</td><td class="n">' + s.n + '</td><td class="n">' + money(s.latest) + '</td><td class="n">' + money(s.mean) + '</td><td class="n">' + money(s.lo) + " \u2013 " + money(s.hi) + '</td><td class="n">' + moneySd(s.sd) + '</td><td class="n">' + cvCell(s.cv) + '</td><td class="n">' + signPct(g.chg) + '</td><td class="n">' + effCell(g.effect) + '</td><td class="n">' + moneyWhole(g.spend) + '</td><td class="n">' + signPct(s.change) + "</td><td>" + spark(g, col) + "</td></tr>";
+  }).join("") || '<tr><td colspan="14" class="lbl" style="padding:20px 10px">' + (S.rows.length ? "No rows match these filters." : "") + "</td></tr>";
   $("count").textContent = V.visible.length ? "Showing 1\u2013" + shown.length + " of " + V.visible.length + " SKU and supplier pairs (" + V.base.length + " purchase lines in range)." : "";
   $("more").classList.toggle("hidden", V.visible.length <= S.shown);
   $("clear-sel").classList.toggle("hidden", !S.selected.size);
@@ -658,6 +906,7 @@ function focusSelector() {
   if (!a || !a.closest || !a.closest("#thead, #tbody")) return null;
   if (a.id) return "#" + a.id;
   if (a.dataset && a.dataset.sort) return '#thead [data-sort="' + a.dataset.sort + '"]';
+  if (a.dataset && a.dataset.ssort) return '#thead [data-ssort="' + a.dataset.ssort + '"]';
   if (a.dataset && a.dataset.i != null) return '#tbody [data-i="' + a.dataset.i + '"]';
   return null;
 }
@@ -665,10 +914,15 @@ function update() {
   if (!S.loaded) return;
   const keep = focusSelector();
   refreshDependents();
-  derive(); renderSummary(); renderChart(); renderTable();
+  derive();
+  // the lists were built from ticks that the filters have just let go of, so build them again
+  if (S.pruned) { refreshDependents(); derive(); }
+  renderSummary(); renderChart(); renderOverview(); renderTable();
   if (keep) { const n = document.querySelector(keep); if (n) n.focus(); }
   $("dest-text").textContent = destLabel();
   document.querySelectorAll("#views button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === S.view ? "true" : "false"));
+  document.querySelectorAll("#basis button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.b === S.basis ? "true" : "false"));
+  document.querySelectorAll("#cmps button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.c === S.compare ? "true" : "false"));
 }
 
 // ---------------------------------------------------------------- downloads
@@ -677,8 +931,8 @@ const csvCell = (v) => { let s = v == null ? "" : String(v); if (/^[=+\-@\t\r]/.
 function downloadCsv(plan) {
   const lines = [];
   if (plan.mode === "lines") {
-    lines.push(["SKU", "Description", "Supplier", "Destination", "PO", "Order date", "Unit price", "Quantity ordered", "Quantity received"]);
-    for (const s of plan.series) for (const r of s.rows) lines.push([r.product_id, r.description || "", r.supplier, r.destination === NONE ? "" : r.destination, r.po_id, r.order_date, r.unit_price, r.quantity, r.quantity_received]);
+    lines.push(["SKU", "Description", "Supplier", "Destination", "PO", "Order date", "Unit price", "Landed cost per unit (estimate)", "Price used in this view", "Quantity ordered", "Quantity received"]);
+    for (const s of plan.series) for (const r of s.rows) lines.push([r.product_id, r.description || "", r.supplier, r.destination === NONE ? "" : r.destination, r.po_id, r.order_date, r.unit_price, r.landed, r.px, r.quantity, r.quantity_received]);
   } else {
     lines.push(["SKU", "Description", "Supplier", "Purchases", "Latest", "Average", "Low", "High", "Std dev", "Variation %", "First to latest %"]);
     for (const g of plan.all) lines.push([g.sku, g.desc, g.supplier, g.st.n, g.st.latest, g.st.mean, g.st.lo, g.st.hi, g.st.sd, g.st.cv, g.st.change]);
@@ -714,6 +968,23 @@ $("chips").addEventListener("click", (e) => {
 $("presets").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.p === "custom") { S.preset = "custom"; document.querySelectorAll("#presets button").forEach((x) => x.setAttribute("aria-pressed", x.dataset.p === "custom" ? "true" : "false")); } else applyPreset(b.dataset.p); S.shown = PAGE; update(); });
 const onDates = () => { S.from = $("from").value; S.to = $("to").value; S.preset = "custom"; document.querySelectorAll("#presets button").forEach((x) => x.setAttribute("aria-pressed", x.dataset.p === "custom" ? "true" : "false")); S.shown = PAGE; update(); };
 $("from").addEventListener("change", onDates); $("to").addEventListener("change", onDates);
+$("cat").addEventListener("change", (e) => { S.category = e.target.value; S.shown = PAGE; update(); });
+$("single").addEventListener("change", (e) => { S.single = e.target.checked; S.shown = PAGE; update(); });
+$("basis").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.basis = b.dataset.b; applyBasis(); update(); });
+$("cmps").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.compare = b.dataset.c; update(); });
+$("modes").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.listMode = b.dataset.m; update(); });
+$("exp-pct").addEventListener("input", (e) => { const v = Number(e.target.value); S.expPct = isFinite(v) && v >= 0 ? v : 0; update(); });
+$("alert-pct").addEventListener("input", (e) => { const v = Number(e.target.value); S.alertPct = isFinite(v) && v > 0 ? v : 10; update(); });
+$("overview").addEventListener("click", (e) => {                       // a mover or a price jump: show just that SKU in the table
+  const b = e.target.closest("button[data-q]"); if (!b) return;
+  S.q = b.dataset.q; $("q").value = S.q; S.skus = new Set(); S.listMode = "skus"; S.shown = PAGE; update();
+  const t = $("table-panel"); if (t.scrollIntoView) t.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+$("chart").addEventListener("click", (e) => {
+  const b = e.target.closest("#ckinds button"); if (!b) return;
+  S.chartKind = b.dataset.k; update(); const nb = document.querySelector('#ckinds [data-k="' + b.dataset.k + '"]'); if (nb) nb.focus();
+});
+$("tbody").addEventListener("click", (e) => { const b = e.target.closest("button[data-sup]"); if (!b || !V.supRows) return; S.supplier = V.supRows[Number(b.dataset.sup)].supplier; S.listMode = "skus"; S.shown = PAGE; update(); });
 $("views").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; S.view = b.dataset.v; update(); });
 $("gen").addEventListener("click", () => { S.chartOn = !S.chartOn; update(); if (S.chartOn) { const el = $("chart"); if (el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "nearest" }); } });
 $("dest").addEventListener("click", () => { const open = $("dest-pop").classList.contains("hidden"); if (open) setSkuOpen(false); setDestOpen(open); });
@@ -731,6 +1002,8 @@ document.addEventListener("keydown", (e) => {
   if (!$("sku-pop").classList.contains("hidden")) { setSkuOpen(false); $("skubtn").focus(); }
 });
 $("thead").addEventListener("click", (e) => {
+  const sb = e.target.closest("button[data-ssort]");
+  if (sb) { const k = sb.dataset.ssort; S.supSort = S.supSort.key === k ? { key: k, dir: -S.supSort.dir } : { key: k, dir: k === "supplier" ? 1 : -1 }; update(); return; }
   const b = e.target.closest("button[data-sort]");
   if (b) { const k = b.dataset.sort; S.sort = S.sort.key === k ? { key: k, dir: -S.sort.dir } : { key: k, dir: ["sku", "supplier"].includes(k) ? 1 : -1 }; update(); return; }
   if (e.target.id === "tick-all") { const shown = V.visible.slice(0, S.shown); if (e.target.checked) shown.forEach((g) => S.selected.add(g.key)); else shown.forEach((g) => S.selected.delete(g.key)); update(); }

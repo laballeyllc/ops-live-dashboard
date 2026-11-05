@@ -43,4 +43,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FINALE_SUPPLIER_PRICES_REPORT_URL: ${{ vars.FINALE_SUPPLIER_PRICES_REPORT_URL }}
+          # optional: alert settings. Leave unset and alerts are only written to this run's log.
+          ALERT_PCT: ${{ vars.SUPPLIER_PRICE_ALERT_PCT }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: python pull_supplier_prices.py --history-days "${{ inputs.history_days || '731' }}"

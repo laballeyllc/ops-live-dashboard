@@ -30,9 +30,12 @@ lives here, so changes to Ops Live or the KPI sync can't break this pull.
 import argparse
 import csv
 import hashlib
+import json
+import os
 import re
 import sys
 import traceback
+import urllib.request
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 
@@ -51,6 +54,7 @@ COMPLETED_STATUSES = {"completed", "complete"}
 # If a run would delete more than this share of what is already stored, it
 # stops instead: a bad or half-loaded report must never empty the table.
 MAX_DELETE_SHARE = 0.5
+ALERT_PCT = 10.0             # a new line priced this much (or more) above the previous purchase is flagged
 
 DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%b %d, %Y", "%B %d, %Y", "%d %b %Y")
 
@@ -63,11 +67,20 @@ def norm_key(k) -> str:
     return re.sub(r"\s+", " ", str(k)).strip().lower()
 
 
+def _word_ok(word: str, header: str) -> bool:
+    if word.startswith("!"):
+        return word[1:] not in header
+    if word.startswith("="):
+        return header == word[1:]
+    return word in header
+
+
 def resolve_columns(rows: list, spec: dict) -> dict:
     """Finds each needed column by keywords instead of exact names (Finale
     headers vary a little). spec: field -> alternatives; each alternative is
     a tuple of words that must all appear in the header; a word starting
-    with '!' must NOT appear. First alternative that matches wins."""
+    with '!' must NOT appear; a word starting with '=' means the whole
+    header must equal it. First alternative that matches wins."""
     columns = []
     for r in rows[:200]:
         for k in r.keys():
@@ -77,9 +90,7 @@ def resolve_columns(rows: list, spec: dict) -> dict:
     for field, alternatives in spec.items():
         out[field] = None
         for words in alternatives:
-            hit = next((c for c in columns
-                        if all((w[1:] not in norm_key(c)) if w.startswith("!") else (w in norm_key(c)) for w in words)),
-                       None)
+            hit = next((c for c in columns if all(_word_ok(w, norm_key(c)) for w in words)), None)
             if hit:
                 out[field] = hit
                 break
@@ -133,6 +144,14 @@ def to_number(value):
         return None
 
 
+def latest_received_date(text: str):
+    """'Received 9/22/2026' -> 2026-09-22. With several receipts ('Received 9/22/2026, Received 9/25/2026')
+    the latest wins, because that is when the whole line had arrived. None when nothing was received."""
+    found = [parse_any_date(m) for m in re.findall(r"[Rr]eceived\s+(\d{1,2}/\d{1,2}/\d{2,4})", text or "")]
+    found = [d for d in found if d]
+    return max(found) if found else None
+
+
 def clean(value) -> str:
     s = "" if value is None else str(value).strip()
     return "" if s == "--" else s
@@ -159,6 +178,10 @@ COLUMN_SPEC = {
     "received":   [("quantity", "receiv"), ("receiv", "!status", "!date")],
     "price":      [("unit", "price")],
     "landed":     [("landed", "per unit")],
+    "eta":        [("=eta",), ("expected", "date")],
+    "shipsum":    [("shipments", "summary", "!status")],
+    "terms":      [("=terms",)],
+    "fulfillment": [("=fulfillment",)],
 }
 REQUIRED = ["order_date", "po_id", "supplier", "product", "price", "received"]
 
@@ -209,6 +232,8 @@ def transform(rows: list, today: date = None, history_days: int = HISTORY_DAYS, 
             continue
         qty = to_number(r.get(m["qty"])) if m["qty"] else None
         landed = to_number(r.get(m["landed"])) if m["landed"] else None
+        eta = parse_any_date(r.get(m["eta"])) if m["eta"] else None
+        received_date = latest_received_date(clean(r.get(m["shipsum"])) if m["shipsum"] else "")
         # A PO can list the same product twice with identical numbers; the
         # occurrence counter keeps both lines instead of collapsing them.
         base = f"{po}|{pid}|{order_date.isoformat()}|{price}|{qty}"
@@ -228,6 +253,10 @@ def transform(rows: list, today: date = None, history_days: int = HISTORY_DAYS, 
             "quantity_received": received if received is not None else 0.0,
             "unit_price": price,
             "landed_cost_per_unit": landed if landed else None,
+            "eta": eta.isoformat() if eta else None,
+            "received_date": received_date.isoformat() if received_date else None,
+            "terms": (clean(r.get(m["terms"])) or None) if m["terms"] else None,
+            "fulfillment": (clean(r.get(m["fulfillment"])) or None) if m["fulfillment"] else None,
             "updated_at": now.isoformat(),      # the page shows "prices as of" from the newest of these
         })
     stats = {"read": len(rows), "kept": len(kept), "skipped": dict(skipped), "mapping": m}
@@ -277,7 +306,58 @@ def sync(store, rows: list) -> dict:
             "If this is really intended, empty supplier_prices in Supabase and run again.")
     store.upsert(rows)
     store.delete_keys(stale)
-    return {"written": len(rows), "new": len(current - existing), "removed": len(stale)}
+    return {"written": len(rows), "new": len(current - existing), "removed": len(stale),
+            "new_keys": sorted(current - existing), "first_load": not existing}
+
+
+# ---------------------------------------------------------------------
+# Price-jump alerts
+# ---------------------------------------------------------------------
+
+def find_price_jumps(rows: list, new_keys, pct: float = ALERT_PCT) -> list:
+    """New lines whose unit price is `pct`% or more above the previous purchase of the same SKU from the same
+    supplier. Increases only; the previous purchase is the latest one on an EARLIER date. Biggest dollar impact first."""
+    new = set(new_keys)
+    by = {}
+    for r in rows:
+        by.setdefault((r["product_id"], r["supplier"]), []).append(r)
+    out = []
+    for lines in by.values():
+        lines.sort(key=lambda r: (r["order_date"], r["line_key"]))
+        for r in lines:
+            if r["line_key"] not in new:
+                continue
+            earlier = [x for x in lines if x["order_date"] < r["order_date"]]
+            if not earlier:
+                continue
+            prev = earlier[-1]
+            change = (r["unit_price"] / prev["unit_price"] - 1) * 100
+            if change >= pct:
+                qty = r["quantity_received"] if r["quantity_received"] else (r["quantity"] or 0)
+                out.append({"sku": r["product_id"], "supplier": r["supplier"], "order_date": r["order_date"], "po_id": r["po_id"],
+                            "prev_price": prev["unit_price"], "price": r["unit_price"], "pct": change,
+                            "dollars": (r["unit_price"] - prev["unit_price"]) * qty})
+    return sorted(out, key=lambda a: -a["dollars"])
+
+
+def alert_text(alerts: list, pct: float) -> str:
+    lines = [f"Supplier pricing: {len(alerts)} new purchase line{'s' if len(alerts) != 1 else ''} priced {pct:g}% or more above the previous purchase:"]
+    for a in alerts[:10]:
+        lines.append(f"- {a['sku']} ({a['supplier']}): ${a['prev_price']:,.2f} to ${a['price']:,.2f} (+{a['pct']:.1f}%), PO {a['po_id']} on {a['order_date']}, about ${a['dollars']:,.0f} more on this line")
+    if len(alerts) > 10:
+        lines.append(f"...and {len(alerts) - 10} more.")
+    return "\n".join(lines)
+
+
+def post_slack(url: str, text: str) -> bool:
+    """Posts to a Slack incoming-webhook URL. Never raises: an alert that can't be delivered must not fail the run."""
+    try:
+        req = urllib.request.Request(url, data=json.dumps({"text": text}).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:
+        print(f"  (could not post the alert to Slack: {e})")
+        return False
 
 
 # ---------------------------------------------------------------------
@@ -323,6 +403,7 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="work out the rows but do not touch the database")
     ap.add_argument("--history-days", type=int, default=HISTORY_DAYS)
     ap.add_argument("--today", help="pretend today is YYYY-MM-DD (testing)")
+    ap.add_argument("--alert-pct", type=float, default=None, help="flag new lines this many percent above the previous purchase (default 10, or the ALERT_PCT setting)")
     args = ap.parse_args(argv)
 
     client = None
@@ -342,7 +423,19 @@ def main(argv=None) -> int:
         result = sync(SupabaseStore(client), kept)
         detail = f"{summary}; wrote {result['written']} ({result['new']} new), removed {result['removed']}"
         print(detail)
-        log_run(client, True, detail)
+        pct = args.alert_pct if args.alert_pct is not None else float(os.environ.get("ALERT_PCT", "").strip() or ALERT_PCT)
+        alerts = [] if result["first_load"] else find_price_jumps(kept, result["new_keys"], pct)
+        if result["first_load"]:
+            print("First load: price-jump alerts skipped (every line is new).")
+        elif alerts:
+            text = alert_text(alerts, pct)
+            print(text)
+            hook = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
+            if hook:
+                print("Slack: " + ("posted" if post_slack(hook, text) else "not delivered"))
+        else:
+            print(f"No new line is priced {pct:g}% or more above its previous purchase.")
+        log_run(client, True, detail + (f"; {len(alerts)} price jump alert(s)" if alerts else ""))
         return 0
     except Exception as e:
         traceback.print_exc()
