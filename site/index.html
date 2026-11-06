@@ -1383,7 +1383,7 @@
 
   <div id="tab-leadtime" class="tab-panel" style="display:none;">
     <h3 class="history-section-title">Production Lead Time</h3>
-    <div class="history-note">How long an order waits on a SKU that has to be built: from the moment the order is placed to the moment it stops being short on that SKU (the build landed). Only waits that a build ended are measured &mdash; waits that ended because the order shipped, was cancelled, re-routed or put on hold aren't. Recorded by the 30-minute pulls, so every time is accurate to about 30 minutes.</div>
+    <div class="history-note">Production lead time is the delay an order suffers because a SKU has to be built. If the SKU is in stock when the order is placed there is no delay, so that order line counts as <b>0</b>. The average is taken over <b>every order line</b> of a built SKU, not only the ones that waited. A wait runs from the moment the order is placed to the moment it stops being short on that SKU (the build landed); packing and shipping time are not included. Lines still waiting are left out until they finish, and lines whose order was cancelled, re-routed or put on hold are not counted.</div>
     <div class="history-note" id="leadtime-status" style="margin-top:-6px;"></div>
 
     <div class="list-controls">
@@ -1396,10 +1396,10 @@
     <div class="list-controls">
       <input type="text" class="sku-search-input" id="leadtime-search" placeholder="Search SKU..." oninput="renderLeadTimeTab()">
       <select id="leadtime-range" class="sku-search-input" onchange="renderLeadTimeTab()" style="width:190px;">
-        <option value="all" selected>Waits ended: all time</option>
-        <option value="30">Waits ended: last 30 days</option>
-        <option value="90">Waits ended: last 90 days</option>
-        <option value="365">Waits ended: last 365 days</option>
+        <option value="all" selected>Orders placed: all time</option>
+        <option value="30">Orders placed: last 30 days</option>
+        <option value="90">Orders placed: last 90 days</option>
+        <option value="365">Orders placed: last 365 days</option>
       </select>
       <label class="toggle-label">
         <input type="checkbox" id="leadtime-include-unbuilt" onchange="renderLeadTimeTab()">
@@ -1407,18 +1407,19 @@
       </label>
     </div>
 
-    <div class="summary-row" style="margin-bottom:16px; grid-template-columns: repeat(5, 1fr);">
-      <div class="summary-card"><div class="value" id="lt-avg">&mdash;</div><div class="label">Average wait</div></div>
-      <div class="summary-card"><div class="value" id="lt-median">&mdash;</div><div class="label">Median wait</div></div>
-      <div class="summary-card"><div class="value" id="lt-p90">&mdash;</div><div class="label">90th percentile (9 in 10 waits were shorter)</div></div>
-      <div class="summary-card"><div class="value" id="lt-count">&mdash;</div><div class="label">Completed waits measured</div></div>
+    <div class="summary-row" style="margin-bottom:16px; grid-template-columns: repeat(6, 1fr);">
+      <div class="summary-card"><div class="value" id="lt-avg">&mdash;</div><div class="label">Average delay per order line (0 if in stock)</div></div>
+      <div class="summary-card"><div class="value" id="lt-lines">&mdash;</div><div class="label">Order lines measured</div></div>
+      <div class="summary-card"><div class="value" id="lt-waited">&mdash;</div><div class="label">Lines that waited for a build</div></div>
+      <div class="summary-card"><div class="value" id="lt-avgwaited">&mdash;</div><div class="label">Average when it waited</div></div>
+      <div class="summary-card"><div class="value" id="lt-p90">&mdash;</div><div class="label">90th percentile of waits (waited lines only)</div></div>
       <div class="summary-card"><div class="value" id="lt-waiting">&mdash;</div><div class="label">Waiting on a build now</div></div>
     </div>
 
     <div class="health-label" style="margin:4px 0 6px;font-weight:600;">By SKU</div>
     <div class="table-scroll-wrap">
       <table class="attack-table sticky-table">
-        <thead><tr><th>SKU</th><th>Waits</th><th>Average</th><th>Median</th><th>90th pct</th><th>Longest</th><th>Waiting now</th></tr></thead>
+        <thead><tr><th>SKU</th><th>Order lines</th><th>Waited</th><th>% waited</th><th>Average per line</th><th>Avg when waited</th><th>Median (waited)</th><th>90th pct (waited)</th><th>Longest</th><th>Waiting now</th></tr></thead>
         <tbody id="leadtime-tbody"></tbody>
       </table>
     </div>
@@ -2515,6 +2516,10 @@ const LEADTIME_CLOCKS = {
 let leadTimeClock = "shift";
 let currentBlockedEvents = [];
 let leadTimeLoadError = null;
+let currentLeadTimeOrders = [];
+let currentBuiltSkus = [];
+let leadTimeOrdersError = null;
+let leadTimeLinesFetchedAt = 0;
 
 function leadTimeElapsedHours(startMs, endMs, clock) {
   if (!(endMs > startMs)) return 0;
@@ -2593,6 +2598,103 @@ function leadTimeWaits() {
   return { completed, open, endedOther, untimed };
 }
 
+// ---- Average over ALL order lines (task t144) ----------------------------------------
+// A built SKU's order line that never waited counts as 0 (it was in stock); one that waited
+// counts its wait. The same rules as the database views (3_lead_time_all_lines.sql):
+//   * one line per order per built SKU; Warehouse/Freight queue; not cancelled / on hold;
+//     placed on or after the first full Central day after the first logged wait
+//   * waited: the stock arrived ('unblocked'), or the order shipped before the 30-minute
+//     check noticed ('left_queue' and the order shipped); counted from placement to then
+//   * still waiting, or left the queue some other way (cancelled / held), or no order time:
+//     left out of the average (and counted in the footnote)
+const LT_SCOPE_QUEUES = ["Warehouse", "Freight"];
+const LT_MIN_LINES = 3;   // a SKU's own average is trusted from this many order lines
+
+// The wait log stores the order NUMBER ("000415523", "AMZN-000418375"); match by number
+// regardless of the AMZN- prefix and leading zeros.
+function ltOrderKey(x) { return String(x == null ? "" : x).toUpperCase().replace(/^AMZN-/, "").replace(/^0+/, ""); }
+
+// The first full Central day after the first logged wait: every line placed from then on
+// could have been seen waiting.
+function leadTimeWindowStartMs() {
+  let first = null;
+  for (const e of currentBlockedEvents) { const t = Date.parse(e.first_blocked_at); if (!isNaN(t) && (first === null || t < first)) first = t; }
+  return first === null ? null : chicagoMidnightMs(first, 1);
+}
+
+// Built = the full list saved by the stock pull, or flagged built in the stock table, or
+// flagged built when its wait was logged (the last two cover the time before the list exists).
+function leadTimeBuiltSet() {
+  const s = new Set();
+  for (const r of currentBuiltSkus) s.add(String(r.product_id).toLowerCase());
+  for (const r of currentStockLevels) if (r.is_built === true) s.add(String(r.product_id).toLowerCase());
+  for (const e of currentBlockedEvents) if (e.is_built === true) s.add(String(e.product_id).toLowerCase());
+  return s;
+}
+
+function leadTimeSkuNames() {
+  const m = new Map();
+  const add = p => { if (p) { const k = String(p).toLowerCase(); if (!m.has(k)) m.set(k, String(p)); } };
+  currentBuiltSkus.forEach(r => add(r.product_id));
+  currentStockLevels.forEach(r => add(r.product_id));
+  currentBlockedEvents.forEach(e => add(e.product_id));
+  return m;
+}
+
+function leadTimeAnalysis({ includeUnbuilt = false, cutoffMs = 0 } = {}) {
+  const startMs = leadTimeWindowStartMs();
+  const pairs = new Map();
+  for (const e of currentBlockedEvents) {
+    const key = ltOrderKey(e.order_id) + "||" + String(e.product_id).toLowerCase();
+    if (!pairs.has(key)) pairs.set(key, []);
+    pairs.get(key).push(e);
+  }
+  const info = new Map();
+  for (const [key, events] of pairs) {
+    const open = events.some(e => !e.resolved_at);
+    const placed = events.filter(e => e.order_placed_at).map(e => Date.parse(e.order_placed_at));
+    let last = null;
+    for (const e of events) {
+      if (!e.resolved_at) continue;
+      const t = Date.parse(e.resolved_at);
+      if (last === null || t > last.t || (t === last.t && e.id > last.id)) last = { t, id: e.id, reason: e.resolved_reason };
+    }
+    info.set(key, { open, placedMs: placed.length ? Math.min(...placed) : null, resolvedMs: last ? last.t : null, reason: last ? last.reason : null });
+  }
+  const built = leadTimeBuiltSet(), names = leadTimeSkuNames();
+  const lines = []; let excluded = 0, waitingLines = 0;
+  if (startMs !== null) {
+    for (const o of currentLeadTimeOrders) {
+      if (!LT_SCOPE_QUEUES.includes(o.queue) || o.status === "cancelled" || o.status === "on_hold") continue;
+      const orderMs = Date.parse(o.order_dt);
+      if (!(orderMs >= startMs) || orderMs < cutoffMs) continue;
+      const okey = ltOrderKey(o.order_number), seen = new Set();
+      for (const it of (Array.isArray(o.items) ? o.items : [])) {
+        const raw = String((it && it.sku) || ""), skuKey = raw.toLowerCase();
+        if (!skuKey || seen.has(skuKey)) continue;
+        seen.add(skuKey);
+        if (!includeUnbuilt && !built.has(skuKey)) continue;
+        const sku = names.get(skuKey) || raw;
+        const p = info.get(okey + "||" + skuKey);
+        if (!p) { lines.push({ sku, skuKey, placedMs: orderMs, resolvedMs: null, waited: false }); continue; }
+        if (p.open) { waitingLines++; continue; }
+        if (p.placedMs === null) { excluded++; continue; }
+        if (p.reason === "unblocked" || (p.reason === "left_queue" && o.status === "shipped")) lines.push({ sku, skuKey, placedMs: p.placedMs, resolvedMs: p.resolvedMs, waited: true });
+        else excluded++;
+      }
+    }
+  }
+  return { lines, startMs, excluded, waitingLines };
+}
+
+// Average over ALL lines, plus the usual statistics for only the lines that waited.
+function leadTimeSummarize(lines, clock) {
+  const waited = lines.filter(l => l.waited).map(l => leadTimeElapsedHours(l.placedMs, l.resolvedMs, clock));
+  const st = leadTimeStats(waited), total = waited.reduce((a, b) => a + b, 0);
+  return { lines: lines.length, waited: waited.length, pct: lines.length ? 100 * waited.length / lines.length : null,
+           avgAll: lines.length ? total / lines.length : null, avgWhenWaited: st.avg, median: st.median, p90: st.p90, max: st.max };
+}
+
 function setLeadTimeClock(clock) {
   leadTimeClock = clock;
   renderLeadTimeTab();
@@ -2604,6 +2706,11 @@ function renderLeadTimeTab() {
   }
   document.getElementById("leadtime-clock-blurb").textContent = LEADTIME_CLOCKS[leadTimeClock];
 
+  const rangeVal = document.getElementById("leadtime-range").value;
+  const cutoffMs = rangeVal === "all" ? 0 : Date.now() - (+rangeVal) * 86400000;
+  const analysis = leadTimeAnalysis({ includeUnbuilt: document.getElementById("leadtime-include-unbuilt").checked, cutoffMs });
+  const fmtDay = ms => new Date(ms).toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", year: "numeric" });
+
   const statusEl = document.getElementById("leadtime-status");
   if (leadTimeLoadError) {
     statusEl.textContent = `Couldn't read the lead-time log from the database: ${leadTimeLoadError}`;
@@ -2611,45 +2718,50 @@ function renderLeadTimeTab() {
     statusEl.textContent = "No blocked-order events logged yet \u2014 logging starts with the first 30-minute pull after this was set up.";
   } else {
     const first = currentBlockedEvents.reduce((m, e) => (e.first_blocked_at < m ? e.first_blocked_at : m), currentBlockedEvents[0].first_blocked_at);
-    const since = new Date(first).toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", year: "numeric" });
-    statusEl.textContent = `Logging began ${since} \u00b7 ${currentBlockedEvents.length.toLocaleString()} wait events recorded.`;
+    let msg = `Logging began ${fmtDay(Date.parse(first))} \u00b7 ${currentBlockedEvents.length.toLocaleString()} wait events recorded.`;
+    if (leadTimeOrdersError) msg += ` Couldn't read the KPI order table (${leadTimeOrdersError}), so order lines can't be counted and the averages are blank.`;
+    else if (analysis.startMs !== null) msg += ` Order lines are counted from ${fmtDay(analysis.startMs)}, the first full day of logging.`;
+    statusEl.textContent = msg;
   }
 
   const query = document.getElementById("leadtime-search").value.trim().toLowerCase();
   const matches = w => !query || w.sku.toLowerCase().includes(query);
-  const all = leadTimeWaits();
-  const completed = all.completed.filter(matches);
+  const all = leadTimeWaits();           // the waits still in progress, straight from the log
   const open = all.open.filter(matches);
-  const elapsed = w => leadTimeElapsedHours(w.placedMs, w.resolvedMs, leadTimeClock);
+  const lines = analysis.lines.filter(matches);
 
-  const overall = leadTimeStats(completed.map(elapsed));
-  document.getElementById("lt-avg").textContent = fmtLeadHours(overall.avg);
-  document.getElementById("lt-median").textContent = fmtLeadHours(overall.median);
+  const overall = leadTimeSummarize(lines, leadTimeClock);
+  document.getElementById("lt-avg").textContent = fmtLeadHours(overall.avgAll);
+  document.getElementById("lt-lines").textContent = overall.lines.toLocaleString();
+  document.getElementById("lt-waited").textContent = overall.lines ? `${overall.waited.toLocaleString()} (${overall.pct.toFixed(0)}%)` : "\u2014";
+  document.getElementById("lt-avgwaited").textContent = fmtLeadHours(overall.avgWhenWaited);
   document.getElementById("lt-p90").textContent = fmtLeadHours(overall.p90);
-  document.getElementById("lt-count").textContent = overall.n.toLocaleString();
   document.getElementById("lt-waiting").textContent = open.length.toLocaleString();
 
   // ---- by SKU ----
   const bySku = new Map();
-  const slot = sku => { if (!bySku.has(sku)) bySku.set(sku, { sku, hours: [], waiting: 0 }); return bySku.get(sku); };
-  for (const w of completed) slot(w.sku).hours.push(elapsed(w));
-  for (const w of open) slot(w.sku).waiting++;
-  const skuRows = [...bySku.values()].map(r => ({ ...r, st: leadTimeStats(r.hours) }));
-  skuRows.sort((a, b) => (b.st.avg ?? -1) - (a.st.avg ?? -1) || b.waiting - a.waiting || a.sku.localeCompare(b.sku));
+  const slot = (key, sku) => { if (!bySku.has(key)) bySku.set(key, { sku, lines: [], waiting: 0 }); return bySku.get(key); };
+  for (const l of lines) slot(l.skuKey, l.sku).lines.push(l);
+  for (const w of open) slot(w.sku.toLowerCase(), w.sku).waiting++;
+  const skuRows = [...bySku.values()].map(r => ({ ...r, s: leadTimeSummarize(r.lines, leadTimeClock) }));
+  skuRows.sort((a, b) => (b.s.avgAll ?? -1) - (a.s.avgAll ?? -1) || b.waiting - a.waiting || a.sku.localeCompare(b.sku));
   const tbody = document.getElementById("leadtime-tbody");
   if (!skuRows.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="bar-empty">${query ? "No matching SKUs" : "No waits recorded yet"}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="bar-empty">${query ? "No matching SKUs" : (leadTimeOrdersError ? "Order lines couldn't be read" : "No order lines measured yet")}</td></tr>`;
   } else {
     tbody.innerHTML = skuRows.map(r => {
-      const few = r.st.n > 0 && r.st.n < 3;
-      const mute = few ? ' style="color:var(--text-muted);" title="Only ' + r.st.n + ' completed wait' + (r.st.n === 1 ? '' : 's') + ' \u2014 too few to trust the average"' : "";
+      const few = r.s.lines > 0 && r.s.lines < LT_MIN_LINES;
+      const mute = few ? ' style="color:var(--text-muted);" title="Only ' + r.s.lines + ' order line' + (r.s.lines === 1 ? '' : 's') + ' \u2014 too few to trust the average"' : "";
       return `<tr>
         <td>${r.sku}</td>
-        <td${mute}>${r.st.n}${few ? " (few)" : ""}</td>
-        <td${mute}>${fmtLeadHours(r.st.avg)}</td>
-        <td${mute}>${fmtLeadHours(r.st.median)}</td>
-        <td${mute}>${fmtLeadHours(r.st.p90)}</td>
-        <td${mute}>${fmtLeadHours(r.st.max)}</td>
+        <td${mute}>${r.s.lines.toLocaleString()}${few ? " (few)" : ""}</td>
+        <td${mute}>${r.s.waited.toLocaleString()}</td>
+        <td${mute}>${r.s.pct === null ? "\u2014" : r.s.pct.toFixed(0) + "%"}</td>
+        <td${mute}>${fmtLeadHours(r.s.avgAll)}</td>
+        <td${mute}>${fmtLeadHours(r.s.avgWhenWaited)}</td>
+        <td${mute}>${fmtLeadHours(r.s.median)}</td>
+        <td${mute}>${fmtLeadHours(r.s.p90)}</td>
+        <td${mute}>${fmtLeadHours(r.s.max)}</td>
         <td>${r.waiting || "\u2014"}</td>
       </tr>`;
     }).join("");
@@ -2667,8 +2779,8 @@ function renderLeadTimeTab() {
 
   const notes = [];
   if (openRows.length > shown.length) notes.push(`Showing the ${shown.length} longest of ${openRows.length} waits in progress.`);
-  if (all.endedOther) notes.push(`${all.endedOther.toLocaleString()} wait${all.endedOther === 1 ? "" : "s"} ended because the order shipped, was cancelled, re-routed or put on hold, so ${all.endedOther === 1 ? "it isn't" : "they aren't"} counted.`);
-  if (all.untimed) notes.push(`${all.untimed.toLocaleString()} wait${all.untimed === 1 ? "" : "s"} had no order time recorded and ${all.untimed === 1 ? "is" : "are"} skipped.`);
+  if (analysis.waitingLines) notes.push(`${analysis.waitingLines.toLocaleString()} order line${analysis.waitingLines === 1 ? " is" : "s are"} still waiting and will be counted once the build lands.`);
+  if (analysis.excluded) notes.push(`${analysis.excluded.toLocaleString()} order line${analysis.excluded === 1 ? " is" : "s are"} left out because the order was cancelled, re-routed or put on hold while waiting, or had no order time recorded.`);
   document.getElementById("leadtime-footnote").textContent = notes.join(" ");
 }
 
@@ -3176,12 +3288,12 @@ let turnoverLoadError = null; // set if reading turnover data from the database 
 // collected" no matter how many days existed. Any read of a table that
 // can reach 1000 rows MUST go through this. Ordered by a unique column
 // (id) so pages can't overlap or skip.
-async function fetchAllRows(table, { orderCol = "id", ascending = true, filter = null } = {}) {
+async function fetchAllRows(table, { orderCol = "id", ascending = true, filter = null, columns = "*" } = {}) {
   const pageSize = 1000;
   const all = [];
   let start = 0;
   while (true) {
-    let q = client.from(table).select("*");
+    let q = client.from(table).select(columns);
     if (filter) q = filter(q);
     const { data, error } = await q.order(orderCol, { ascending }).range(start, start + pageSize - 1);
     if (error) throw error;
@@ -3268,6 +3380,27 @@ async function refresh() {
       console.error("blocked_order_events fetch failed (non-fatal):", leadErr);
       leadTimeLoadError = (leadErr && leadErr.message) || String(leadErr);
       currentBlockedEvents = [];
+    }
+    // The order lines the average is taken over (every line of a built SKU, 0 when in stock) come
+    // from the KPI order table; the full built-SKU list is saved by the stock pull. Both are
+    // re-read at most every 10 minutes (they change slowly and the orders are a few MB).
+    // Non-fatal: without them the tab says so and shows blank averages instead of wrong ones.
+    if (Date.now() - leadTimeLinesFetchedAt > 600000) {
+      leadTimeOrdersError = null;
+      try { currentBuiltSkus = await fetchAllRows("built_skus", { orderCol: "product_id" }); }
+      catch (e) { console.error("built_skus fetch failed (non-fatal):", e); currentBuiltSkus = []; }
+      try {
+        const fromMs = leadTimeWindowStartMs();
+        currentLeadTimeOrders = fromMs === null ? [] : await fetchAllRows("kpi_orders", {
+          orderCol: "order_id", columns: "order_id,order_number,queue,status,order_dt,items",
+          filter: q => q.gte("order_dt", new Date(fromMs).toISOString()),
+        });
+        leadTimeLinesFetchedAt = Date.now();
+      } catch (e) {
+        console.error("kpi_orders fetch for lead time failed (non-fatal):", e);
+        leadTimeOrdersError = (e && e.message) || String(e);
+        currentLeadTimeOrders = [];
+      }
     }
     if (activeTab === "leadtime") renderLeadTimeTab();
 
