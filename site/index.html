@@ -3291,14 +3291,16 @@ let turnoverLoadError = null; // set if reading turnover data from the database 
 // collected" no matter how many days existed. Any read of a table that
 // can reach 1000 rows MUST go through this. Ordered by a unique column
 // (id) so pages can't overlap or skip.
-async function fetchAllRows(table, { orderCol = "id", ascending = true, filter = null, columns = "*" } = {}) {
+async function fetchAllRows(table, { orderCol = "id", ascending = true, filter = null, columns = "*", thenOrder = null } = {}) {
   const pageSize = 1000;
   const all = [];
   let start = 0;
   while (true) {
     let q = client.from(table).select(columns);
     if (filter) q = filter(q);
-    const { data, error } = await q.order(orderCol, { ascending }).range(start, start + pageSize - 1);
+    let ordered = q.order(orderCol, { ascending });
+    if (thenOrder) ordered = ordered.order(thenOrder, { ascending });   // a second sort column keeps pages stable when many rows share the first value
+    const { data, error } = await ordered.range(start, start + pageSize - 1);
     if (error) throw error;
     const batch = data || [];
     all.push(...batch);
@@ -3394,10 +3396,24 @@ async function refresh() {
       catch (e) { console.error("built_skus fetch failed (non-fatal):", e); currentBuiltSkus = []; }
       try {
         const fromMs = leadTimeWindowStartMs();
-        currentLeadTimeOrders = fromMs === null ? [] : await fetchAllRows("kpi_orders", {
-          orderCol: "order_id", columns: "order_id,order_number,queue,status,order_dt,items",
-          filter: q => q.gte("order_dt", new Date(fromMs).toISOString()),
-        });
+        if (fromMs === null) {
+          currentLeadTimeOrders = [];
+        } else {
+          // Filter and sort on the INDEXED order_date column (Central date; the exact start time is applied in
+          // leadTimeAnalysis). Filtering on order_dt and sorting by order_id scanned the whole order table and
+          // sometimes hit Supabase's 3-second limit while the page was loading. One retry covers a busy moment.
+          const fromDay = new Date(fromMs).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+          const getOrders = () => fetchAllRows("kpi_orders", {
+            orderCol: "order_date", thenOrder: "order_id", columns: "order_id,order_number,queue,status,order_dt,items",
+            filter: q => q.gte("order_date", fromDay),
+          });
+          try { currentLeadTimeOrders = await getOrders(); }
+          catch (first) {
+            console.warn("kpi_orders fetch for lead time failed, retrying once:", first);
+            await new Promise(r => setTimeout(r, 1500));
+            currentLeadTimeOrders = await getOrders();
+          }
+        }
         leadTimeLinesFetchedAt = Date.now();
       } catch (e) {
         console.error("kpi_orders fetch for lead time failed (non-fatal):", e);
