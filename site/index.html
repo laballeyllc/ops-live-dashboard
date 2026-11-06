@@ -2576,9 +2576,12 @@ function leadTimeWaits() {
   }
   const completed = [], open = [];
   let endedOther = 0, untimed = 0;
+  // Built = flagged when the wait was logged OR on the full built-SKU list. The flag alone misses
+  // built SKUs the stock table didn't list at that moment, so waiting-now was undercounted.
+  const builtSet = leadTimeBuiltSet();
   for (const events of pairs.values()) {
     const latest = events.reduce((a, b) => (b.id > a.id ? b : a));
-    const isBuilt = latest.is_built === true;
+    const isBuilt = latest.is_built === true || builtSet.has(String(latest.product_id).toLowerCase());
     if (!includeUnbuilt && !isBuilt) continue;
     const placedTimes = events.filter(e => e.order_placed_at).map(e => new Date(e.order_placed_at).getTime());
     if (!placedTimes.length) { untimed++; continue; }
