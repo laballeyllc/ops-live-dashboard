@@ -30,6 +30,14 @@
 const TV_COOKIE = "lab_alley_tv";
 const TV_COOKIE_DAYS = 400;   // the longest Chrome keeps a cookie
 
+// The Executive Dashboard's Orders In vs Orders Out chart asks this site for
+// weekly and hourly order COUNTS (no names, addresses or order details). A web
+// page can't send this site's password, so that one request is let through when
+// it comes from the dashboard's own address. Everything else still needs the
+// password. If the dashboard ever moves to a new address, add it to this list.
+const ORDER_FLOW_PATH = "/.netlify/functions/order-flow";
+const DASHBOARD_ORIGINS = ["https://splendid-babka-b4cb8d.netlify.app"];
+
 export default async (request, context) => {
   const configured = (Netlify.env.get("BASIC_AUTH_CREDENTIALS") || "").trim();
   if (!configured) {
@@ -37,6 +45,16 @@ export default async (request, context) => {
       "Site password is not configured. Add BASIC_AUTH_CREDENTIALS in Netlify's environment variables (Functions scope) and redeploy.",
       { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } },
     );
+  }
+
+  // --- 0. The dashboard's order-count request (see note at the top) ---
+  const reqUrl = new URL(request.url);
+  if (
+    request.method === "GET" &&
+    reqUrl.pathname === ORDER_FLOW_PATH &&
+    DASHBOARD_ORIGINS.includes(request.headers.get("origin") || "")
+  ) {
+    return context.next();
   }
 
   // --- 1. Username and password ---
