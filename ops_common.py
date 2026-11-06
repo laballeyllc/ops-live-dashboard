@@ -959,6 +959,36 @@ def write_turnover_computed(results: list[dict]) -> None:
     print(f"Wrote {len(results)} turnover computations to Supabase (replaced the previous set).")
 
 
+BUILT_SKUS_TABLE = "built_skus"
+_last_built_skus: "set[str] | None" = None
+
+
+def replace_built_skus(client, built: set, pulled_at: str) -> dict:
+    """Keeps the built_skus table equal to the FULL list of SKUs the Finale BOM report
+    says are built in-house (not just those with stock or demand right now).
+
+    Used by the production lead-time views to know which order lines are for built SKUs,
+    including lines that never waited. Only changes are written. Guards: an empty list
+    changes nothing, and a list that would remove more than half of what is stored removes
+    nothing (a bad or partial BOM pull must not empty the table); additions still go in."""
+    if not built:
+        print("built_skus: SKIPPED (the BOM report returned no built SKUs).")
+        return {"skipped": True}
+    existing = {r["product_id"] for r in select_all_rows(client, BUILT_SKUS_TABLE, order_col="product_id")}
+    add = sorted(built - existing)
+    remove = sorted(existing - built)
+    removal_blocked = bool(existing) and len(remove) > 0.5 * len(existing)
+    if removal_blocked:
+        print(f"built_skus: NOT removing {len(remove)} of {len(existing)} stored SKUs (more than half looks like a bad BOM pull); adding {len(add)}.")
+        remove = []
+    if add:
+        insert_in_batches(client, BUILT_SKUS_TABLE, [{"product_id": p, "updated_at": pulled_at} for p in add])
+    for i in range(0, len(remove), 200):
+        client.table(BUILT_SKUS_TABLE).delete().in_("product_id", remove[i:i + 200]).execute()
+    print(f"built_skus: {len(built)} built SKUs ({len(add)} added, {len(remove)} removed).")
+    return {"added": len(add), "removed": len(remove), "removal_blocked": removal_blocked, "total": len(built)}
+
+
 def build_stock_levels() -> list[dict]:
     """Combines usable stock (Stock Quantity by Sublocation report) with
     backorder demand and reorder point max (Backordered sales by order
@@ -978,6 +1008,11 @@ def build_stock_levels() -> list[dict]:
     print("Pulling built-SKU classification from Finale (Product bill of materials)...")
     built_skus = fetch_built_sku_set()
     print(f"  {len(built_skus)} products confirmed built in-house (everything else treated as purchased)")
+    # Remembered so replace_stock_levels() can save the WHOLE list: the rows below only cover
+    # products that currently have stock or demand, which misses built SKUs that are out of
+    # stock (exactly the ones that wait). The production lead-time average needs the full list.
+    global _last_built_skus
+    _last_built_skus = set(built_skus)
 
     all_pids = set(stock.keys()) | set(demand.keys())
     rows = []
@@ -1011,6 +1046,13 @@ def replace_stock_levels(rows: list[dict], pulled_at: str) -> None:
     db_rows = [{**row, "pulled_at": pulled_at} for row in rows]
     insert_in_batches(client, "stock_levels", db_rows)
     print(f"Wrote {len(db_rows)} rows to Supabase 'stock_levels' (pulled_at: {pulled_at})")
+    # The full built list, for the production lead-time views. Non-fatal: the stock table above
+    # is what everything else needs, so a problem here must not fail the run.
+    if _last_built_skus is not None:
+        try:
+            replace_built_skus(client, _last_built_skus, pulled_at)
+        except Exception as e:
+            print(f"built_skus update failed (non-fatal): {e}")
 
 
 # --- Health snapshot logging (for the dashboard's Build/Aging/Volume
