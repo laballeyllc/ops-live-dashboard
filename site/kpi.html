@@ -157,6 +157,10 @@
   table.kpis tbody tr.row td { border-bottom: 1px solid var(--border); }
   td.label .name { font-weight: 500; }
   td.label .note { display: block; color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+  td.label .goal { display: block; font-size: 13px; font-weight: 500; margin-top: 2px; }
+  .goal.met, td.value.g-met { color: var(--better); }
+  .goal.watch, td.value.g-watch { color: var(--freight); }
+  .goal.off, td.value.g-off { color: var(--worse); }
   td.value { font-size: 18px; font-weight: 600; white-space: nowrap; }
   td.cmp { color: var(--text-muted); white-space: nowrap; }
   td.delta { white-space: nowrap; font-weight: 500; }
@@ -340,6 +344,43 @@ const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // On-time shipping target, as a fraction (0.95 = 95%). Draws a line on
 // the trend chart and colors bars below it. null = no target shown.
 const ONTIME_TARGET = 0.90;
+
+// Goals for rows of the table below, read from Supabase `kpi_targets` (the same table the wall displays
+// read). A row keyed like the table row (queue_hours, accuracy_avg) gets a goal line and a met / watch /
+// off-goal color. No table, no row, or active = false: no goal is shown and nothing else changes.
+// Percent goals are stored as 0-100 (95 means 95%), like the wall displays' rows.
+let GOALS = {};
+let goalsPromise = null;
+async function loadGoals() {
+  try {
+    const { data, error } = await db.from("kpi_targets").select("kpi_key,target,warn,direction,active");
+    if (error) throw new Error(error.message);
+    GOALS = {};
+    for (const t of data || []) {
+      if (t.active === false || t.target == null) continue;
+      GOALS[t.kpi_key] = { target: +t.target, warn: t.warn != null ? +t.warn : null, direction: t.direction === "lower" ? "lower" : "higher" };
+    }
+  } catch (e) {
+    console.warn("kpi_targets not loaded, so no goals are shown:", e);
+    GOALS = {};
+  }
+}
+
+// state: met (at or past the goal), watch (past the watch level), off (beyond it)
+function goalFor(row, v) {
+  const g = GOALS[row.key];
+  if (!g || v == null || isNaN(v)) return null;
+  const val = row.fmt === "pct" ? v * 100 : v;
+  const lower = g.direction === "lower";
+  const state = (lower ? val <= g.target : val >= g.target) ? "met"
+    : (g.warn != null && (lower ? val <= g.warn : val >= g.warn)) ? "watch" : "off";
+  const num = x => Number.isInteger(x) ? String(x) : nf1.format(x);    // 12, not 12.0
+  const fmtGoal = x => row.fmt === "pct" ? num(x) + "%" : row.fmt === "hours" ? num(x) + " h" : row.fmt === "days" ? num(x) + " days" : num(x);
+  const sign = lower ? "\u2264" : "\u2265";
+  const text = `Goal ${sign} ${fmtGoal(g.target)}` + (g.warn != null ? ` (watch ${sign} ${fmtGoal(g.warn)})` : "")
+    + ` \u00b7 ${{ met: "met", watch: "watch", off: "off goal" }[state]}`;
+  return { state, text };
+}
 
 // ---------------------------------------------------------------- dates
 // All periods are Central-time calendar days, matching the warehouse and
@@ -561,9 +602,10 @@ async function load() {
   setStatus("Loading…");
   try {
     const grain = grainFor(state.ranges.cur);
+    goalsPromise = goalsPromise || loadGoals();
     const [cur, prior, ly, series] = await Promise.all([
       summary(state.ranges.cur), summary(state.ranges.prior), summary(state.ranges.ly),
-      ontimeSeries(state.ranges.cur, grain),
+      ontimeSeries(state.ranges.cur, grain), goalsPromise,
     ]);
     if (token !== state.token) return;   // a newer selection superseded this one
     Object.assign(state, { cur, prior, ly, series, grain });
@@ -766,7 +808,9 @@ function paintTable() {
             `<li><span>${esc(l.location)} ${FMT.pct(+l.accuracy)}</span><span>${fmtDay(D(l.week), false)}</span></li>`
           ).join("") + `</ul></details>`;
       }
-      html += `<tr class="row"><td class="label">${label}</td><td class="value">${valueCell}</td>`;
+      const goal = connected ? goalFor(row, v == null ? null : +v) : null;
+      if (goal) label += `<span class="goal ${goal.state}">${esc(goal.text)}</span>`;
+      html += `<tr class="row"><td class="label">${label}</td><td class="value${goal ? " g-" + goal.state : ""}">${valueCell}</td>`;
       for (const [show, data] of [[showPrior, prior], [showLY, ly]]) {
         if (!show) continue;
         const c = connected && data ? data[row.key] : null;
