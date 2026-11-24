@@ -429,6 +429,15 @@ function clusterByFamily(sortedList, skuKeyFn) {
   return result;
 }
 
+// The full list of SKUs built in-house (Supabase `built_skus`, saved by the Stock Levels Pull from Finale's BOM
+// report). The stock table only lists SKUs that currently have stock or demand, so on its own it can't tell that
+// a built SKU with neither (such as XTHNGGF-2.5KG) is built. Lower-case ids; empty until a page has loaded it.
+let builtSkuIds = new Set();
+function setBuiltSkus(rows) { builtSkuIds = new Set((rows || []).map(r => String(r.product_id).toLowerCase())); }
+function isBuiltSku(sku, stockEntry) {
+  return (!!stockEntry && stockEntry.isBuilt === true) || builtSkuIds.has(String(sku).toLowerCase());
+}
+
 function stockByProduct() {
   const map = new Map();
   for (const s of currentStockLevels) {
@@ -810,8 +819,15 @@ function buildProductionList(shippingList) {
   }
 
   const stock = stockByProduct();
+  const stockKeys = new Set([...stock.keys()].map(k => String(k).toLowerCase()));
   const results = [];
   for (const [sku, entry] of blockedByProduct) {
+    // Non-physical lines (discount codes, welcome-email products) can block an order, but there is nothing to
+    // build or buy: they have no inventory record at all and are not built in-house. Left off the list. Real
+    // purchased products with a stock record are untouched. Needs the full built list, so if it hasn't loaded
+    // nothing is filtered (the old behaviour) rather than risk hiding a built SKU.
+    if (builtSkuIds.size > 0 && !stockKeys.has(String(sku).toLowerCase()) && !isBuiltSku(sku, null)) continue;
+
     // Only chemicals ACTUALLY blocking a live order right now belong
     // here — pure reorder-point deficits with zero current demand moved
     // to the separate "Stock builds" list instead, so this stays a

@@ -274,6 +274,7 @@ const client = DEMO ? null : supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABAS
 // Globals the Ops Live logic reads
 let currentRows = [];
 let currentStockLevels = [];
+let builtSkusFetchedAt = 0;
 
 // Queue logic comes from /ops-logic.js, loaded before this script.
 
@@ -465,6 +466,12 @@ function targetNote(series) {
 async function loadCore(opts) {
   currentRows = await fetchAllRows("live_queue");
   currentStockLevels = await soft(fetchAllRows("stock_levels"), []);
+  // The full built-SKU list (changes rarely): re-read at most every 10 minutes. If it can't be read the
+  // Production List simply isn't filtered.
+  if (Date.now() - builtSkusFetchedAt > 600000) {
+    const builtRows = await soft(fetchAllRows("built_skus", { orderCol: "product_id" }), null);
+    if (builtRows && builtRows.length) { setBuiltSkus(builtRows); builtSkusFetchedAt = Date.now(); }
+  }
   const todayIso = new Date(chicagoMidnightMs(Date.now(), 0)).toISOString();
   healthToday = await soft(fetchAllRows("health_snapshots", { filter: q => q.gte("pulled_at", todayIso) }), []);
   if (opts.turnover) await loadTurnover();

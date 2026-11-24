@@ -367,6 +367,13 @@
     min-width: 220px;
   }
 
+  .history-note.history-warning {
+    color: var(--text);
+    background: var(--freight-dim);
+    border-left: 3px solid var(--freight);
+    border-radius: 4px;
+    padding: 8px 12px;
+  }
   .history-note {
     font-size: 12px;
     color: var(--text-muted);
@@ -1248,6 +1255,7 @@
     <div class="attack-subsection">
       <h3>Chart <span id="history-day-label" class="h2-note"></span></h3>
       <div id="history-chart-container"></div>
+      <div class="history-note">Off-hours pile-up: from Nov 3 the 4–5pm pulls count orders since 5pm the evening before (they used to count since 4pm), so those rows read about 20–34 from Nov 3 against 0–3 before.</div>
       <div class="table-scroll-wrap">
         <table class="attack-table sticky-table">
           <thead>
@@ -1309,6 +1317,8 @@
         <div id="history-range-sub" class="health-label"></div>
       </div>
     </div>
+    <div class="history-note history-warning" id="history-range-warning" role="status" style="display:none;"></div>
+    <div class="history-note">Since Nov 3 the production window runs to 5pm (it was 4pm), so the 4–5pm pulls now count for every date. For Oct 15 onward that moved the average by about +0.3 points (89.6% to 89.8%).</div>
   </div>
 
   <div id="tab-turnover" class="tab-panel" style="display:none;">
@@ -2518,6 +2528,7 @@ let currentBlockedEvents = [];
 let leadTimeLoadError = null;
 let currentLeadTimeOrders = [];
 let currentBuiltSkus = [];
+let builtSkusFetchedAt = 0;
 let leadTimeOrdersError = null;
 let leadTimeLinesFetchedAt = 0;
 
@@ -3100,11 +3111,33 @@ function renderLineChart(pointsIn, pointsOut, xLabelFn, xCount, shadeBusinessHou
   `;
 }
 
+// Days when how Build % is measured changed, so an average spanning one mixes two definitions. The history
+// can't be recomputed, so the page warns instead. (Compare ranges between the seams: through Oct 6, Oct 8-13,
+// Oct 15 onward.)
+const HISTORY_SEAMS = [
+  { date: "2026-10-07", text: "Oct 7: order age started following ShipStation's own clock (2:33 PM)." },
+  { date: "2026-10-14", text: "Oct 14: a stock-read fix (about 3:30 PM) stopped phantom shortages, so Build % reads higher from here." },
+];
+function historySeamsIn(startStr, endStr) {
+  if (!startStr || !endStr || startStr > endStr) return [];
+  return HISTORY_SEAMS.filter(s => startStr <= s.date && s.date <= endStr);
+}
+
 function renderHistoryRange() {
   const startStr = document.getElementById("history-range-start").value;
   const endStr = document.getElementById("history-range-end").value;
   const valueEl = document.getElementById("history-range-value");
   const subEl = document.getElementById("history-range-sub");
+  const warnEl = document.getElementById("history-range-warning");
+  const seams = historySeamsIn(startStr, endStr);
+  if (seams.length) {
+    warnEl.textContent = `Heads up: this range includes ${seams.length === 1 ? "a day" : "days"} when how Build % is measured changed, so the average mixes two definitions. `
+      + seams.map(s => s.text).join(" ") + " Compare ranges that fall entirely between these dates: through Oct 6, Oct 8–13, or Oct 15 onward.";
+    warnEl.style.display = "";
+  } else {
+    warnEl.textContent = "";
+    warnEl.style.display = "none";
+  }
 
   if (!startStr || !endStr) {
     valueEl.textContent = "—";
@@ -3326,6 +3359,17 @@ async function refresh() {
       currentStockLevels = [];
     }
 
+    // The full built-SKU list: used by the Production List (to leave out non-physical lines) and the lead-time
+    // tab. Changes rarely, so re-read at most every 10 minutes; a failed read keeps the last list, and with no
+    // list at all the Production List is simply not filtered.
+    if (Date.now() - builtSkusFetchedAt > 600000) {
+      try {
+        currentBuiltSkus = await fetchAllRows("built_skus", { orderCol: "product_id" });
+        setBuiltSkus(currentBuiltSkus);
+        builtSkusFetchedAt = Date.now();
+      } catch (e) { console.error("built_skus fetch failed (non-fatal):", e); }
+    }
+
     // Health snapshot history — same non-fatal pattern. Powers the
     // Historical Analysis tab; the rest of the dashboard works fine
     // without it.
@@ -3392,8 +3436,6 @@ async function refresh() {
     // Non-fatal: without them the tab says so and shows blank averages instead of wrong ones.
     if (Date.now() - leadTimeLinesFetchedAt > 600000) {
       leadTimeOrdersError = null;
-      try { currentBuiltSkus = await fetchAllRows("built_skus", { orderCol: "product_id" }); }
-      catch (e) { console.error("built_skus fetch failed (non-fatal):", e); currentBuiltSkus = []; }
       try {
         const fromMs = leadTimeWindowStartMs();
         if (fromMs === null) {
